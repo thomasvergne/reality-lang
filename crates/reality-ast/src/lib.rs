@@ -97,16 +97,23 @@ impl<T: Debug> Debug for ASTNode<T> {
       ASTNode::Literal(lit) => write!(f, "{:?}", lit),
       ASTNode::Identifier(id) => write!(f, "{}", id.name),
       ASTNode::Application { function, arguments } => {
-        write!(f, "({:?}(", function)?;
-        for arg in arguments {
-          write!(f, "{:?}, ", arg)?;
+        write!(f, "{:?}(", function)?;
+        for (i, arg) in arguments.iter().enumerate() {
+          write!(f, "{:?}", arg)?;
+          if i < arguments.len() - 1 {
+            write!(f, ", ")?;
+          }
         }
-        write!(f, "))")
+        write!(f, ")")
       }
       ASTNode::Lambda { parameters, return_type, body } => {
         write!(f, "|")?;
-        for param in parameters {
-          write!(f, "{:?}, ", param)?;
+        for (i, param) in parameters.iter().enumerate() {
+          write!(f, "{:?}", param)?;
+
+          if i < parameters.len() - 1 {
+            write!(f, ", ")?;
+          }
         }
         write!(f, "| -> {:?} {{ {:?} }}", return_type, body)
       }
@@ -129,8 +136,11 @@ impl<T: Debug> Debug for ToplevelNode<T> {
       }
       ToplevelNode::FunctionDeclaration { name, parameters, return_type, body } => {
         write!(f, "fn {}<{:?}>(", name.name, name.value)?;
-        for param in parameters {
-          write!(f, "{:?}, ", param)?;
+        for (i, param) in parameters.iter().enumerate() {
+          write!(f, "{:?}", param)?;
+          if i < parameters.len() - 1 {
+            write!(f, ", ")?;
+          }
         }
         write!(f, ") -> {:?} {{ {:?} }}", return_type, body)
       }

@@ -58,8 +58,11 @@ impl Debug for Type {
           Type::TypeIdentifier(name) => write!(f, "{}", name),
           Type::TypeApplication(base, args) => {
             write!(f, "{:?}<", base)?;
-            for arg in args {
-                write!(f, "{:?}, ", arg)?;
+            for (i, arg) in args.iter().enumerate() {
+                write!(f, "{:?}", arg)?;
+                if i < args.len() - 1 {
+                    write!(f, ", ")?;
+                }
             }
             write!(f, ">")
           }
