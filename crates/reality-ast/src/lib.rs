@@ -35,6 +35,7 @@ use crate::internal::{annotation::Annotation, literal::Literal, types::Type};
 
 pub mod internal;
 
+#[derive(Clone, PartialEq)]
 pub enum ASTNode<T = Option<Type>> {
   Literal(Literal),
   Identifier(Annotation<T>),
@@ -68,21 +69,21 @@ pub enum ASTNode<T = Option<Type>> {
   }
 }
 
-pub enum ToplevelNode<T> {
+#[derive(Clone, PartialEq)]
+pub enum ToplevelNode<T = Type, AT = Option<Type>> {
   ConstantDeclaration {
-    variable: Annotation<T>,
-    value: Box<ASTNode<T>>,
+    variable: Annotation<AT>,
+    value: Box<ASTNode<AT>>,
   },
 
   FunctionDeclaration {
-    name: Annotation<T>,
-    generics: Vec<String>,
+    name: Annotation<Vec<String>>,
     parameters: Vec<Annotation<T>>,
     return_type: T,
-    body: Box<ASTNode<T>>,
+    body: Box<ASTNode<AT>>,
   },
 
-  Require(String),
+  ImportDeclaration(String),
 
   TypeAlias {
     name: Annotation<Vec<String>>,
@@ -126,16 +127,116 @@ impl<T: Debug> Debug for ToplevelNode<T> {
       ToplevelNode::ConstantDeclaration { variable, value } => {
         write!(f, "const {:?} = {:?};", variable, value)
       }
-      ToplevelNode::FunctionDeclaration { name, generics, parameters, return_type, body } => {
-        write!(f, "fn {:?}<{:?}>(", name, generics)?;
+      ToplevelNode::FunctionDeclaration { name, parameters, return_type, body } => {
+        write!(f, "fn {}<{:?}>(", name.name, name.value)?;
         for param in parameters {
           write!(f, "{:?}, ", param)?;
         }
         write!(f, ") -> {:?} {{ {:?} }}", return_type, body)
       }
-      ToplevelNode::Require(module) => write!(f, "require \"{}\";", module),
+      ToplevelNode::ImportDeclaration(module) => write!(f, "require \"{}\";", module),
       ToplevelNode::TypeAlias { name, body } => write!(f, "type {:?} = {:?};", name, body),
     }
   }
 }
 
+impl<T: Clone> ASTNode<T> {
+    pub fn located(self, span: (usize, usize)) -> Self {
+        ASTNode::Located { span, node: Box::new(self) }
+    }
+
+    pub fn is_unit(&self) -> bool {
+        matches!(self, ASTNode::Identifier(Annotation { name, .. }) if name == "unit")
+    }
+
+
+    pub fn flatten_locations(&self) -> ASTNode<T> {
+        match self {
+            ASTNode::Located { node, .. } => node.flatten_locations(),
+            ASTNode::Application { function, arguments } => ASTNode::Application {
+                function: Box::new(function.flatten_locations()),
+                arguments: arguments
+                    .iter()
+                    .map(ASTNode::flatten_locations)
+                    .collect(),
+            },
+            ASTNode::LetIn {
+                variable,
+                value,
+                body,
+            } => ASTNode::LetIn {
+                variable: variable.clone(),
+                value: Box::new(value.flatten_locations()),
+                body: Box::new(body.flatten_locations()),
+            },
+            ASTNode::Lambda {
+                parameters,
+                body,
+                return_type,
+            } => ASTNode::Lambda {
+                parameters: parameters.clone(),
+                body: Box::new(body.flatten_locations()),
+                return_type: return_type.clone(),
+            },
+            ASTNode::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => ASTNode::If {
+                condition: Box::new(condition.flatten_locations()),
+                then_branch: Box::new(then_branch.flatten_locations()),
+                else_branch: Box::new(else_branch.flatten_locations()),
+            },
+            ASTNode::Literal(literal) => ASTNode::Literal(literal.clone()),
+            ASTNode::Identifier(ann) => ASTNode::Identifier(ann.clone())
+        }
+    }
+}
+
+
+
+pub fn build_block_from_statements(statements: &[ASTNode]) -> ASTNode {
+    if statements.is_empty() {
+        return unit();
+    }
+
+    match statements
+        .iter()
+        .map(ASTNode::flatten_locations)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        [single] => single.clone(),
+        [ASTNode::LetIn {
+            variable,
+            value,
+            body,
+        }, rest @ ..]
+            if body.is_unit() =>
+        {
+            ASTNode::LetIn {
+                variable: variable.clone(),
+                value: value.clone(),
+                body: Box::new(build_block_from_statements(rest)),
+            }
+        }
+        [first, rest @ ..] => ASTNode::LetIn {
+            variable: Annotation {
+                name: "block".to_string(),
+                value: None,
+                location: (0, 0),
+            },
+            value: Box::new(first.clone()),
+            body: Box::new(build_block_from_statements(rest)),
+        },
+        [] => unit(),
+    }
+}
+
+pub fn unit() -> ASTNode {
+    ASTNode::Identifier(Annotation {
+        name: "unit".to_string(),
+        value: None,
+        location: (0, 0),
+    })
+}
