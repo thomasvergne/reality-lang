@@ -13,16 +13,20 @@
 // (3). String(String) may be represented by `"hello"`, `""`, `"world"`.
 // 
 // (4). Character(char) may be represented by `'a'`, `'Z'`, `'\n'`.
+//
+// (5). Boolean(bool) may be represented by `true`, `false`.
 // 
 // <==== LITERAL MODULE ====>
 
 use std::fmt::Debug;
 
+#[derive(Clone, PartialEq)]
 pub enum Literal {
   Integer(i64),
   Float(f64),
   String(String),
   Character(char),
+  Boolean(bool),
 }
 
 impl Debug for Literal {
@@ -32,6 +36,7 @@ impl Debug for Literal {
       Literal::Float(fl) => write!(f, "{}", fl),
       Literal::String(s) => write!(f, "{}", s),
       Literal::Character(c) => write!(f, "{}", c),
+      Literal::Boolean(b) => write!(f, "{}", b),
     }
   }
 }
