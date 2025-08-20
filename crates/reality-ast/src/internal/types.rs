@@ -26,24 +26,24 @@
 use std::fmt::Debug;
 
 #[derive(Clone, PartialEq)]
-pub enum Type<N = String> {
-    TypeIdentifier(N),
-    TypeApplication(Box<Type<N>>, Vec<Type<N>>),
-    TypeVariable(Box<TypeVariable<N>>),
+pub enum Type {
+    TypeIdentifier(String),
+    TypeApplication(Box<Type>, Vec<Type>),
+    TypeVariable(Box<TypeVariable>),
     TypeFunction {
-      parameters: Vec<Type<N>>,
-      return_type: Box<Type<N>>,
+      parameters: Vec<Type>,
+      return_type: Box<Type>,
     },
     TypeQuantified(String),
 }
 
 #[derive(Clone, PartialEq)]
-pub enum TypeVariable<N = String> {
+pub enum TypeVariable {
     Unbound(String, usize),
-    Bound(Box<Type<N>>),
+    Bound(Box<Type>),
 }
 
-impl<N: Debug> Debug for TypeVariable<N> {
+impl Debug for TypeVariable {
   fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
       match self {
           TypeVariable::Unbound(name, id) => write!(f, "{}{}", name, id),
@@ -52,7 +52,7 @@ impl<N: Debug> Debug for TypeVariable<N> {
   }
 }
 
-impl<N: Debug> Debug for Type<N> {
+impl Debug for Type {
   fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
       match self {
           Type::TypeIdentifier(name) => write!(f, "{:?}", name),

@@ -36,9 +36,9 @@ use crate::internal::{annotation::Annotation, literal::Literal, types::Type};
 pub mod internal;
 
 #[derive(Clone, PartialEq)]
-pub enum ASTNode<T = Option<Type<Vec<String>>>> {
+pub enum ASTNode<T = Option<Type>> {
   Literal(Literal),
-  Identifier(Annotation<T, Vec<String>>),
+  Identifier(Annotation<T>),
 
   Application {
     function: Box<ASTNode<T>>,
@@ -46,13 +46,13 @@ pub enum ASTNode<T = Option<Type<Vec<String>>>> {
   },
 
   Lambda {
-    parameters: Vec<Annotation<T>>,
+    parameters: Vec<Annotation<T, String>>,
     return_type: T,
     body: Box<ASTNode<T>>,
   },
 
   LetIn {
-    variable: Annotation<T>,
+    variable: Annotation<T, String>,
     value: Box<ASTNode<T>>,
     body: Box<ASTNode<T>>,
   },
@@ -70,7 +70,7 @@ pub enum ASTNode<T = Option<Type<Vec<String>>>> {
 }
 
 #[derive(Clone, PartialEq)]
-pub enum ToplevelNode<T = Type<Vec<String>>, AT = Option<Type<Vec<String>>>> {
+pub enum ToplevelNode<T = Type, AT = Option<Type>> {
   ConstantDeclaration {
     variable: Annotation<AT>,
     value: Box<ASTNode<AT>>,
@@ -90,11 +90,6 @@ pub enum ToplevelNode<T = Type<Vec<String>>, AT = Option<Type<Vec<String>>>> {
     body: T,
   },
 
-  ModuleDeclaration {
-    name: String,
-    body: Vec<ToplevelNode<T, AT>>,
-  },
-
   PublicDeclaration(Box<ToplevelNode<T, AT>>),
 }
 
@@ -103,12 +98,7 @@ impl<T: Debug> Debug for ASTNode<T> {
     match self {
       ASTNode::Literal(lit) => write!(f, "{:?}", lit),
       ASTNode::Identifier(id) => {
-        for (i, name) in id.name.iter().enumerate() {
-          write!(f, "{}", name)?;
-          if i < id.name.len() - 1 {
-            write!(f, "::")?;
-          }
-        }
+        write!(f, "{:?}", id.name)?;
 
         Ok(())
       }
@@ -144,17 +134,9 @@ impl<T: Debug> Debug for ASTNode<T> {
   }
 }
 
-impl<T: Debug> Debug for ToplevelNode<T> {
+impl<T: Debug, AT: Debug> Debug for ToplevelNode<T, AT> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
-      ToplevelNode::ModuleDeclaration { name, body } => {
-        write!(f, "module {} {{", name)?;
-        for node in body {
-          write!(f, "\n  {:?}", node)?;
-        }
-        write!(f, "\n}}")
-      }
-
       ToplevelNode::PublicDeclaration(inner) => {
         write!(f, "pub {:?}", inner)
       }
@@ -185,7 +167,7 @@ impl<T: Clone> ASTNode<T> {
 
     pub fn is_unit(&self) -> bool {
         matches!(self, ASTNode::Identifier(Annotation { name, .. }) 
-            if name.last() == Some(&"unit".to_string())
+            if name == "unit"
         )
     }
 
@@ -273,7 +255,7 @@ pub fn build_block_from_statements(statements: &[ASTNode]) -> ASTNode {
 
 pub fn unit() -> ASTNode {
     ASTNode::Identifier(Annotation {
-        name: vec!["unit".to_string()],
+        name: "unit".to_string(),
         value: None,
         location: (0, 0),
     })
