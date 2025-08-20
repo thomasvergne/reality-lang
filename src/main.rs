@@ -1,9 +1,11 @@
 use reality_error::report_error;
-use reality_parser::{add_default_operators, Parser};
+use reality_module::ImportResolver;
+use reality_parser::{Parser, add_default_operators};
 
 fn main() {
     let file = "examples/main.rl";
     let file_content = include_str!("../examples/main.rl");
+    let current_dir = std::env::current_dir().unwrap().join("examples");
 
     let mut parser = Parser::new(file_content, file);
     add_default_operators(&mut parser);
@@ -11,10 +13,33 @@ fn main() {
     let result = parser.parse_program();
 
     if let Err(err) = &result {
-        return report_error(file, file_content, (parser.position, parser.position + 1), err.clone());
+        return report_error(
+            file,
+            file_content,
+            (parser.position, parser.position + 1),
+            err.clone(),
+        );
     }
 
     let ast = result.unwrap();
+
+    let mut import_resolver = ImportResolver::new(
+        file_content,
+        file,
+        current_dir.to_str().unwrap().to_string(),
+    );
+    let ast = import_resolver.resolve_all(ast);
+
+    if let Err(err) = &ast {
+        return report_error(
+            import_resolver.file,
+            import_resolver.input,
+            (import_resolver.position.0, import_resolver.position.1),
+            err.clone(),
+        );
+    }
+
+    let ast = ast.unwrap();
 
     for node in &ast {
         println!("{:?}", node);
