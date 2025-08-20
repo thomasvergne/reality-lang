@@ -20,6 +20,12 @@ pub enum RealityError {
 
     #[error("Internal error occurred: {0}")]
     InternalError(String),
+
+    #[error("Module not found: {0}")]
+    ModuleNotFound(String),
+
+    #[error("Cycle detected: {0}")]
+    CycleDetected(String),
 }
 
 pub fn report_error<'a>(

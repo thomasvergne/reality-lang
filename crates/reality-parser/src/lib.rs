@@ -69,7 +69,7 @@ impl<'a> Parser<'a> {
     }
 
     fn is_reserved(&self, input: &'a str) -> bool {
-        matches!(input, "let" | "in" | "if" | "else" | "fn")
+        matches!(input, "let" | "in" | "if" | "else" | "fn" | "pub" | "import" | "type")
     }
 
     fn consume_token(&mut self, token: &'a str) -> Result<&'a str> {
@@ -123,18 +123,16 @@ impl<'a> Parser<'a> {
             return self.parse_top_type_alias();
         } else if self.peek_token("pub") {
             return self.parse_top_public();
-        } else if self.peek_token("mod") {
-            return self.parse_top_module();
         }
 
         Err(RealityError::ExpectedToken("<toplevel>".to_string()))
     }
 
-    fn parse_type_application(&mut self) -> Result<Type<Vec<String>>> {
+    fn parse_type_application(&mut self) -> Result<Type> {
       self.skip_whitespaces();
       let start = self.position;
 
-      let (identifier, _) = self.parse_scoped_identifier()?;
+      let (identifier, _) = self.parse_identifier()?;
 
       self.skip_whitespaces();
       if self.peek_token("(") {
@@ -161,7 +159,7 @@ impl<'a> Parser<'a> {
 
         return Ok((
             Type::TypeApplication(
-                Box::new(Type::TypeIdentifier(identifier)),
+                Box::new(Type::TypeIdentifier(identifier.to_string())),
                 arguments,
             ),
             (start, self.position),
@@ -169,7 +167,7 @@ impl<'a> Parser<'a> {
       }
 
       Ok((
-          Type::TypeIdentifier(identifier),
+          Type::TypeIdentifier(identifier.to_string()),
           (start, self.position),
       ))
     }
@@ -233,7 +231,7 @@ impl<'a> Parser<'a> {
 
         self.position += 1;
 
-        let mut return_type = Type::TypeIdentifier(vec!["unit".to_string()]);
+        let mut return_type = Type::TypeIdentifier("unit".to_string());
         
         if self.peek_token("->") {
             self.consume_token("->")?;
@@ -256,31 +254,6 @@ impl<'a> Parser<'a> {
                 body: Box::new(body),
             },
             (start_pos, end_pos),
-        ))
-    }
-
-    fn parse_top_module(&mut self) -> Result<ToplevelNode> {
-        let (_, (start, _)) = self.consume_token("mod")?;
-
-        let (name, _) = self.parse_identifier()?;
-
-        self.consume_token("{")?;
-
-        let mut body = Vec::new();
-
-        while !self.peek_token("}") {
-            let (stmt, _) = self.parse_toplevel()?;
-            body.push(stmt);
-        }
-
-        let (_, (_, end)) = self.consume_token("}")?;
-
-        Ok((
-            ToplevelNode::ModuleDeclaration {
-                name: name.to_string(),
-                body,
-            },
-            (start, end),
         ))
     }
 
@@ -383,16 +356,16 @@ impl<'a> Parser<'a> {
         }, (start_pos, end_pos)))
     }
 
-    fn parse_type_pointer(&mut self) -> Result<Type<Vec<String>>> {
+    fn parse_type_pointer(&mut self) -> Result<Type> {
         let (_, (start, _)) = self.consume_token("*")?;
         let (pointed_type, (_, end)) = self.parse_type()?;
         Ok((Type::TypeApplication(
-            Box::new(Type::TypeIdentifier(vec!["pointer".to_string()])),
+            Box::new(Type::TypeIdentifier("pointer".to_string())),
             vec![pointed_type]
         ), (start, end)))
     }
 
-    fn parse_type_function(&mut self) -> Result<Type<Vec<String>>> {
+    fn parse_type_function(&mut self) -> Result<Type> {
         self.skip_whitespaces();
         let start = self.position;
         self.consume_token("fn")?;
@@ -425,7 +398,7 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    fn parse_type(&mut self) -> Result<Type<Vec<String>>> {
+    fn parse_type(&mut self) -> Result<Type> {
         if self.peek_token("fn") {
             return self.parse_type_function();
         } else if self.peek_token("*") {
@@ -630,10 +603,10 @@ impl<'a> Parser<'a> {
                 self.position += 1; // Skip the closing parenthesis
                 return Ok(callee);
             }
-        } else if let Ok((identifier, pos)) = self.parse_scoped_identifier() {
+        } else if let Ok((identifier, pos)) = self.parse_identifier() {
             return Ok((
                 ASTNode::Identifier(Annotation {
-                    name: identifier,
+                    name: identifier.to_string(),
                     value: None,
                     location: pos,
                 })
@@ -769,7 +742,7 @@ impl<'a> Parser<'a> {
         Ok((lhs, (start_pos, end_pos)))
     }
 
-    fn parse_parameters(&mut self, end: &'a str) -> Result<Vec<Annotation<Option<Type<Vec<String>>>>>> {
+    fn parse_parameters(&mut self, end: &'a str) -> Result<Vec<Annotation<Option<Type>>>> {
         let start = self.position;
         let mut parameters = Vec::new();
 
@@ -901,11 +874,6 @@ impl<'a> Parser<'a> {
 
         while self.peek_token("::") {
             self.consume_token("::")?;
-            if self.peek_token("*") {
-                self.consume_token("*")?;
-                identifiers.push("*".to_string());
-                break;
-            }
             let (ident, (_, end)) = self.parse_identifier()?;
             identifiers.push(ident.to_string());
             end_pos = end;
@@ -949,7 +917,7 @@ impl<'a> Parser<'a> {
 fn operator(name: &str, a: &ASTNode, b: &ASTNode) -> ASTNode {
     ASTNode::Application {
         function: Box::new(ASTNode::Identifier(Annotation {
-            name: vec![name.to_string()],
+            name: name.to_string(),
             value: None,
             location: (0, 0), // Placeholder for location, can be adjusted later
         })),
@@ -1046,7 +1014,7 @@ pub fn add_default_operators(parser: &mut Parser) {
         OperatorType::Prefix(|a| {
             Ok(ASTNode::Application {
                 function: Box::new(ASTNode::Identifier(Annotation {
-                    name: vec!["!".to_string()],
+                    name: "!".to_string(),
                     value: None,
                     location: (0, 0), // Placeholder for location, can be adjusted later
                 })),
