@@ -1,11 +1,12 @@
 const x: i32 = 5;
-
-type string = *u8;
+import string;
 
 fn main() {
+
     print("test");
 
     let y: string = "hello";
+    let z: string = "world";
 
     print(y)
 }
