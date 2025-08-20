@@ -8,6 +8,7 @@
 
 use std::fmt::Debug;
 
+#[derive(Clone, PartialEq)]
 pub struct Annotation<T> {
   pub name: String,
   pub value: T,
