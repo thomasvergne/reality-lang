@@ -9,8 +9,8 @@
 use std::fmt::Debug;
 
 #[derive(Clone, PartialEq)]
-pub struct Annotation<T> {
-  pub name: String,
+pub struct Annotation<T, N = String> {
+  pub name: N,
   pub value: T,
   pub location: (usize, usize),
 }

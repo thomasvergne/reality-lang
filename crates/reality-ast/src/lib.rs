@@ -36,9 +36,9 @@ use crate::internal::{annotation::Annotation, literal::Literal, types::Type};
 pub mod internal;
 
 #[derive(Clone, PartialEq)]
-pub enum ASTNode<T = Option<Type>> {
+pub enum ASTNode<T = Option<Type<Vec<String>>>> {
   Literal(Literal),
-  Identifier(Annotation<T>),
+  Identifier(Annotation<T, Vec<String>>),
 
   Application {
     function: Box<ASTNode<T>>,
@@ -70,7 +70,7 @@ pub enum ASTNode<T = Option<Type>> {
 }
 
 #[derive(Clone, PartialEq)]
-pub enum ToplevelNode<T = Type, AT = Option<Type>> {
+pub enum ToplevelNode<T = Type<Vec<String>>, AT = Option<Type<Vec<String>>>> {
   ConstantDeclaration {
     variable: Annotation<AT>,
     value: Box<ASTNode<AT>>,
@@ -83,19 +83,35 @@ pub enum ToplevelNode<T = Type, AT = Option<Type>> {
     body: Box<ASTNode<AT>>,
   },
 
-  ImportDeclaration(String),
+  ImportDeclaration(Vec<String>),
 
   TypeAlias {
     name: Annotation<Vec<String>>,
-    body: Type,
+    body: T,
   },
+
+  ModuleDeclaration {
+    name: String,
+    body: Vec<ToplevelNode<T, AT>>,
+  },
+
+  PublicDeclaration(Box<ToplevelNode<T, AT>>),
 }
 
 impl<T: Debug> Debug for ASTNode<T> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
       ASTNode::Literal(lit) => write!(f, "{:?}", lit),
-      ASTNode::Identifier(id) => write!(f, "{}", id.name),
+      ASTNode::Identifier(id) => {
+        for (i, name) in id.name.iter().enumerate() {
+          write!(f, "{}", name)?;
+          if i < id.name.len() - 1 {
+            write!(f, "::")?;
+          }
+        }
+
+        Ok(())
+      }
       ASTNode::Application { function, arguments } => {
         write!(f, "{:?}(", function)?;
         for (i, arg) in arguments.iter().enumerate() {
@@ -131,6 +147,18 @@ impl<T: Debug> Debug for ASTNode<T> {
 impl<T: Debug> Debug for ToplevelNode<T> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
+      ToplevelNode::ModuleDeclaration { name, body } => {
+        write!(f, "module {} {{", name)?;
+        for node in body {
+          write!(f, "\n  {:?}", node)?;
+        }
+        write!(f, "\n}}")
+      }
+
+      ToplevelNode::PublicDeclaration(inner) => {
+        write!(f, "pub {:?}", inner)
+      }
+
       ToplevelNode::ConstantDeclaration { variable, value } => {
         write!(f, "const {:?} = {:?};", variable, value)
       }
@@ -144,7 +172,7 @@ impl<T: Debug> Debug for ToplevelNode<T> {
         }
         write!(f, ") -> {:?} {{ {:?} }}", return_type, body)
       }
-      ToplevelNode::ImportDeclaration(module) => write!(f, "require \"{}\";", module),
+      ToplevelNode::ImportDeclaration(module) => write!(f, "require \"{}\";", module.join("::").to_string()),
       ToplevelNode::TypeAlias { name, body } => write!(f, "type {:?} = {:?};", name, body),
     }
   }
@@ -156,7 +184,9 @@ impl<T: Clone> ASTNode<T> {
     }
 
     pub fn is_unit(&self) -> bool {
-        matches!(self, ASTNode::Identifier(Annotation { name, .. }) if name == "unit")
+        matches!(self, ASTNode::Identifier(Annotation { name, .. }) 
+            if name.last() == Some(&"unit".to_string())
+        )
     }
 
 
@@ -203,8 +233,6 @@ impl<T: Clone> ASTNode<T> {
     }
 }
 
-
-
 pub fn build_block_from_statements(statements: &[ASTNode]) -> ASTNode {
     if statements.is_empty() {
         return unit();
@@ -245,7 +273,7 @@ pub fn build_block_from_statements(statements: &[ASTNode]) -> ASTNode {
 
 pub fn unit() -> ASTNode {
     ASTNode::Identifier(Annotation {
-        name: "unit".to_string(),
+        name: vec!["unit".to_string()],
         value: None,
         location: (0, 0),
     })
