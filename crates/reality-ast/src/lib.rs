@@ -95,7 +95,7 @@ impl<T: Debug> Debug for ASTNode<T> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
       ASTNode::Literal(lit) => write!(f, "{:?}", lit),
-      ASTNode::Identifier(id) => write!(f, "{:?}", id),
+      ASTNode::Identifier(id) => write!(f, "{}", id.name),
       ASTNode::Application { function, arguments } => {
         write!(f, "({:?}(", function)?;
         for arg in arguments {
@@ -104,11 +104,11 @@ impl<T: Debug> Debug for ASTNode<T> {
         write!(f, "))")
       }
       ASTNode::Lambda { parameters, return_type, body } => {
-        write!(f, "fn(")?;
+        write!(f, "|")?;
         for param in parameters {
           write!(f, "{:?}, ", param)?;
         }
-        write!(f, ") -> {:?} {{ {:?} }}", return_type, body)
+        write!(f, "| -> {:?} {{ {:?} }}", return_type, body)
       }
       ASTNode::LetIn { variable, value, body } => {
         write!(f, "let {:?} = {:?}; {:?}", variable, value, body)

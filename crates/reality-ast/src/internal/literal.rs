@@ -34,8 +34,8 @@ impl Debug for Literal {
     match self {
       Literal::Integer(i) => write!(f, "{}", i),
       Literal::Float(fl) => write!(f, "{}", fl),
-      Literal::String(s) => write!(f, "{}", s),
-      Literal::Character(c) => write!(f, "{}", c),
+      Literal::String(s) => write!(f, "{:?}", s),
+      Literal::Character(c) => write!(f, "{:?}", c),
       Literal::Boolean(b) => write!(f, "{}", b),
     }
   }
