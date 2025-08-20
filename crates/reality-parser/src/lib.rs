@@ -121,16 +121,20 @@ impl<'a> Parser<'a> {
             return self.parse_top_require();
         } else if self.peek_token("type") {
             return self.parse_top_type_alias();
+        } else if self.peek_token("pub") {
+            return self.parse_top_public();
+        } else if self.peek_token("mod") {
+            return self.parse_top_module();
         }
 
         Err(RealityError::ExpectedToken("<toplevel>".to_string()))
     }
 
-    fn parse_type_application(&mut self) -> Result<Type> {
+    fn parse_type_application(&mut self) -> Result<Type<Vec<String>>> {
       self.skip_whitespaces();
       let start = self.position;
 
-      let (identifier, _) = self.parse_identifier()?;
+      let (identifier, _) = self.parse_scoped_identifier()?;
 
       self.skip_whitespaces();
       if self.peek_token("(") {
@@ -157,7 +161,7 @@ impl<'a> Parser<'a> {
 
         return Ok((
             Type::TypeApplication(
-                Box::new(Type::TypeIdentifier(identifier.to_string())),
+                Box::new(Type::TypeIdentifier(identifier)),
                 arguments,
             ),
             (start, self.position),
@@ -165,7 +169,7 @@ impl<'a> Parser<'a> {
       }
 
       Ok((
-          Type::TypeIdentifier(identifier.to_string()),
+          Type::TypeIdentifier(identifier),
           (start, self.position),
       ))
     }
@@ -229,7 +233,7 @@ impl<'a> Parser<'a> {
 
         self.position += 1;
 
-        let mut return_type = Type::TypeIdentifier("unit".to_string());
+        let mut return_type = Type::TypeIdentifier(vec!["unit".to_string()]);
         
         if self.peek_token("->") {
             self.consume_token("->")?;
@@ -255,10 +259,46 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    fn parse_top_module(&mut self) -> Result<ToplevelNode> {
+        let (_, (start, _)) = self.consume_token("mod")?;
+
+        let (name, _) = self.parse_identifier()?;
+
+        self.consume_token("{")?;
+
+        let mut body = Vec::new();
+
+        while !self.peek_token("}") {
+            let (stmt, _) = self.parse_toplevel()?;
+            body.push(stmt);
+        }
+
+        let (_, (_, end)) = self.consume_token("}")?;
+
+        Ok((
+            ToplevelNode::ModuleDeclaration {
+                name: name.to_string(),
+                body,
+            },
+            (start, end),
+        ))
+    }
+
+    fn parse_top_public(&mut self) -> Result<ToplevelNode> {
+        let (_, (start_pos, _)) = self.consume_token("pub")?;
+
+        let (node, (_, end_pos)) = self.parse_toplevel()?;
+
+        Ok((
+            ToplevelNode::PublicDeclaration(Box::new(node)),
+            (start_pos, end_pos),
+        ))
+    }
+
     fn parse_top_require(&mut self) -> Result<ToplevelNode> {
         let (_, (start_pos, _)) = self.consume_token("import")?;
 
-        let (module, (_, end_pos)) = self.parse_literal_string('"')?;
+        let (module, (_, end_pos)) = self.parse_scoped_identifier()?;
 
         Ok((
             ToplevelNode::ImportDeclaration(module),
@@ -343,16 +383,16 @@ impl<'a> Parser<'a> {
         }, (start_pos, end_pos)))
     }
 
-    fn parse_type_pointer(&mut self) -> Result<Type> {
+    fn parse_type_pointer(&mut self) -> Result<Type<Vec<String>>> {
         let (_, (start, _)) = self.consume_token("*")?;
         let (pointed_type, (_, end)) = self.parse_type()?;
         Ok((Type::TypeApplication(
-            Box::new(Type::TypeIdentifier("pointer".to_string())),
+            Box::new(Type::TypeIdentifier(vec!["pointer".to_string()])),
             vec![pointed_type]
         ), (start, end)))
     }
 
-    fn parse_type_function(&mut self) -> Result<Type> {
+    fn parse_type_function(&mut self) -> Result<Type<Vec<String>>> {
         self.skip_whitespaces();
         let start = self.position;
         self.consume_token("fn")?;
@@ -385,7 +425,7 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    fn parse_type(&mut self) -> Result<Type> {
+    fn parse_type(&mut self) -> Result<Type<Vec<String>>> {
         if self.peek_token("fn") {
             return self.parse_type_function();
         } else if self.peek_token("*") {
@@ -590,10 +630,10 @@ impl<'a> Parser<'a> {
                 self.position += 1; // Skip the closing parenthesis
                 return Ok(callee);
             }
-        } else if let Ok((identifier, pos)) = self.parse_identifier() {
+        } else if let Ok((identifier, pos)) = self.parse_scoped_identifier() {
             return Ok((
                 ASTNode::Identifier(Annotation {
-                    name: identifier.to_string(),
+                    name: identifier,
                     value: None,
                     location: pos,
                 })
@@ -729,7 +769,7 @@ impl<'a> Parser<'a> {
         Ok((lhs, (start_pos, end_pos)))
     }
 
-    fn parse_parameters(&mut self, end: &'a str) -> Result<Vec<Annotation<Option<Type>>>> {
+    fn parse_parameters(&mut self, end: &'a str) -> Result<Vec<Annotation<Option<Type<Vec<String>>>>>> {
         let start = self.position;
         let mut parameters = Vec::new();
 
@@ -852,6 +892,28 @@ impl<'a> Parser<'a> {
         Ok((Literal::Integer(integer_part), pos))
     }
 
+    fn parse_scoped_identifier(&mut self) -> Result<Vec<String>> {
+        let mut identifiers = Vec::new();
+        let (start_id, (start, end)) = self.parse_identifier()?;
+        identifiers.push(start_id.to_string());
+
+        let mut end_pos = end;
+
+        while self.peek_token("::") {
+            self.consume_token("::")?;
+            if self.peek_token("*") {
+                self.consume_token("*")?;
+                identifiers.push("*".to_string());
+                break;
+            }
+            let (ident, (_, end)) = self.parse_identifier()?;
+            identifiers.push(ident.to_string());
+            end_pos = end;
+        }
+
+        Ok((identifiers, (start, end_pos)))
+    }
+
     fn parse_identifier(&mut self) -> Result<&'a str> {
         self.skip_whitespaces();
         let start = self.position;
@@ -887,7 +949,7 @@ impl<'a> Parser<'a> {
 fn operator(name: &str, a: &ASTNode, b: &ASTNode) -> ASTNode {
     ASTNode::Application {
         function: Box::new(ASTNode::Identifier(Annotation {
-            name: name.to_string(),
+            name: vec![name.to_string()],
             value: None,
             location: (0, 0), // Placeholder for location, can be adjusted later
         })),
@@ -984,7 +1046,7 @@ pub fn add_default_operators(parser: &mut Parser) {
         OperatorType::Prefix(|a| {
             Ok(ASTNode::Application {
                 function: Box::new(ASTNode::Identifier(Annotation {
-                    name: "!".to_string(),
+                    name: vec!["!".to_string()],
                     value: None,
                     location: (0, 0), // Placeholder for location, can be adjusted later
                 })),
