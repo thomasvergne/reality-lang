@@ -222,8 +222,12 @@ impl<'a> Parser<'a> {
             self.skip_whitespaces();
             if self.peek_token(",") {
                 self.position += 1; // Skip the comma
+            } else if !self.peek_token(")") {
+                return Err(RealityError::ExpectedToken(")".to_string()));
             }
         }
+
+        self.position += 1;
 
         let mut return_type = Type::TypeIdentifier("unit".to_string());
         
@@ -490,7 +494,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_block_expression(&mut self) -> Result<ASTNode> {
-        self.position += 1; // Skip the '{' character
+        self.consume_token("{")?;
         let mut expressions = Vec::new();
         let start_pos = self.position;
 
