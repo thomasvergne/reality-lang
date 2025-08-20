@@ -1,11 +1,8 @@
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum RealityError {
     // Parsing errors
-    #[error("Unexpected token encountered during parsing.")]
-    UnexpectedToken,
-
     #[error("Unexpected operator {0} encountered during parsing.")]
     UnexpectedOperator(String),
 
@@ -14,7 +11,7 @@ pub enum RealityError {
 
     #[error("Unexpected end of block encountered.")]
     UnexpectedEndOfBlock,
-    
+
     #[error("Unexpected end of file encountered.")]
     UnexpectedEndOfFile,
 
@@ -23,7 +20,29 @@ pub enum RealityError {
 
     #[error("Internal error occurred: {0}")]
     InternalError(String),
+}
 
-    #[error("Internal parsing error occurred.")]
-    InternalParsingError,
+pub fn report_error<'a>(
+    file: &'a str,
+    input: &'a str,
+    location: (usize, usize),
+    err: RealityError,
+) {
+    use ariadne::{ColorGenerator, Label, Report, ReportKind, Source};
+
+    let mut color_gen = ColorGenerator::default();
+    let color = color_gen.next();
+
+    let error_message = format!("{}", err);
+
+    Report::build(ReportKind::Error, (file, location.0..location.1))
+        .with_message(error_message)
+        .with_label(
+            Label::new((file, location.0..location.1))
+                .with_message("Error occurred here")
+                .with_color(color),
+        )
+        .finish()
+        .print((file, Source::from(input)))
+        .unwrap();
 }
