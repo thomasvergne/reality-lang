@@ -116,7 +116,7 @@ impl<T: Debug> Debug for ASTNode<T> {
       ASTNode::If { condition, then_branch, else_branch } => {
         write!(f, "if {:?} {{ {:?} }} else {{ {:?} }}", condition, then_branch, else_branch)
       }
-      ASTNode::Located { span, node } => write!(f, "Located({:?}, {:?})", span, node),
+      ASTNode::Located { node, .. } => write!(f, "{:?}", node),
     }
   }
 }
