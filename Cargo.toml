@@ -1,0 +1,16 @@
+[package]
+name = "reality"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+resolver = "2"
+members = [
+  "crates/reality-ast"
+, "crates/reality-error"
+, "crates/reality-parser"]
+
+[dependencies]
+"reality-ast" = { path = "crates/reality-ast" }
+"reality-error" = { path = "crates/reality-error" }
+"reality-parser" = { path = "crates/reality-parser" }
