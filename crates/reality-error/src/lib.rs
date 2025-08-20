@@ -15,7 +15,7 @@ pub enum RealityError {
     #[error("Unexpected end of file encountered.")]
     UnexpectedEndOfFile,
 
-    #[error("Expected token {0} was not found.")]
+    #[error("Expected {0} was not found.")]
     ExpectedToken(String),
 
     #[error("Internal error occurred: {0}")]
