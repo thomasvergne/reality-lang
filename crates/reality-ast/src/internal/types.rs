@@ -55,7 +55,7 @@ impl Debug for TypeVariable {
 impl Debug for Type {
   fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
       match self {
-          Type::TypeIdentifier(name) => write!(f, "{:?}", name),
+          Type::TypeIdentifier(name) => write!(f, "{}", name),
           Type::TypeApplication(base, args) => {
             write!(f, "{:?}<", base)?;
             for (i, arg) in args.iter().enumerate() {

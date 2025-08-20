@@ -98,7 +98,7 @@ impl<T: Debug> Debug for ASTNode<T> {
     match self {
       ASTNode::Literal(lit) => write!(f, "{:?}", lit),
       ASTNode::Identifier(id) => {
-        write!(f, "{:?}", id.name)?;
+        write!(f, "{}", id.name)?;
 
         Ok(())
       }
