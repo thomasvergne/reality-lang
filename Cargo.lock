@@ -36,6 +36,7 @@ version = "0.1.0"
 dependencies = [
  "reality-ast",
  "reality-error",
+ "reality-module",
  "reality-parser",
 ]
 
@@ -49,6 +50,15 @@ version = "0.1.0"
 dependencies = [
  "ariadne",
  "thiserror",
+]
+
+[[package]]
+name = "reality-module"
+version = "0.1.0"
+dependencies = [
+ "reality-ast",
+ "reality-error",
+ "reality-parser",
 ]
 
 [[package]]
