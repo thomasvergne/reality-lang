@@ -15,16 +15,16 @@ type Result<T> = std::result::Result<(T, Position), RealityError>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum OperatorType {
-    Infix(fn(&ASTNode, &ASTNode) -> Result<ASTNode>),
-    Prefix(fn(&ASTNode) -> Result<ASTNode>),
-    Postfix(fn(&ASTNode) -> Result<ASTNode>),
+    Infix(fn(&ASTNode, &ASTNode) -> std::result::Result<ASTNode, RealityError>),
+    Prefix(fn(&ASTNode) -> std::result::Result<ASTNode, RealityError>),
+    Postfix(fn(&ASTNode) -> std::result::Result<ASTNode, RealityError>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Parser<'a> {
-    input: &'a str,
-    position: usize,
-    file: &'a str,
+    pub input: &'a str,
+    pub position: usize,
+    pub file: &'a str,
     operators: HashMap<&'a str, (Associativity, usize, OperatorType)>,
 }
 
@@ -98,6 +98,8 @@ impl<'a> Parser<'a> {
                 self.position += 1;
             }
 
+            self.skip_whitespaces();
+
             nodes.push(node);
         }
 
@@ -108,7 +110,7 @@ impl<'a> Parser<'a> {
         self.skip_whitespaces();
 
         if self.position >= self.input.len() {
-            return Err(RealityError::InternalParsingError);
+            return Err(RealityError::UnexpectedEndOfFile);
         }
 
         if self.peek_token("const") {
@@ -337,6 +339,15 @@ impl<'a> Parser<'a> {
         }, (start_pos, end_pos)))
     }
 
+    fn parse_type_pointer(&mut self) -> Result<Type> {
+        let (_, (start, _)) = self.consume_token("*")?;
+        let (pointed_type, (_, end)) = self.parse_type()?;
+        Ok((Type::TypeApplication(
+            Box::new(Type::TypeIdentifier("pointer".to_string())),
+            vec![pointed_type]
+        ), (start, end)))
+    }
+
     fn parse_type_function(&mut self) -> Result<Type> {
         self.skip_whitespaces();
         let start = self.position;
@@ -373,6 +384,8 @@ impl<'a> Parser<'a> {
     fn parse_type(&mut self) -> Result<Type> {
         if self.peek_token("fn") {
             return self.parse_type_function();
+        } else if self.peek_token("*") {
+            return self.parse_type_pointer();
         }
 
         return self.parse_type_application();
@@ -380,7 +393,7 @@ impl<'a> Parser<'a> {
 
     fn parse_term(&mut self) -> Result<ASTNode> {
         if self.position >= self.input.len() {
-            return Err(RealityError::InternalParsingError);
+            return Err(RealityError::UnexpectedEndOfFile);
         }
 
         if self.peek_token("'") {
@@ -489,7 +502,7 @@ impl<'a> Parser<'a> {
             }
 
             if self.position >= self.input.len() {
-                return Err(RealityError::InternalParsingError);
+                return Err(RealityError::UnexpectedEndOfFile);
             }
             let (stmt, _) = self.parse_statement()?;
             expressions.push(stmt.clone());
@@ -587,7 +600,7 @@ impl<'a> Parser<'a> {
         while !self.peek_token(")") {
             self.skip_whitespaces();
             if self.position >= self.input.len() {
-                return Err(RealityError::InternalParsingError);
+                return Err(RealityError::UnexpectedEndOfFile);
             }
             let (argument, _) = self.parse_expression(0)?;
             arguments.push(argument);
@@ -678,7 +691,7 @@ impl<'a> Parser<'a> {
                     // After parsing the operator, parse the RHS
                     let (rhs, _) = self.parse_expression(next_min_prec)?;
 
-                    lhs = f(&lhs, &rhs)?.0;
+                    lhs = f(&lhs, &rhs)?;
                     continue;
                 } else {
                     // If the operator is not recognized, reset the position
@@ -703,7 +716,7 @@ impl<'a> Parser<'a> {
         while !self.peek_token(end) {
             self.skip_whitespaces();
             if self.position >= self.input.len() {
-                return Err(RealityError::UnexpectedToken);
+                return Err(RealityError::UnexpectedEndOfFile);
             }
             let start_id = self.position;
             let (param, _) = self.parse_identifier()?;
@@ -728,7 +741,7 @@ impl<'a> Parser<'a> {
             if self.peek_token(",") {
                 self.position += 1; // Skip the comma
             } else if !self.peek_token(end) {
-                return Err(RealityError::UnexpectedToken);
+                return Err(RealityError::ExpectedToken(end.to_string()));
             }
         }
 
@@ -848,4 +861,115 @@ impl<'a> Parser<'a> {
         
         Ok((identifier, (start, end_pos)))
     }
+}
+
+
+fn operator(name: &str, a: &ASTNode, b: &ASTNode) -> ASTNode {
+    ASTNode::Application {
+        function: Box::new(ASTNode::Identifier(Annotation {
+            name: name.to_string(),
+            value: None,
+            location: (0, 0), // Placeholder for location, can be adjusted later
+        })),
+        arguments: vec![a.clone(), b.clone()],
+    }
+}
+
+pub fn add_default_operators(parser: &mut Parser) {
+    parser.add_operator(
+        "+",
+        Associativity::Left,
+        10,
+        OperatorType::Infix(|a, b| Ok(operator("+", a, b))),
+    );
+    parser.add_operator(
+        "-",
+        Associativity::Left,
+        10,
+        OperatorType::Infix(|a, b| Ok(operator("-", a, b))),
+    );
+    parser.add_operator(
+        "*",
+        Associativity::Left,
+        20,
+        OperatorType::Infix(|a, b| Ok(operator("*", a, b))),
+    );
+    parser.add_operator(
+        "/",
+        Associativity::Left,
+        20,
+        OperatorType::Infix(|a, b| Ok(operator("/", a, b))),
+    );
+
+    parser.add_operator(
+        "==",
+        Associativity::NonAssociative,
+        30,
+        OperatorType::Infix(|a, b| Ok(operator("==", a, b))),
+    );
+
+    parser.add_operator(
+        "!=",
+        Associativity::NonAssociative,
+        30,
+        OperatorType::Infix(|a, b| Ok(operator("!=", a, b))),
+    );
+
+    parser.add_operator(
+        "<",
+        Associativity::NonAssociative,
+        30,
+        OperatorType::Infix(|a, b| Ok(operator("<", a, b))),
+    );
+
+    parser.add_operator(
+        ">",
+        Associativity::NonAssociative,
+        30,
+        OperatorType::Infix(|a, b| Ok(operator(">", a, b))),
+    );
+
+    parser.add_operator(
+        "<=",
+        Associativity::NonAssociative,
+        30,
+        OperatorType::Infix(|a, b| Ok(operator("<=", a, b))),
+    );
+
+    parser.add_operator(
+        ">=",
+        Associativity::NonAssociative,
+        30,
+        OperatorType::Infix(|a, b| Ok(operator(">=", a, b))),
+    );
+
+    parser.add_operator(
+        "&&",
+        Associativity::Left,
+        40,
+        OperatorType::Infix(|a, b| Ok(operator("&&", a, b))),
+    );
+
+    parser.add_operator(
+        "||",
+        Associativity::Left,
+        40,
+        OperatorType::Infix(|a, b| Ok(operator("||", a, b))),
+    );
+
+    parser.add_operator(
+        "!",
+        Associativity::Left,
+        50,
+        OperatorType::Prefix(|a| {
+            Ok(ASTNode::Application {
+                function: Box::new(ASTNode::Identifier(Annotation {
+                    name: "!".to_string(),
+                    value: None,
+                    location: (0, 0), // Placeholder for location, can be adjusted later
+                })),
+                arguments: vec![a.clone()],
+            })
+        }),
+    );
 }
