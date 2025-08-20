@@ -446,16 +446,24 @@ impl<'a> Parser<'a> {
         self.consume_token("let")?;
 
         let (name, pos) = self.parse_identifier()?;
-        self.skip_whitespaces();
+
+        let mut ty = None;
+
+        if self.peek_token(":") {
+            self.consume_token(":")?;
+
+            let (parsed_ty, _) = self.parse_type()?;
+            ty = Some(parsed_ty);
+        }
+
         self.consume_token("=")?;
         let (value, _) = self.parse_expression(0)?;
-        self.skip_whitespaces();
 
         Ok((
             ASTNode::LetIn {
                 variable: Annotation {
                     name: name.to_string(),
-                    value: None,
+                    value: ty,
                     location: pos,
                 },
                 value: Box::new(value),
@@ -546,16 +554,24 @@ impl<'a> Parser<'a> {
     fn parse_statement_let(&mut self) -> Result<ASTNode> {
         self.position += 3; // Skip the "let" keyword
         let (annotation, pos) = self.parse_identifier()?;
-        self.skip_whitespaces();
+
+        let mut ty = None;
+
+        if self.peek_token(":") {
+            self.consume_token(":")?;
+
+            let (parsed_ty, _) = self.parse_type()?;
+            ty = Some(parsed_ty);
+        }
+
         self.consume_token("=")?;
         let (value, _) = self.parse_expression(0)?;
-        self.skip_whitespaces();
 
         Ok((
             ASTNode::LetIn {
                 variable: Annotation {
                     name: annotation.to_string(),
-                    value: None,
+                    value: ty,
                     location: pos,
                 },
                 value: Box::new(value),
