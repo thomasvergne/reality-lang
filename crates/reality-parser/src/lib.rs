@@ -987,11 +987,11 @@ impl Parser {
         self.skip_whitespaces();
         let start = self.position;
         while self.position < self.input.len()
-            && self.input[self.position..]
+            && (self.input[self.position..]
                 .chars()
                 .next()
                 .unwrap()
-                .is_alphanumeric()
+                .is_alphanumeric() || self.input[self.position..].starts_with('_'))
         {
             self.position += 1;
         }
