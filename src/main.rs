@@ -41,10 +41,6 @@ fn main() {
 
     let ast = ast.unwrap();
 
-    for node in &ast {
-        println!("{:?}", node);
-    }
-
     let module_resolver = ModuleResolver::new(file, file_content);
     let result = module_resolver.resolve(ast);
 
