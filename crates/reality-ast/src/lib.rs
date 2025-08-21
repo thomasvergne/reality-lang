@@ -96,6 +96,11 @@ pub enum ToplevelNode<N = Vec<String>, T = Type<N>, AT = Option<Type<N>>> {
         name: String,
         body: Vec<ToplevelNode<N, T, AT>>,
     },
+
+    Located {
+        span: (usize, usize),
+        node: Box<ToplevelNode<N, T, AT>>,
+    }
 }
 
 impl<T: Debug, N: Debug> Debug for ASTNode<N, T> {
@@ -103,7 +108,7 @@ impl<T: Debug, N: Debug> Debug for ASTNode<N, T> {
         match self {
             ASTNode::Literal(lit) => write!(f, "{:?}", lit),
             ASTNode::Identifier(id) => {
-                write!(f, "{:?}: {:?}", id.name, id.value)?;
+                write!(f, "{:?}", id.name)?;
 
                 Ok(())
             }
@@ -161,6 +166,7 @@ impl<T: Debug, N: Debug> Debug for ASTNode<N, T> {
 impl<T: Debug, AT: Debug, N: Debug> Debug for ToplevelNode<N, T, AT> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ToplevelNode::Located { node, .. } => write!(f, "{:?}", node),
             ToplevelNode::ModuleDeclaration { name, body } => {
                 write!(f, "module {} {{ {:?} }}", name, body)
             }
@@ -191,6 +197,15 @@ impl<T: Debug, AT: Debug, N: Debug> Debug for ToplevelNode<N, T, AT> {
                 write!(f, "require \"{}\";", module.join("::").to_string())
             }
             ToplevelNode::TypeAlias { name, body } => write!(f, "type {:?} = {:?};", name, body),
+        }
+    }
+}
+
+impl<T, AT, N> ToplevelNode<N, T, AT> {
+    pub fn located(self, span: (usize, usize)) -> Self {
+        ToplevelNode::Located {
+            span,
+            node: Box::new(self),
         }
     }
 }

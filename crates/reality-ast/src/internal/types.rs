@@ -50,30 +50,30 @@ pub struct Scheme<N = Vec<String>> {
 }
 
 impl Type<String> {
-    pub fn is_integer_type(&self) -> Option<i8> {
+    pub fn is_integer_type(&self) -> Option<i32> {
         match self {
             Type::TypeIdentifier(name) if name.starts_with("i") => {
-                let size = name[1..].parse::<i8>().ok()?;
+                let size = name[1..].parse::<i32>().ok()?;
                 Some(size)
             }
             _ => None,
         }
     }
 
-    pub fn is_unsigned_integer_type(&self) -> Option<i8> {
+    pub fn is_unsigned_integer_type(&self) -> Option<i32> {
         match self {
             Type::TypeIdentifier(name) if name.starts_with("u") => {
-                let size = name[1..].parse::<i8>().ok()?;
+                let size = name[1..].parse::<i32>().ok()?;
                 Some(size)
             }
             _ => None,
         }
     }
 
-    pub fn is_floating_point_type(&self) -> Option<i8> {
+    pub fn is_floating_point_type(&self) -> Option<i32> {
         match self {
             Type::TypeIdentifier(name) if name.starts_with("f") => {
-                let size = name[1..].parse::<i8>().ok()?;
+                let size = name[1..].parse::<i32>().ok()?;
                 Some(size)
             }
             _ => None,
