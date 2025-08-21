@@ -26,6 +26,9 @@ pub enum RealityError {
 
     #[error("Cycle detected: {0}")]
     CycleDetected(String),
+
+    #[error("Should not reach a require statement at this point")]
+    NoRequireStatement
 }
 
 pub fn report_error<'a>(
