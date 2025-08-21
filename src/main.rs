@@ -1,5 +1,5 @@
 use reality_error::report_error;
-use reality_module::ImportResolver;
+use reality_module::{imports::ImportResolver, modules::ModuleResolver};
 use reality_parser::{Parser, add_default_operators};
 
 fn main() {
@@ -40,6 +40,24 @@ fn main() {
     }
 
     let ast = ast.unwrap();
+
+    for node in &ast {
+        println!("{:?}", node);
+    }
+
+    let module_resolver = ModuleResolver::new(file, file_content);
+    let result = module_resolver.resolve(ast);
+
+    if let Err(err) = result {
+        return report_error(
+            module_resolver.file,
+            module_resolver.input,
+            (module_resolver.location.0, module_resolver.location.1),
+            err.clone(),
+        );
+    }
+
+    let ast = result.unwrap();
 
     for node in &ast {
         println!("{:?}", node);
