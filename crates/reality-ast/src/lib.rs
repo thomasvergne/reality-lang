@@ -64,7 +64,7 @@ pub enum ASTNode<N = Vec<String>, T = Option<Type<N>>> {
     },
 
     Located {
-        span: (usize, usize),
+        span: (usize, usize, String),
         node: Box<ASTNode<N, T>>,
     },
 }
@@ -98,10 +98,13 @@ pub enum ToplevelNode<N = Vec<String>, T = Type<N>, AT = Option<Type<N>>> {
     },
 
     Located {
-        span: (usize, usize),
+        span: (usize, usize, String),
         node: Box<ToplevelNode<N, T, AT>>,
-    }
+    },
 }
+
+pub type TypedASTNode<N = String, T = Type<N>> = ASTNode<N, T>;
+pub type TypedToplevelNode<N = String, T = Type<N>, AT = Type<N>> = ToplevelNode<N, T, AT>;
 
 impl<T: Debug, N: Debug> Debug for ASTNode<N, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -202,18 +205,18 @@ impl<T: Debug, AT: Debug, N: Debug> Debug for ToplevelNode<N, T, AT> {
 }
 
 impl<T, AT, N> ToplevelNode<N, T, AT> {
-    pub fn located(self, span: (usize, usize)) -> Self {
+    pub fn located(self, span: (usize, usize), file: String) -> Self {
         ToplevelNode::Located {
-            span,
+            span: (span.0, span.1, file),
             node: Box::new(self),
         }
     }
 }
 
 impl<T: Clone> ASTNode<Vec<String>, T> {
-    pub fn located(self, span: (usize, usize)) -> Self {
+    pub fn located(self, span: (usize, usize), file: String) -> Self {
         ASTNode::Located {
-            span,
+            span: (span.0, span.1, file),
             node: Box::new(self),
         }
     }
@@ -274,15 +277,14 @@ pub fn build_block_from_statements(statements: &[ASTNode]) -> ASTNode {
         return unit();
     }
 
-    match statements
-    {
+    match statements {
         [single] => single.clone(),
         [ASTNode::Located { span, node }, rest @ ..] => {
             let mut rest_ = rest.to_vec();
             rest_.push(*node.clone());
 
             ASTNode::Located {
-                span: *span,
+                span: span.clone(),
                 node: Box::new(build_block_from_statements(&rest_)),
             }
         }
