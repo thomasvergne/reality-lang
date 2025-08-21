@@ -112,7 +112,6 @@ impl<'a> Typechecker<'a> {
                 let (value, ty) = self.synthesize(*value)?;
 
                 if let Some(original_ty) = variable.value {
-                    println!("Original type: {:?} and {:?}", original_ty.normalize(), ty.clone());
                     self.is_subtype(original_ty.normalize(), ty.clone())?;
                 }
 
@@ -499,8 +498,6 @@ impl<'a> Typechecker<'a> {
                             let arg = self.check(arg, param.clone())?;
                             args.push(arg);
                         }
-
-                        println!("{:?}", args);
 
                         Ok(ASTNode::Application {
                             function: Box::new(function),
