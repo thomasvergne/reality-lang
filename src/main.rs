@@ -1,6 +1,7 @@
 use reality_error::report_error;
 use reality_module::{imports::ImportResolver, modules::ModuleResolver};
 use reality_parser::{Parser, add_default_operators};
+use reality_typechecker::Typechecker;
 
 fn main() {
     let file = "examples/main.rl";
@@ -24,8 +25,8 @@ fn main() {
     let ast = result.unwrap();
 
     let mut import_resolver = ImportResolver::new(
-        file_content,
         file,
+        file_content,
         current_dir.to_str().unwrap().to_string(),
     );
     let ast = import_resolver.resolve_all(ast);
@@ -49,6 +50,21 @@ fn main() {
             module_resolver.file,
             module_resolver.input,
             (module_resolver.location.0, module_resolver.location.1),
+            err.clone(),
+        );
+    }
+
+    let ast = result.unwrap();
+
+    let mut typechecker = Typechecker::new(file_content, file);
+
+    let result = typechecker.check_program(ast);
+
+    if let Err(err) = result {
+        return report_error(
+            typechecker.file,
+            typechecker.input,
+            typechecker.position,
             err.clone(),
         );
     }
