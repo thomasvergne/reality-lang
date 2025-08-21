@@ -70,6 +70,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "reality-typechecker"
+version = "0.1.0"
+
+[[package]]
 name = "syn"
 version = "2.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
