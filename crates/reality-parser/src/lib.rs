@@ -84,8 +84,9 @@ impl Parser {
         let start = self.position;
         if self.peek_token(token) {
             self.position += token.len();
+            let end = self.position;
             self.skip_whitespaces();
-            Ok((token, (start, self.position)))
+            Ok((token, (start, end)))
         } else {
             Err(RealityError::ExpectedToken(token.to_string()))
         }
@@ -107,7 +108,7 @@ impl Parser {
 
             self.skip_whitespaces();
 
-            nodes.push(node.located(span));
+            nodes.push(node.located(span, self.file.clone()));
         }
 
         Ok(nodes)
@@ -462,19 +463,19 @@ impl Parser {
         if self.peek_token("'") {
             let (string_literal, pos) = self.parse_literal_string('\'')?;
             return Ok((
-                ASTNode::Literal(Literal::String(string_literal)).located(pos),
+                ASTNode::Literal(Literal::String(string_literal)).located(pos, self.file.clone()),
                 pos,
             ));
         } else if self.peek_token("\"") {
             let (string_literal, pos) = self.parse_literal_string('"')?;
             return Ok((
-                ASTNode::Literal(Literal::String(string_literal)).located(pos),
+                ASTNode::Literal(Literal::String(string_literal)).located(pos, self.file.clone()),
                 pos,
             ));
         } else if self.peek_token("true") || self.peek_token("false") {
             let (literal, pos) = self.parse_literal_boolean()?;
             return Ok((
-                ASTNode::Literal(Literal::Boolean(literal)).located(pos),
+                ASTNode::Literal(Literal::Boolean(literal)).located(pos, self.file.clone()),
                 pos,
             ));
         } else if self.input[self.position..]
@@ -484,9 +485,9 @@ impl Parser {
             .is_numeric()
         {
             let (literal, pos) = self.parse_literal_number()?;
-            return Ok((ASTNode::Literal(literal).located(pos), pos));
+            return Ok((ASTNode::Literal(literal).located(pos, self.file.clone()), pos));
         } else if let Ok((call, pos)) = self.parse_call_expression() {
-            return Ok((call.located(pos), pos));
+            return Ok((call.located(pos, self.file.clone()), pos));
         } else if self.peek_token("if") {
             return self.parse_if_expression();
         } else if self.peek_token("let") {
@@ -496,7 +497,7 @@ impl Parser {
         } else if self.peek_token(".") {
             return self
                 .parse_literal_float_prefixed()
-                .map(|(lit, pos)| (ASTNode::Literal(lit).located(pos), pos));
+                .map(|(lit, pos)| (ASTNode::Literal(lit).located(pos, self.file.clone()), pos));
         } else if self.peek_token("|") {
             return self.parse_lambda();
         }
@@ -531,7 +532,7 @@ impl Parser {
                 value: Box::new(value),
                 body: Box::new(unit()),
             }
-            .located(pos),
+            .located(pos, self.file.clone()),
             pos,
         ))
     }
@@ -558,7 +559,7 @@ impl Parser {
                 body: Box::new(body.flatten_locations()),
                 return_type,
             }
-            .located((start_pos, end_post)),
+            .located((start_pos, end_post), self.file.clone()),
             (start_pos, end_post),
         ))
     }
@@ -599,7 +600,7 @@ impl Parser {
         let end_pos = self.position;
 
         Ok((
-            build_block_from_statements(expressions.as_slice()).located((start_pos, end_pos)),
+            build_block_from_statements(expressions.as_slice()).located((start_pos, end_pos), self.file.clone()),
             (start_pos, end_pos),
         ))
     }
@@ -639,7 +640,7 @@ impl Parser {
                 value: Box::new(value),
                 body: Box::new(unit()),
             }
-            .located(pos),
+            .located(pos, self.file.clone()),
             pos,
         ))
     }
@@ -659,7 +660,7 @@ impl Parser {
                     value: None,
                     location: pos,
                 })
-                .located(pos),
+                .located(pos, self.file.clone()),
                 pos,
             ));
         }
@@ -672,7 +673,7 @@ impl Parser {
         let (callee, callee_pos) = self.parse_callee()?;
 
         if !self.peek_token("(") {
-            return Ok((callee.located(callee_pos), callee_pos));
+            return Ok((callee.located(callee_pos, self.file.clone()), callee_pos));
         }
 
         self.consume_token("(")?;
@@ -703,7 +704,7 @@ impl Parser {
                 function: Box::new(callee),
                 arguments,
             }
-            .located(pos),
+            .located(pos, self.file.clone()),
             pos,
         ))
     }
@@ -727,7 +728,7 @@ impl Parser {
                 then_branch: Box::new(then_branch),
                 else_branch: Box::new(else_branch),
             }
-            .located(position),
+            .located(position, self.file.clone()),
             position,
         ))
     }
@@ -793,7 +794,7 @@ impl Parser {
             match f {
                 Err(f) => {
                     return Ok((
-                        f(rhs).located((start, end_pos)),
+                        f(rhs).located((start, end_pos), self.file.clone()),
                         (start, end_pos),
                     ));
                 }
@@ -806,7 +807,8 @@ impl Parser {
             }
         }
 
-        let (mut lhs, (start_pos, _)) = self.parse_term()?; // a number, identifier, parenthesis, etc.
+        let (mut lhs, (start_pos, end_pos)) = self.parse_term()?; // a number, identifier, parenthesis, etc.
+        let mut end = end_pos;
 
         loop {
             self.skip_whitespaces();
@@ -814,7 +816,7 @@ impl Parser {
             // Try to parse an operator
             let saved_pos = self.position;
 
-            if let Ok(((f, prec, assoc), _)) = self.parse_operator() {
+            if let Ok(((f, prec, assoc), (_, end_postfix_pos))) = self.parse_operator() {
                 if prec < min_precedence {
                     self.position = saved_pos;
                     break;
@@ -833,12 +835,14 @@ impl Parser {
                         // After parsing the operator, parse the RHS
                         let (rhs, (_, end_pos)) = self.parse_expression(next_min_prec)?;
 
-                        lhs = f(lhs, rhs).located((start_pos, end_pos));
+                        lhs = f(lhs, rhs).located((start_pos, end_pos), self.file.clone());
+                        end = end_pos;
                         continue;
                     }
 
                     Err(f) => {
-                        lhs = f(lhs);
+                        lhs = f(lhs).located((start_pos, end_postfix_pos), self.file.clone());
+                        end = end_postfix_pos;
                     }
                 }
             }
@@ -846,9 +850,7 @@ impl Parser {
             break;
         }
 
-        let end_pos = self.position;
-
-        Ok((lhs, (start_pos, end_pos)))
+        Ok((lhs, (start_pos, end)))
     }
 
     fn parse_parameters<'a>(&mut self, end: &'a str) -> Result<Vec<Annotation<Option<Type>>>> {
