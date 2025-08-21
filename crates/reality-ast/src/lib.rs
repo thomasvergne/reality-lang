@@ -103,7 +103,7 @@ impl<T: Debug, N: Debug> Debug for ASTNode<N, T> {
         match self {
             ASTNode::Literal(lit) => write!(f, "{:?}", lit),
             ASTNode::Identifier(id) => {
-                write!(f, "{:?}", id.name)?;
+                write!(f, "{:?}: {:?}", id.name, id.value)?;
 
                 Ok(())
             }
@@ -158,7 +158,7 @@ impl<T: Debug, N: Debug> Debug for ASTNode<N, T> {
     }
 }
 
-impl<T: Debug, AT: Debug> Debug for ToplevelNode<T, AT> {
+impl<T: Debug, AT: Debug, N: Debug> Debug for ToplevelNode<N, T, AT> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ToplevelNode::ModuleDeclaration { name, body } => {
@@ -260,12 +260,17 @@ pub fn build_block_from_statements(statements: &[ASTNode]) -> ASTNode {
     }
 
     match statements
-        .iter()
-        .map(ASTNode::flatten_locations)
-        .collect::<Vec<_>>()
-        .as_slice()
     {
         [single] => single.clone(),
+        [ASTNode::Located { span, node }, rest @ ..] => {
+            let mut rest_ = rest.to_vec();
+            rest_.push(*node.clone());
+
+            ASTNode::Located {
+                span: *span,
+                node: Box::new(build_block_from_statements(&rest_)),
+            }
+        }
         [
             ASTNode::LetIn {
                 variable,
