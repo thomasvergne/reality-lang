@@ -1,12 +1,11 @@
 use std::{cell::RefCell, collections::HashMap};
 
 use reality_ast::{
-    ASTNode, ToplevelNode,
     internal::{
         annotation::Annotation,
         literal::Literal,
         types::{self, TypeVariable},
-    },
+    }, ASTNode, ToplevelNode
 };
 
 pub struct Typechecker<'a> {
@@ -68,6 +67,14 @@ impl<'a> Typechecker<'a> {
 
     pub fn check_toplevel(&mut self, node: ToplevelNode) -> Result<TypedToplevelNode> {
         match node {
+            ToplevelNode::Located { span, node } => {
+                let old_position = self.position;
+                self.position = span;
+                let result = self.check_toplevel(*node)?;
+                self.position = old_position;
+                Ok(result)
+            }
+
             ToplevelNode::FunctionDeclaration { name, parameters, body, return_type } => {
                 let old_env = self.environment.clone();
                 let mut new_params = Vec::new();
@@ -109,20 +116,26 @@ impl<'a> Typechecker<'a> {
             }
 
             ToplevelNode::ConstantDeclaration { variable, value } => {
+                let final_ty: Type;
+
                 let (value, ty) = self.synthesize(*value)?;
 
                 if let Some(original_ty) = variable.value {
-                    self.is_subtype(original_ty.normalize(), ty.clone())?;
+                    self.is_subtype(ty.clone(), original_ty.normalize())?;
+
+                    final_ty = original_ty.normalize();
+                } else {
+                    final_ty = ty.clone();
                 }
 
                 self.environment.insert(variable.name.clone(), Scheme {
                     variables: vec![],
-                    body: ty.clone(),
+                    body: final_ty.clone(),
                 });
                 Ok(ToplevelNode::ConstantDeclaration {
                     variable: Annotation {
                         name: variable.name,
-                        value: ty,
+                        value: final_ty,
                         location: variable.location,
                     },
                     value: Box::new(value),
@@ -316,18 +329,16 @@ impl<'a> Typechecker<'a> {
                 function,
                 arguments,
             } => {
-                let (_, func_ty) = self.synthesize((*function).clone())?;
+                let (head, func_ty) = self.synthesize((*function).clone())?;
 
-                let result = self.check(
-                    ASTNode::Application {
-                        function,
-                        arguments,
-                    },
-                    func_ty.clone(),
-                )?;
+                if let Type::TypeFunction { return_type, parameters } = func_ty {
+                    let args = arguments
+                        .into_iter()
+                        .zip(parameters)
+                        .map(|(arg, ty)| self.check(arg, ty))
+                        .collect::<Result<Vec<_>>>()?;
 
-                if let Type::TypeFunction { return_type, .. } = func_ty {
-                    return Ok((result, *return_type));
+                    return Ok((ASTNode::Application { function: Box::new(head), arguments: args }, *return_type));
                 }
 
                 Err(reality_error::RealityError::ExpectedFunction(func_ty))
@@ -477,36 +488,14 @@ impl<'a> Typechecker<'a> {
                 })
             }
 
-            ASTNode::Application {
-                function,
-                arguments,
-            } => {
-                let function = self.check(*function, expected.clone())?;
+            _ => {
+                let (inferred, inferred_type) = self.synthesize(expr)?;
 
-                match expected {
-                    Type::TypeFunction { parameters, .. } => {
-                        let mut args = Vec::new();
+                println!("Inferred type: {:?}", inferred_type);
 
-                        if parameters.len() != arguments.len() {
-                            return Err(reality_error::RealityError::ArgumentCountMismatch {
-                                expected: parameters.len(),
-                                found: arguments.len(),
-                            });
-                        }
+                self.is_subtype(inferred_type, expected)?;
 
-                        for (param, arg) in parameters.iter().zip(arguments) {
-                            let arg = self.check(arg, param.clone())?;
-                            args.push(arg);
-                        }
-
-                        Ok(ASTNode::Application {
-                            function: Box::new(function),
-                            arguments: args,
-                        })
-                    }
-
-                    _ => Err(reality_error::RealityError::ExpectedFunction(expected)),
-                }
+                Ok(inferred)
             }
         }
     }
@@ -555,7 +544,7 @@ impl<'a> Typechecker<'a> {
         }
     }
 
-    fn is_subtype(&mut self, subtype: Type, supertype: Type) -> Result<bool> {
+    fn is_subtype(&mut self, subtype: Type, supertype: Type) -> Result<()> {
         let old_subtype = subtype.clone();
         let old_supertype = supertype.clone();
 
@@ -563,18 +552,32 @@ impl<'a> Typechecker<'a> {
         let supertype = self.remove_alias(supertype);
 
         if subtype == supertype {
-            return Ok(true);
+            return Ok(());
         }
 
         if let Some(size) = subtype.is_integer_type() {
             if let Some(super_size) = supertype.is_integer_type() {
-                return Ok(2u128.pow(size as u32) < 2u128.pow((super_size + 1) as u32));
+                if size <= super_size {
+                    return Ok(());
+                } else {
+                    return Err(reality_error::RealityError::TypeMismatch(
+                        subtype.clone(),
+                        supertype.clone(),
+                    ));
+                }
             }
         }
 
         if let Some(size) = subtype.is_unsigned_integer_type() {
             if let Some(super_size) = supertype.is_integer_type() {
-                return Ok(2u128.pow(size as u32) < 2u128.pow((super_size + 1) as u32));
+                if size < super_size {
+                    return Ok(());
+                } else {
+                    return Err(reality_error::RealityError::UnsignedIntegerMismatch(
+                        subtype.clone(),
+                        supertype.clone(),
+                    ));
+                }
             }
         }
 
@@ -589,13 +592,27 @@ impl<'a> Typechecker<'a> {
 
         if let Some(size) = subtype.is_unsigned_integer_type() {
             if let Some(super_size) = supertype.is_unsigned_integer_type() {
-                return Ok(2u128.pow(size as u32) < 2u128.pow((super_size + 1) as u32));
+                if size <= super_size {
+                    return Ok(());
+                } else {
+                    return Err(reality_error::RealityError::TypeMismatch(
+                        subtype.clone(),
+                        supertype.clone(),
+                    ));
+                }
             }
         }
 
         if let Some(size) = subtype.is_floating_point_type() {
             if let Some(super_size) = supertype.is_floating_point_type() {
-                return Ok(2u128.pow(size as u32) < 2u128.pow((super_size + 1) as u32));
+                if size <= super_size {
+                    return Ok(());
+                } else {
+                    return Err(reality_error::RealityError::TypeMismatch(
+                        subtype.clone(),
+                        supertype.clone(),
+                    ));
+                }
             }
         }
 
@@ -711,9 +728,9 @@ impl<'a> Typechecker<'a> {
         }
     }
 
-    fn unifies_with(&mut self, ty1: Type, ty2: Type, base_ty1: Type, base_ty2: Type) -> Result<bool> {
+    fn unifies_with(&mut self, ty1: Type, ty2: Type, base_ty1: Type, base_ty2: Type) -> Result<()> {
         if ty1 == ty2 {
-            return Ok(true);
+            return Ok(());
         }
 
         if let Type::TypeVariable(var) = &ty1 {
@@ -726,7 +743,7 @@ impl<'a> Typechecker<'a> {
                 }
 
                 *mut_var = TypeVariable::Bound(Box::new(ty2.clone()));
-                return Ok(true);
+                return Ok(());
             }
         }
 
@@ -741,7 +758,7 @@ impl<'a> Typechecker<'a> {
                 }
 
                 *mut_other_var = TypeVariable::Bound(Box::new(ty1.clone()));
-                return Ok(true);
+                return Ok(());
             }
         }
 
@@ -750,11 +767,9 @@ impl<'a> Typechecker<'a> {
         {
             if base1 == base2 && args1.len() == args2.len() {
                 for (arg1, arg2) in args1.iter().zip(args2.iter()) {
-                    if !self.unifies_with(arg1.clone(), arg2.clone(), base_ty1.clone(), base_ty2.clone())? {
-                        return Err(reality_error::RealityError::TypeMismatch(base_ty1.clone(), base_ty2.clone()));
-                    }
+                    self.unifies_with(arg1.clone(), arg2.clone(), base_ty1.clone(), base_ty2.clone())?;
                 }
-                return Ok(true);
+                return Ok(());
             }
         }
 
@@ -769,12 +784,7 @@ impl<'a> Typechecker<'a> {
         {
             if parameters.len() == other_parameters.len() {
                 for (param, other_param) in parameters.iter().zip(other_parameters.iter()) {
-                    if !self.unifies_with(param.clone(), other_param.clone(), base_ty1.clone(), base_ty2.clone())? {
-                        return Err(reality_error::RealityError::TypeMismatch(
-                            base_ty1.clone(),
-                            base_ty2.clone(),
-                        ));
-                    }
+                    self.unifies_with(param.clone(), other_param.clone(), base_ty1.clone(), base_ty2.clone())?;
                 }
                 return self.unifies_with(*return_type.clone(), *other_return_type.clone(), base_ty1, base_ty2);
             }
