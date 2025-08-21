@@ -55,7 +55,6 @@ pub enum RealityError {
 
 pub fn report_error<'a>(
     file: &'a str,
-    input: &'a str,
     location: (usize, usize),
     err: RealityError,
 ) {
@@ -66,6 +65,8 @@ pub fn report_error<'a>(
 
     let error_message = format!("{}", err);
 
+    let file_content = std::fs::read_to_string(file).unwrap_or_default();
+
     Report::build(ReportKind::Error, (file, location.0..location.1))
         .with_message(error_message)
         .with_label(
@@ -74,6 +75,6 @@ pub fn report_error<'a>(
                 .with_color(color),
         )
         .finish()
-        .print((file, Source::from(input)))
+        .print((file, Source::from(file_content)))
         .unwrap();
 }
