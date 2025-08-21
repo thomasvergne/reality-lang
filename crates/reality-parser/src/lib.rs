@@ -95,7 +95,7 @@ impl<'a> Parser<'a> {
             let (node, _) = self.parse_toplevel()?;
 
             if self.peek_token(";") {
-                self.position += 1;
+                self.consume_token(";")?;
             }
 
             self.skip_whitespaces();
@@ -148,7 +148,7 @@ impl<'a> Parser<'a> {
 
       self.skip_whitespaces();
       if self.peek_token("(") {
-        self.position += 1;
+        self.consume_token("(")?;
         let mut arguments = Vec::new();
 
         while !self.peek_token(")") {
@@ -160,13 +160,13 @@ impl<'a> Parser<'a> {
             arguments.push(arg);
             self.skip_whitespaces();
             if self.peek_token(",") {
-                self.position += 1; // Skip the comma
+                self.consume_token(",")?;
             } else if !self.peek_token(")") {
                 return Err(RealityError::ExpectedToken(":".to_string()));
             }
         }
 
-        self.position += 1; // Skip the closing parenthesis
+        self.consume_token(")")?;
         self.skip_whitespaces();
 
         return Ok((
@@ -204,7 +204,7 @@ impl<'a> Parser<'a> {
                 generics.push(generic.to_string());
                 self.skip_whitespaces();
                 if self.peek_token(",") {
-                    self.position += 1; // Skip the comma
+                    self.consume_token(",")?;
                 }
             }
 
@@ -235,13 +235,13 @@ impl<'a> Parser<'a> {
             
             self.skip_whitespaces();
             if self.peek_token(",") {
-                self.position += 1; // Skip the comma
+                self.consume_token(",")?;
             } else if !self.peek_token(")") {
                 return Err(RealityError::ExpectedToken(")".to_string()));
             }
         }
 
-        self.position += 1;
+        self.consume_token(")")?;
 
         let mut return_type = Type::TypeIdentifier(vec!["unit".to_string()]);
         
@@ -285,8 +285,7 @@ impl<'a> Parser<'a> {
             self.skip_whitespaces();
 
             if self.peek_token(";") {
-                self.position += 1; // Skip the semicolon
-                self.skip_whitespaces();
+                self.consume_token(";")?;
             }
         }
 
@@ -342,7 +341,7 @@ impl<'a> Parser<'a> {
                 generics.push(generic.to_string());
                 self.skip_whitespaces();
                 if self.peek_token(",") {
-                    self.position += 1; // Skip the comma
+                    self.consume_token(",")?;
                 } else if !self.peek_token("]") {
                     return Err(RealityError::ExpectedToken("]".to_string()));
                 }
@@ -426,7 +425,7 @@ impl<'a> Parser<'a> {
             arguments.push(arg);
             self.skip_whitespaces();
             if self.peek_token(",") {
-                self.position += 1; // Skip the comma
+                self.consume_token(",")?;
             }
         }
 
@@ -577,7 +576,7 @@ impl<'a> Parser<'a> {
             expressions.push(stmt.clone());
             self.skip_whitespaces();
             if self.peek_token(";") {
-                self.position += 1; // Skip the semicolon
+                self.consume_token(";")?;
 
                 self.skip_whitespaces();
 
@@ -590,7 +589,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        self.position += 1; // Skip the '}' character
+        self.consume_token("}")?;
         let end_pos = self.position;
 
         Ok((
@@ -609,7 +608,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_statement_let(&mut self) -> Result<ASTNode> {
-        self.position += 3; // Skip the "let" keyword
+        self.consume_token("let")?;
         let (annotation, pos) = self.parse_identifier()?;
 
         let mut ty = None;
@@ -641,10 +640,10 @@ impl<'a> Parser<'a> {
 
     fn parse_callee(&mut self) -> Result<ASTNode> {
         if self.peek_token("(") {
-            self.position += 1; // Skip the opening parenthesis
+            self.consume_token("(")?;
             let callee = self.parse_expression(0)?;
             if self.peek_token(")") {
-                self.position += 1; // Skip the closing parenthesis
+                self.consume_token(")")?;
                 return Ok(callee);
             }
         } else if let Ok((identifier, pos)) = self.parse_scoped_identifier() {
@@ -670,7 +669,7 @@ impl<'a> Parser<'a> {
             return Ok((callee.located(callee_pos), callee_pos));
         }
 
-        self.position += 1; // Skip the opening parenthesis
+        self.consume_token("(")?;
 
         let mut arguments = Vec::new();
 
@@ -683,14 +682,13 @@ impl<'a> Parser<'a> {
             arguments.push(argument);
             self.skip_whitespaces();
             if self.peek_token(",") {
-                self.position += 1; // Skip the comma
+                self.consume_token(",")?;
             } else if !self.peek_token(")") {
                 return Err(RealityError::ExpectedToken(")".to_string()));
             }
         }
 
-        self.position += 1; // Skip the closing parenthesis
-        let end_pos = self.position;
+        let (_, (_, end_pos)) = self.consume_token(")")?;
 
         let pos = (start_pos, end_pos);
 
@@ -799,7 +797,7 @@ impl<'a> Parser<'a> {
             let (param, _) = self.parse_identifier()?;
 
             if self.peek_token(":") {
-                self.position += 1; // Skip the ':'
+                self.consume_token(":")?;
                 let (type_annotation, (_, end)) = self.parse_type()?;
                 parameters.push(Annotation {
                     name: param.to_string(),
@@ -816,26 +814,26 @@ impl<'a> Parser<'a> {
 
             self.skip_whitespaces();
             if self.peek_token(",") {
-                self.position += 1; // Skip the comma
+                self.consume_token(",")?;
             } else if !self.peek_token(end) {
                 return Err(RealityError::ExpectedToken(end.to_string()));
             }
         }
 
-        self.position += 1;
+        self.consume_token(end)?;
 
         Ok((parameters, (start - 1, self.position)))
     }
 
     fn parse_literal_float_prefixed(&mut self) -> Result<Literal> {
-        self.position += 1;
+        let (_, (start_pos, _)) = self.consume_token(".")?;
 
-        let (integer_part, pos) = self.parse_literal_integer()?;
+        let (integer_part, (_, end_pos)) = self.parse_literal_integer()?;
 
         let fmt_float = format!("0.{}", integer_part);
 
         return match fmt_float.parse::<f64>() {
-            Ok(value) => Ok((Literal::Float(value), pos)),
+            Ok(value) => Ok((Literal::Float(value), (start_pos, end_pos))),
             Err(_) => Err(RealityError::ExpectedToken("float literal".to_string())),
         };
     }
@@ -892,7 +890,7 @@ impl<'a> Parser<'a> {
     fn parse_literal_number(&mut self) -> Result<Literal> {
         let (integer_part, pos) = self.parse_literal_integer()?;
         if self.peek_token(".") {
-            self.position += 1; // Skip the dot
+            self.consume_token(".")?;
             let (fractional_part, _) = if let Ok((i, _)) = self.parse_literal_integer() {
                 (i, pos)
             } else {
