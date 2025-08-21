@@ -114,8 +114,6 @@ impl<'a> ImportResolver<'a> {
                     self.file = old_file;
                     self.input = old_input;
 
-                    println!("flatten: {should_flatten_module:?}");
-
                     if should_flatten_module {
                         let flattened = self.flatten_one_level(module.result.clone());
                         return Ok(flattened);
