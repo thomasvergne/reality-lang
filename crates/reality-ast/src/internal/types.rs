@@ -26,10 +26,10 @@
 use std::fmt::Debug;
 
 #[derive(Clone, PartialEq)]
-pub enum Type {
-    TypeIdentifier(String),
+pub enum Type<N = Vec<String>> {
+    TypeIdentifier(N),
     TypeApplication(Box<Type>, Vec<Type>),
-    TypeVariable(Box<TypeVariable>),
+    TypeVariable(Box<TypeVariable<N>>),
     TypeFunction {
       parameters: Vec<Type>,
       return_type: Box<Type>,
@@ -38,12 +38,12 @@ pub enum Type {
 }
 
 #[derive(Clone, PartialEq)]
-pub enum TypeVariable {
+pub enum TypeVariable<N = Vec<String>> {
     Unbound(String, usize),
-    Bound(Box<Type>),
+    Bound(Box<Type<N>>),
 }
 
-impl Debug for TypeVariable {
+impl<N: Debug> Debug for TypeVariable<N> {
   fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
       match self {
           TypeVariable::Unbound(name, id) => write!(f, "{}{}", name, id),
@@ -52,10 +52,10 @@ impl Debug for TypeVariable {
   }
 }
 
-impl Debug for Type {
+impl<N: Debug> Debug for Type<N> {
   fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
       match self {
-          Type::TypeIdentifier(name) => write!(f, "{}", name),
+          Type::TypeIdentifier(name) => write!(f, "{:?}", name),
           Type::TypeApplication(base, args) => {
             write!(f, "{:?}<", base)?;
             for (i, arg) in args.iter().enumerate() {
