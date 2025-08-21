@@ -1,8 +1,7 @@
 const x: i32 = 5;
-import string;
+import string::*;
 
 fn main() {
-
     print("test");
 
     let y: string = "hello";
