@@ -69,9 +69,15 @@ impl<'a> Typechecker<'a> {
         match node {
             ToplevelNode::Located { span, node } => {
                 let old_position = self.position;
-                self.position = span;
+                let old_file_name = self.file;
+                self.position = (span.0, span.1);
+                self.file = Box::leak(span.2.clone().into_boxed_str());
+                
                 let result = self.check_toplevel(*node)?;
+
                 self.position = old_position;
+                self.file = old_file_name;
+
                 Ok(result)
             }
 
@@ -171,11 +177,14 @@ impl<'a> Typechecker<'a> {
         match expr {
             ASTNode::Located { span, node } => {
                 let old_position = self.position;
-                self.position = span;
+                let old_file_name = self.file;
+                self.position = (span.0, span.1);
+                self.file = Box::leak(span.2.clone().into_boxed_str());
 
                 let (checked_node, ty) = self.synthesize(*node)?;
 
                 self.position = old_position;
+                self.file = old_file_name;
                 Ok((checked_node, ty))
             }
 
@@ -354,13 +363,17 @@ impl<'a> Typechecker<'a> {
         match expr {
             ASTNode::Located { span, node } => {
                 let old_position = self.position;
-                self.position = span;
+                let old_file_name = self.file;
+                self.position = (span.0, span.1);
+                self.file = Box::leak(span.2.clone().into_boxed_str());
 
                 let checked_node = self.check(*node, expected);
 
                 match checked_node {
                     Ok(node) => {
                         self.position = old_position;
+                        self.file = old_file_name;
+                        
                         Ok(ASTNode::Located {
                             span,
                             node: Box::new(node),
