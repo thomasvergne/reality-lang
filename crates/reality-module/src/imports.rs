@@ -93,7 +93,7 @@ impl<'a> ImportResolver<'a> {
         self.input = Box::leak(file_content.clone().into_boxed_str());
 
         // Parse the file content
-        let mut parser = reality_parser::Parser::new(&file_content, &package_name);
+        let mut parser = reality_parser::Parser::new(&file_content, &absolute_path.to_string_lossy());
         add_default_operators(&mut parser);
         let ast = parser.parse_program();
 

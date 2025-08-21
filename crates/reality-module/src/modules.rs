@@ -41,7 +41,7 @@ impl<'a> ModuleResolver<'a> {
         match node {
             ToplevelNode::Located { span, node } => {
                 let resolved = self.resolve_singular(*node, paths.clone())?;
-                Ok(resolved.into_iter().map(|n| ToplevelNode::Located { span, node: Box::new(n) }).collect())
+                Ok(resolved.into_iter().map(|n| ToplevelNode::Located { span: span.clone(), node: Box::new(n) }).collect())
             }
 
             ToplevelNode::ConstantDeclaration { variable, value } => {
