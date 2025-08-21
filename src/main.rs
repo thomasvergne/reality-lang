@@ -16,7 +16,6 @@ fn main() {
     if let Err(err) = &result {
         return report_error(
             file,
-            file_content,
             (parser.position, parser.position + 1),
             err.clone(),
         );
@@ -34,7 +33,6 @@ fn main() {
     if let Err(err) = &ast {
         return report_error(
             import_resolver.file,
-            import_resolver.input,
             (import_resolver.position.0, import_resolver.position.1),
             err.clone(),
         );
@@ -48,7 +46,6 @@ fn main() {
     if let Err(err) = result {
         return report_error(
             module_resolver.file,
-            module_resolver.input,
             (module_resolver.location.0, module_resolver.location.1),
             err.clone(),
         );
@@ -63,7 +60,6 @@ fn main() {
     if let Err(err) = result {
         return report_error(
             typechecker.file,
-            typechecker.input,
             typechecker.position,
             err.clone(),
         );
