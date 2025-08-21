@@ -18,6 +18,7 @@ members = [
 "reality-error" = { path = "crates/reality-error" }
 "reality-parser" = { path = "crates/reality-parser" }
 "reality-module" = { path = "crates/reality-module" }
+"reality-typechecker" = { path = "crates/reality-typechecker" }
 
 [profile.release]
 opt-level = 3

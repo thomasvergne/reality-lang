@@ -38,6 +38,7 @@ dependencies = [
  "reality-error",
  "reality-module",
  "reality-parser",
+ "reality-typechecker",
 ]
 
 [[package]]
@@ -49,6 +50,7 @@ name = "reality-error"
 version = "0.1.0"
 dependencies = [
  "ariadne",
+ "reality-ast",
  "thiserror",
 ]
 
@@ -72,6 +74,10 @@ dependencies = [
 [[package]]
 name = "reality-typechecker"
 version = "0.1.0"
+dependencies = [
+ "reality-ast",
+ "reality-error",
+]
 
 [[package]]
 name = "syn"
