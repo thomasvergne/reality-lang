@@ -1,6 +1,8 @@
-use std::collections::HashMap;
-
-use reality_ast::{build_block_from_statements, internal::{annotation::Annotation, literal::Literal, types::Type}, unit, ASTNode, ToplevelNode};
+use reality_ast::{
+    ASTNode, ToplevelNode, build_block_from_statements,
+    internal::{annotation::Annotation, literal::Literal, types::Type},
+    unit,
+};
 use reality_error::RealityError;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -13,40 +15,42 @@ pub enum Associativity {
 type Position = (usize, usize);
 type Result<T> = std::result::Result<(T, Position), RealityError>;
 
-#[derive(Debug, Clone, PartialEq)]
+type BinaryFunction = fn(ASTNode, ASTNode) -> ASTNode;
+type UnaryFunction = fn(ASTNode) -> ASTNode;
+
+#[derive(Debug, Clone, PartialEq, Copy)]
 pub enum OperatorType {
-    Infix(fn(&ASTNode, &ASTNode) -> std::result::Result<ASTNode, RealityError>),
-    Prefix(fn(&ASTNode) -> std::result::Result<ASTNode, RealityError>),
-    Postfix(fn(&ASTNode) -> std::result::Result<ASTNode, RealityError>),
+    Infix(fn(&mut Parser) -> Result<()>, BinaryFunction),
+    Prefix(fn(&mut Parser) -> Result<()>, UnaryFunction),
+    Postfix(fn(&mut Parser) -> Result<()>, UnaryFunction),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Parser<'a> {
-    pub input: &'a str,
+pub struct Parser {
+    pub input: String,
     pub position: usize,
-    pub file: &'a str,
-    operators: HashMap<&'a str, (Associativity, usize, OperatorType)>,
+    pub file: String,
+    operators: Vec<(Associativity, usize, OperatorType)>,
 }
 
-impl<'a> Parser<'a> {
-    pub fn new(input: &'a str, file: &'a str) -> Self {
+impl Parser {
+    pub fn new<'a>(input: &'a str, file: &'a str) -> Self {
         Parser {
-            input,
+            input: input.to_string(),
             position: 0,
-            file,
-            operators: HashMap::new(),
+            file: file.to_string(),
+            operators: Vec::new(),
         }
     }
 
     pub fn add_operator(
         &mut self,
-        name: &'a str,
         associativity: Associativity,
         precedence: usize,
         operator_type: OperatorType,
     ) {
         self.operators
-            .insert(name, (associativity, precedence, operator_type));
+            .push((associativity, precedence, operator_type));
     }
 
     fn skip_whitespaces(&mut self) {
@@ -57,7 +61,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn expect_token(&mut self, token: &'a str) -> Result<&'a str> {
+    fn expect_token<'a>(&mut self, token: &'a str) -> Result<&'a str> {
         self.skip_whitespaces();
         let start = self.position;
         if self.input[self.position..].starts_with(token) {
@@ -68,11 +72,14 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn is_reserved(&self, input: &'a str) -> bool {
-        matches!(input, "let" | "in" | "if" | "else" | "fn" | "pub" | "import" | "type")
+    fn is_reserved(&self, input: String) -> bool {
+        match input.as_str() {
+            "let" | "in" | "if" | "else" | "fn" | "pub" | "import" | "type" => true,
+            _ => false,
+        }
     }
 
-    fn consume_token(&mut self, token: &'a str) -> Result<&'a str> {
+    fn consume_token<'a>(&mut self, token: &'a str) -> Result<&'a str> {
         self.skip_whitespaces();
         let start = self.position;
         if self.peek_token(token) {
@@ -84,7 +91,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn peek_token(&self, token: &'a str) -> bool {
+    fn peek_token<'a>(&self, token: &'a str) -> bool {
         self.input[self.position..].starts_with(token)
     }
 
@@ -116,19 +123,19 @@ impl<'a> Parser<'a> {
         if self.peek_token("const") {
             return self.parse_top_constant_decl();
         }
-        
+
         if self.peek_token("fn") {
             return self.parse_top_function();
         }
-        
+
         if self.peek_token("import") {
             return self.parse_top_require();
         }
-        
+
         if self.peek_token("type") {
             return self.parse_top_type_alias();
         }
-        
+
         if self.peek_token("pub") {
             return self.parse_top_public();
         }
@@ -141,47 +148,41 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type_application(&mut self) -> Result<Type> {
-      self.skip_whitespaces();
-      let start = self.position;
+        self.skip_whitespaces();
+        let start = self.position;
 
-      let (identifier, _) = self.parse_scoped_identifier()?;
+        let (identifier, _) = self.parse_scoped_identifier()?;
 
-      self.skip_whitespaces();
-      if self.peek_token("(") {
-        self.consume_token("(")?;
-        let mut arguments = Vec::new();
+        self.skip_whitespaces();
+        if self.peek_token("(") {
+            self.consume_token("(")?;
+            let mut arguments = Vec::new();
 
-        while !self.peek_token(")") {
-            self.skip_whitespaces();
-            if self.position >= self.input.len() {
-                return Err(RealityError::UnexpectedEndOfFile);
+            while !self.peek_token(")") {
+                self.skip_whitespaces();
+                if self.position >= self.input.len() {
+                    return Err(RealityError::UnexpectedEndOfFile);
+                }
+                let (arg, _) = self.parse_type()?;
+                arguments.push(arg);
+                self.skip_whitespaces();
+                if self.peek_token(",") {
+                    self.consume_token(",")?;
+                } else if !self.peek_token(")") {
+                    return Err(RealityError::ExpectedToken(":".to_string()));
+                }
             }
-            let (arg, _) = self.parse_type()?;
-            arguments.push(arg);
+
+            self.consume_token(")")?;
             self.skip_whitespaces();
-            if self.peek_token(",") {
-                self.consume_token(",")?;
-            } else if !self.peek_token(")") {
-                return Err(RealityError::ExpectedToken(":".to_string()));
-            }
+
+            return Ok((
+                Type::TypeApplication(Box::new(Type::TypeIdentifier(identifier)), arguments),
+                (start, self.position),
+            ));
         }
 
-        self.consume_token(")")?;
-        self.skip_whitespaces();
-
-        return Ok((
-            Type::TypeApplication(
-                Box::new(Type::TypeIdentifier(identifier)),
-                arguments,
-            ),
-            (start, self.position),
-        ))
-      }
-
-      Ok((
-          Type::TypeIdentifier(identifier),
-          (start, self.position),
-      ))
+        Ok((Type::TypeIdentifier(identifier), (start, self.position)))
     }
 
     fn parse_top_function(&mut self) -> Result<ToplevelNode> {
@@ -222,7 +223,7 @@ impl<'a> Parser<'a> {
                 return Err(RealityError::UnexpectedEndOfFile);
             }
             let (param, (start, _)) = self.parse_identifier()?;
-            
+
             self.consume_token(":")?;
 
             let (param_type, (_, end)) = self.parse_type()?;
@@ -232,7 +233,7 @@ impl<'a> Parser<'a> {
                 value: param_type,
                 location: (start, end),
             });
-            
+
             self.skip_whitespaces();
             if self.peek_token(",") {
                 self.consume_token(",")?;
@@ -244,7 +245,7 @@ impl<'a> Parser<'a> {
         self.consume_token(")")?;
 
         let mut return_type = Type::TypeIdentifier(vec!["unit".to_string()]);
-        
+
         if self.peek_token("->") {
             self.consume_token("->")?;
             let (ty, _) = self.parse_type()?;
@@ -275,7 +276,7 @@ impl<'a> Parser<'a> {
         let (name, _) = self.parse_identifier()?;
 
         let mut nodes = Vec::new();
-        
+
         self.consume_token("{")?;
 
         while !self.peek_token("}") {
@@ -329,7 +330,7 @@ impl<'a> Parser<'a> {
 
         let mut end_pos = end_pos_1;
         let mut generics = Vec::new();
-        
+
         if self.peek_token("[") {
             self.consume_token("[")?;
             while !self.peek_token("]") {
@@ -389,23 +390,29 @@ impl<'a> Parser<'a> {
 
         let (value, _) = self.parse_expression(0)?;
 
-        Ok((ToplevelNode::ConstantDeclaration {
-            variable: Annotation {
-                name: name.to_string(),
-                value: annotation,
-                location: (start_pos, end_pos)
+        Ok((
+            ToplevelNode::ConstantDeclaration {
+                variable: Annotation {
+                    name: name.to_string(),
+                    value: annotation,
+                    location: (start_pos, end_pos),
+                },
+                value: Box::new(value),
             },
-            value: Box::new(value),
-        }, (start_pos, end_pos)))
+            (start_pos, end_pos),
+        ))
     }
 
     fn parse_type_pointer(&mut self) -> Result<Type> {
         let (_, (start, _)) = self.consume_token("*")?;
         let (pointed_type, (_, end)) = self.parse_type()?;
-        Ok((Type::TypeApplication(
-            Box::new(Type::TypeIdentifier(vec!["pointer".to_string()])),
-            vec![pointed_type]
-        ), (start, end)))
+        Ok((
+            Type::TypeApplication(
+                Box::new(Type::TypeIdentifier(vec!["pointer".to_string()])),
+                vec![pointed_type],
+            ),
+            (start, end),
+        ))
     }
 
     fn parse_type_function(&mut self) -> Result<Type> {
@@ -470,7 +477,10 @@ impl<'a> Parser<'a> {
             ));
         } else if self.peek_token("true") || self.peek_token("false") {
             let (literal, pos) = self.parse_literal_boolean()?;
-            return Ok((ASTNode::Literal(Literal::Boolean(literal)).located(pos), pos));
+            return Ok((
+                ASTNode::Literal(Literal::Boolean(literal)).located(pos),
+                pos,
+            ));
         } else if self.input[self.position..]
             .chars()
             .next()
@@ -531,9 +541,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_lambda(&mut self) -> Result<ASTNode> {
-        let (_, (start_pos,  _)) = self.consume_token("|")?;
+        let (_, (start_pos, _)) = self.consume_token("|")?;
         let (parameters, _) = self.parse_parameters("|")?;
-        
+
         let mut return_type = None;
 
         if self.peek_token(":") {
@@ -553,7 +563,7 @@ impl<'a> Parser<'a> {
                 return_type,
             }
             .located((start_pos, end_post)),
-            (start_pos, end_post)
+            (start_pos, end_post),
         ))
     }
 
@@ -701,7 +711,7 @@ impl<'a> Parser<'a> {
             pos,
         ))
     }
-    
+
     fn parse_if_expression(&mut self) -> Result<ASTNode> {
         let (_, (start_pos, _)) = self.consume_token("if")?;
 
@@ -726,16 +736,56 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    fn parse_operator(&mut self) -> Result<&'a str> {
+    fn parse_operator(
+        &mut self,
+    ) -> Result<(
+        std::result::Result<BinaryFunction, UnaryFunction>,
+        usize,
+        Associativity,
+    )> {
         self.skip_whitespaces();
         let start = self.position;
-        for (op, _) in &self.operators {
-            if self.input[self.position..].starts_with(op) {
-                self.position += op.len();
-                return Ok((op, (start, self.position)));
+        let mut err: Option<RealityError> = None;
+
+        // Clone the operators list to avoid multiple mutable borrows of self
+        let mut sorted_operators = self.operators.clone();
+        sorted_operators.sort_by(|a, b| a.1.cmp(&b.1));
+
+        let mut operators_iter = sorted_operators.into_iter();
+
+        while let Some((assoc, prec, op)) = operators_iter.next() {
+            let op_f = get_function(op);
+            let result = op_f(self);
+
+            match result {
+                Ok(((), (start_tmp, end_tmp))) => match op {
+                    OperatorType::Infix(_, f) => {
+                        let f_ret = Ok(f.clone());
+
+                        return Ok(((f_ret, prec, assoc.clone()), (start, start)));
+                    }
+                    OperatorType::Prefix(_, f) => {
+                        return Ok((
+                            (Err(f.clone()), prec, assoc.clone()),
+                            (start_tmp, start_tmp),
+                        ));
+                    }
+
+                    OperatorType::Postfix(_, f) => {
+                        return Ok(((Err(f.clone()), prec, assoc.clone()), (start, end_tmp)));
+                    }
+                },
+
+                Err(err_) => {
+                    self.position = start;
+                    err = Some(err_);
+
+                    continue;
+                }
             }
         }
-        Err(RealityError::ExpectedToken("operator".to_string()))
+
+        Err(err.unwrap_or(RealityError::ExpectedToken("operator".to_string())))
     }
 
     fn parse_expression(&mut self, min_precedence: usize) -> Result<ASTNode> {
@@ -747,32 +797,33 @@ impl<'a> Parser<'a> {
 
             // Try to parse an operator
             let saved_pos = self.position;
-            if let Ok((op, _)) = self.parse_operator() {
-                let operators = self.operators.clone();
-                if let Some((assoc, prec, OperatorType::Infix(f))) = operators.get(op) {
-                    if *prec < min_precedence {
-                        self.position = saved_pos;
-                        break;
+
+            if let Ok(((f, prec, assoc), (start, _))) = self.parse_operator() {
+                if prec < min_precedence {
+                    self.position = saved_pos;
+                    break;
+                }
+
+                // For left-associative operators, precedence stays the same.
+                // For right-associative, we increase precedence for the recursive call.
+                let next_min_prec = match assoc {
+                    Associativity::Left => prec + 1,
+                    Associativity::Right => prec,
+                    Associativity::NonAssociative => prec + 1,
+                };
+
+                match f {
+                    Ok(f) => {
+                        // After parsing the operator, parse the RHS
+                        let (rhs, (_, end_pos)) = self.parse_expression(next_min_prec)?;
+
+                        lhs = f(lhs, rhs).located((start, end_pos));
+                        continue;
                     }
 
-                    // For left-associative operators, precedence stays the same.
-                    // For right-associative, we increase precedence for the recursive call.
-                    let next_min_prec = match assoc {
-                        Associativity::Left => *prec + 1,
-                        Associativity::Right => *prec,
-                        Associativity::NonAssociative => *prec + 1,
-                    };
-
-                    // After parsing the operator, parse the RHS
-                    let (rhs, _) = self.parse_expression(next_min_prec)?;
-
-                    lhs = f(&lhs, &rhs)?;
-                    continue;
-                } else {
-                    // If the operator is not recognized, reset the position
-                    self.position = saved_pos;
-
-                    return Err(RealityError::UnexpectedOperator(op.to_string()));
+                    Err(f) => {
+                        lhs = f(lhs);
+                    }
                 }
             }
 
@@ -784,7 +835,7 @@ impl<'a> Parser<'a> {
         Ok((lhs, (start_pos, end_pos)))
     }
 
-    fn parse_parameters(&mut self, end: &'a str) -> Result<Vec<Annotation<Option<Type>>>> {
+    fn parse_parameters<'a>(&mut self, end: &'a str) -> Result<Vec<Annotation<Option<Type>>>> {
         let start = self.position;
         let mut parameters = Vec::new();
 
@@ -932,7 +983,7 @@ impl<'a> Parser<'a> {
         Ok((identifiers, (start, end_pos)))
     }
 
-    fn parse_identifier(&mut self) -> Result<&'a str> {
+    fn parse_identifier(&mut self) -> Result<String> {
         self.skip_whitespaces();
         let start = self.position;
         while self.position < self.input.len()
@@ -948,9 +999,9 @@ impl<'a> Parser<'a> {
             return Err(RealityError::ExpectedToken("identifier".to_string()));
         }
 
-        let identifier = &self.input[start..self.position];
+        let identifier = self.input[start..self.position].to_string();
 
-        if self.is_reserved(identifier) {
+        if self.is_reserved(identifier.clone()) {
             self.position = start;
             return Err(RealityError::ReservedKeyword(identifier.to_string()));
         }
@@ -958,11 +1009,10 @@ impl<'a> Parser<'a> {
         let end_pos = self.position;
 
         self.skip_whitespaces();
-        
+
         Ok((identifier, (start, end_pos)))
     }
 }
-
 
 fn operator(name: &str, a: &ASTNode, b: &ASTNode) -> ASTNode {
     ASTNode::Application {
@@ -977,99 +1027,165 @@ fn operator(name: &str, a: &ASTNode, b: &ASTNode) -> ASTNode {
 
 pub fn add_default_operators(parser: &mut Parser) {
     parser.add_operator(
-        "+",
         Associativity::Left,
         10,
-        OperatorType::Infix(|a, b| Ok(operator("+", a, b))),
+        OperatorType::Infix(
+            |p| {
+                let (_, pos) = p.consume_token("+")?;
+                Ok(((), pos))
+            },
+            |a, b| operator("+", &a, &b),
+        ),
     );
     parser.add_operator(
-        "-",
         Associativity::Left,
         10,
-        OperatorType::Infix(|a, b| Ok(operator("-", a, b))),
+        OperatorType::Infix(
+            |p| {
+                let (_, pos) = p.consume_token("-")?;
+                Ok(((), pos))
+            },
+            |a, b| operator("-", &a, &b),
+        ),
     );
     parser.add_operator(
-        "*",
         Associativity::Left,
         20,
-        OperatorType::Infix(|a, b| Ok(operator("*", a, b))),
+        OperatorType::Infix(
+            |p| {
+                let (_, pos) = p.consume_token("*")?;
+                Ok(((), pos))
+            },
+            |a, b| operator("*", &a, &b),
+        ),
     );
     parser.add_operator(
-        "/",
         Associativity::Left,
         20,
-        OperatorType::Infix(|a, b| Ok(operator("/", a, b))),
+        OperatorType::Infix(
+            |p| {
+                let (_, pos) = p.consume_token("/")?;
+                Ok(((), pos))
+            },
+            |a, b| operator("/", &a, &b),
+        ),
     );
 
     parser.add_operator(
-        "==",
         Associativity::NonAssociative,
         30,
-        OperatorType::Infix(|a, b| Ok(operator("==", a, b))),
+        OperatorType::Infix(
+            |p| {
+                let (_, pos) = p.consume_token("==")?;
+                Ok(((), pos))
+            },
+            |a, b| operator("==", &a, &b),
+        ),
     );
-
     parser.add_operator(
-        "!=",
         Associativity::NonAssociative,
         30,
-        OperatorType::Infix(|a, b| Ok(operator("!=", a, b))),
+        OperatorType::Infix(
+            |p| {
+                let (_, pos) = p.consume_token("!=")?;
+                Ok(((), pos))
+            },
+            |a, b| operator("!=", &a, &b),
+        ),
     );
-
     parser.add_operator(
-        "<",
         Associativity::NonAssociative,
         30,
-        OperatorType::Infix(|a, b| Ok(operator("<", a, b))),
+        OperatorType::Infix(
+            |p| {
+                let (_, pos) = p.consume_token("<")?;
+                Ok(((), pos))
+            },
+            |a, b| operator("<", &a, &b),
+        ),
     );
-
     parser.add_operator(
-        ">",
         Associativity::NonAssociative,
         30,
-        OperatorType::Infix(|a, b| Ok(operator(">", a, b))),
+        OperatorType::Infix(
+            |p| {
+                let (_, pos) = p.consume_token(">")?;
+                Ok(((), pos))
+            },
+            |a, b| operator(">", &a, &b),
+        ),
     );
-
     parser.add_operator(
-        "<=",
         Associativity::NonAssociative,
         30,
-        OperatorType::Infix(|a, b| Ok(operator("<=", a, b))),
+        OperatorType::Infix(
+            |p| {
+                let (_, pos) = p.consume_token("<=")?;
+                Ok(((), pos))
+            },
+            |a, b| operator("<=", &a, &b),
+        ),
     );
-
     parser.add_operator(
-        ">=",
         Associativity::NonAssociative,
         30,
-        OperatorType::Infix(|a, b| Ok(operator(">=", a, b))),
+        OperatorType::Infix(
+            |p| {
+                let (_, pos) = p.consume_token(">=")?;
+                Ok(((), pos))
+            },
+            |a, b| operator(">=", &a, &b),
+        ),
     );
-
     parser.add_operator(
-        "&&",
         Associativity::Left,
         40,
-        OperatorType::Infix(|a, b| Ok(operator("&&", a, b))),
+        OperatorType::Infix(
+            |p| {
+                let (_, pos) = p.consume_token("&&")?;
+                Ok(((), pos))
+            },
+            |a, b| operator("&&", &a, &b),
+        ),
     );
-
     parser.add_operator(
-        "||",
         Associativity::Left,
         40,
-        OperatorType::Infix(|a, b| Ok(operator("||", a, b))),
+        OperatorType::Infix(
+            |p| {
+                let (_, pos) = p.consume_token("||")?;
+                Ok(((), pos))
+            },
+            |a, b| operator("||", &a, &b),
+        ),
     );
 
     parser.add_operator(
-        "!",
         Associativity::Left,
         50,
-        OperatorType::Prefix(|a| {
-            Ok(ASTNode::Application {
-                function: Box::new(ASTNode::Identifier(Annotation {
-                    name: vec!["!".to_string()],
-                    value: None,
-                    location: (0, 0), // Placeholder for location, can be adjusted later
-                })),
-                arguments: vec![a.clone()],
-            })
-        }),
+        OperatorType::Prefix(
+            |p| {
+                let (_, pos) = p.consume_token("!")?;
+                Ok(((), pos))
+            },
+            |a| {
+                ASTNode::Application {
+                    function: Box::new(ASTNode::Identifier(Annotation {
+                        name: vec!["!".to_string()],
+                        value: None,
+                        location: (0, 0), // Placeholder for location, can be ajusté plus tard
+                    })),
+                    arguments: vec![a.clone()],
+                }
+            },
+        ),
     );
+}
+
+fn get_function(op: OperatorType) -> fn(&mut Parser) -> Result<()> {
+    match op {
+        OperatorType::Infix(f, _) => f,
+        OperatorType::Prefix(f, _) => f,
+        OperatorType::Postfix(f, _) => f,
+    }
 }
