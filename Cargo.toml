@@ -9,7 +9,7 @@ members = [
     "crates/reality-ast",
     "crates/reality-error",
     "crates/reality-module",
-    "crates/reality-parser",
+    "crates/reality-parser", "crates/reality-specialize",
     "crates/reality-typechecker",
 ]
 
