@@ -99,7 +99,7 @@ impl Parser {
         let mut nodes = Vec::new();
 
         while self.position < self.input.len() {
-            let (node, _) = self.parse_toplevel()?;
+            let (node, span) = self.parse_toplevel()?;
 
             if self.peek_token(";") {
                 self.consume_token(";")?;
@@ -107,7 +107,7 @@ impl Parser {
 
             self.skip_whitespaces();
 
-            nodes.push(node);
+            nodes.push(node.located(span));
         }
 
         Ok(nodes)
@@ -271,7 +271,7 @@ impl Parser {
     }
 
     fn parse_top_module(&mut self) -> Result<ToplevelNode> {
-        self.consume_token("mod")?;
+        let (_, (start, _)) = self.consume_token("mod")?;
 
         let (name, _) = self.parse_identifier()?;
 
@@ -290,14 +290,14 @@ impl Parser {
             }
         }
 
-        self.consume_token("}")?;
+        let (_, (_, end)) = self.consume_token("}")?;
 
         Ok((
             ToplevelNode::ModuleDeclaration {
                 name: name.to_string(),
                 body: nodes,
             },
-            (0, 0),
+            (start, end),
         ))
     }
 
@@ -370,36 +370,32 @@ impl Parser {
     }
 
     fn parse_top_constant_decl(&mut self) -> Result<ToplevelNode> {
-        self.consume_token("const")?;
+        let (_, (start, _)) = self.consume_token("const")?;
 
-        let (name, (start_pos, end_pos_1)) = self.parse_identifier()?;
-
-        let mut end_pos = end_pos_1;
+        let (name, _) = self.parse_identifier()?;
 
         let mut annotation = None;
 
         if self.peek_token(":") {
             self.consume_token(":")?;
-            let (type_annotation, (_, end_pos_2)) = self.parse_type()?;
+            let (type_annotation, _) = self.parse_type()?;
             annotation = Some(type_annotation);
-
-            end_pos = end_pos_2;
         }
 
         self.consume_token("=")?;
 
-        let (value, _) = self.parse_expression(0)?;
+        let (value, (_, end)) = self.parse_expression(0)?;
 
         Ok((
             ToplevelNode::ConstantDeclaration {
                 variable: Annotation {
                     name: name.to_string(),
                     value: annotation,
-                    location: (start_pos, end_pos),
+                    location: (start, end),
                 },
                 value: Box::new(value),
             },
-            (start_pos, end_pos),
+            (start, end),
         ))
     }
 
@@ -790,6 +786,26 @@ impl Parser {
 
     fn parse_expression(&mut self, min_precedence: usize) -> Result<ASTNode> {
         self.skip_whitespaces();
+
+        if let Ok(((f, prec, _), (start, _))) = self.parse_operator() {
+            let (rhs, (_, end_pos)) = self.parse_expression(prec + 1)?;
+
+            match f {
+                Err(f) => {
+                    return Ok((
+                        f(rhs).located((start, end_pos)),
+                        (start, end_pos),
+                    ));
+                }
+
+                Ok(_) => {
+                    return Err(RealityError::ExpectedToken(
+                        "left-hand side of binary operator".to_string(),
+                    ));
+                }
+            }
+        }
+
         let (mut lhs, (start_pos, _)) = self.parse_term()?; // a number, identifier, parenthesis, etc.
 
         loop {
@@ -798,7 +814,7 @@ impl Parser {
             // Try to parse an operator
             let saved_pos = self.position;
 
-            if let Ok(((f, prec, assoc), (start, _))) = self.parse_operator() {
+            if let Ok(((f, prec, assoc), _)) = self.parse_operator() {
                 if prec < min_precedence {
                     self.position = saved_pos;
                     break;
@@ -817,7 +833,7 @@ impl Parser {
                         // After parsing the operator, parse the RHS
                         let (rhs, (_, end_pos)) = self.parse_expression(next_min_prec)?;
 
-                        lhs = f(lhs, rhs).located((start, end_pos));
+                        lhs = f(lhs, rhs).located((start_pos, end_pos));
                         continue;
                     }
 
@@ -1034,7 +1050,7 @@ pub fn add_default_operators(parser: &mut Parser) {
                 let (_, pos) = p.consume_token("+")?;
                 Ok(((), pos))
             },
-            |a, b| operator("+", &a, &b),
+            |a, b| operator("add", &a, &b),
         ),
     );
     parser.add_operator(
@@ -1045,7 +1061,7 @@ pub fn add_default_operators(parser: &mut Parser) {
                 let (_, pos) = p.consume_token("-")?;
                 Ok(((), pos))
             },
-            |a, b| operator("-", &a, &b),
+            |a, b| operator("sub", &a, &b),
         ),
     );
     parser.add_operator(
@@ -1056,7 +1072,7 @@ pub fn add_default_operators(parser: &mut Parser) {
                 let (_, pos) = p.consume_token("*")?;
                 Ok(((), pos))
             },
-            |a, b| operator("*", &a, &b),
+            |a, b| operator("mul", &a, &b),
         ),
     );
     parser.add_operator(
@@ -1067,7 +1083,7 @@ pub fn add_default_operators(parser: &mut Parser) {
                 let (_, pos) = p.consume_token("/")?;
                 Ok(((), pos))
             },
-            |a, b| operator("/", &a, &b),
+            |a, b| operator("div", &a, &b),
         ),
     );
 
@@ -1079,7 +1095,7 @@ pub fn add_default_operators(parser: &mut Parser) {
                 let (_, pos) = p.consume_token("==")?;
                 Ok(((), pos))
             },
-            |a, b| operator("==", &a, &b),
+            |a, b| operator("equals", &a, &b),
         ),
     );
     parser.add_operator(
@@ -1090,7 +1106,7 @@ pub fn add_default_operators(parser: &mut Parser) {
                 let (_, pos) = p.consume_token("!=")?;
                 Ok(((), pos))
             },
-            |a, b| operator("!=", &a, &b),
+            |a, b| operator("not_equals", &a, &b),
         ),
     );
     parser.add_operator(
@@ -1101,7 +1117,7 @@ pub fn add_default_operators(parser: &mut Parser) {
                 let (_, pos) = p.consume_token("<")?;
                 Ok(((), pos))
             },
-            |a, b| operator("<", &a, &b),
+            |a, b| operator("less_than", &a, &b),
         ),
     );
     parser.add_operator(
@@ -1112,7 +1128,7 @@ pub fn add_default_operators(parser: &mut Parser) {
                 let (_, pos) = p.consume_token(">")?;
                 Ok(((), pos))
             },
-            |a, b| operator(">", &a, &b),
+            |a, b| operator("greater_than", &a, &b),
         ),
     );
     parser.add_operator(
@@ -1123,7 +1139,7 @@ pub fn add_default_operators(parser: &mut Parser) {
                 let (_, pos) = p.consume_token("<=")?;
                 Ok(((), pos))
             },
-            |a, b| operator("<=", &a, &b),
+            |a, b| operator("less_than_or_equal", &a, &b),
         ),
     );
     parser.add_operator(
@@ -1134,7 +1150,7 @@ pub fn add_default_operators(parser: &mut Parser) {
                 let (_, pos) = p.consume_token(">=")?;
                 Ok(((), pos))
             },
-            |a, b| operator(">=", &a, &b),
+            |a, b| operator("greater_than_or_equal", &a, &b),
         ),
     );
     parser.add_operator(
@@ -1145,7 +1161,7 @@ pub fn add_default_operators(parser: &mut Parser) {
                 let (_, pos) = p.consume_token("&&")?;
                 Ok(((), pos))
             },
-            |a, b| operator("&&", &a, &b),
+            |a, b| operator("and", &a, &b),
         ),
     );
     parser.add_operator(
@@ -1156,7 +1172,7 @@ pub fn add_default_operators(parser: &mut Parser) {
                 let (_, pos) = p.consume_token("||")?;
                 Ok(((), pos))
             },
-            |a, b| operator("||", &a, &b),
+            |a, b| operator("or", &a, &b),
         ),
     );
 
@@ -1171,7 +1187,7 @@ pub fn add_default_operators(parser: &mut Parser) {
             |a| {
                 ASTNode::Application {
                     function: Box::new(ASTNode::Identifier(Annotation {
-                        name: vec!["!".to_string()],
+                        name: vec!["not".to_string()],
                         value: None,
                         location: (0, 0), // Placeholder for location, can be ajusté plus tard
                     })),
