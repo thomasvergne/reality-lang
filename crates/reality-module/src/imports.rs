@@ -70,7 +70,7 @@ impl<'a> ImportResolver<'a> {
         &mut self,
         absolute_path: PathBuf,
         package_name: String,
-        should_flatten_module: bool
+        should_flatten_module: bool,
     ) -> Result<Vec<ToplevelNode>, RealityError> {
         // If the module is not found, we need to read it from the file system
         if !absolute_path.exists() {
@@ -169,7 +169,30 @@ impl<'a> ImportResolver<'a> {
         for module in ast.iter() {
             let old_location = self.position;
 
-            if let ToplevelNode::ImportDeclaration(paths) = module {
+            if let ToplevelNode::Located { node, .. } = module {
+                if let ToplevelNode::ImportDeclaration(paths) = *node.clone() {
+                    let mut paths = paths.clone();
+                    let mut should_flatten_module = false;
+
+                    if paths.ends_with(&["*".to_string()]) {
+                        paths.pop();
+                        should_flatten_module = true;
+                    }
+
+                    let module_name_str = paths.join("/");
+                    let package_name = PathBuf::from(module_name_str.clone()).with_extension("rl");
+
+                    let resolved = self.resolve(
+                        package_name.to_string_lossy().into_owned(),
+                        module_name_str,
+                        should_flatten_module,
+                    )?;
+
+                    resolved_modules.extend(resolved);
+                } else {
+                    resolved_modules.push(module.clone());
+                }
+            } else if let ToplevelNode::ImportDeclaration(paths) = module {
                 let mut paths = paths.clone();
                 let mut should_flatten_module = false;
 
@@ -181,8 +204,11 @@ impl<'a> ImportResolver<'a> {
                 let module_name_str = paths.join("/");
                 let package_name = PathBuf::from(module_name_str.clone()).with_extension("rl");
 
-                let resolved =
-                    self.resolve(package_name.to_string_lossy().into_owned(), module_name_str, should_flatten_module)?;
+                let resolved = self.resolve(
+                    package_name.to_string_lossy().into_owned(),
+                    module_name_str,
+                    should_flatten_module,
+                )?;
 
                 resolved_modules.extend(resolved);
             } else {

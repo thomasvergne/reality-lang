@@ -39,6 +39,11 @@ impl<'a> ModuleResolver<'a> {
 
     fn resolve_singular(&self, node: ToplevelNode, mut paths: Vec<String>) -> Result<Vec<ToplevelNode>> {
         match node {
+            ToplevelNode::Located { span, node } => {
+                let resolved = self.resolve_singular(*node, paths.clone())?;
+                Ok(resolved.into_iter().map(|n| ToplevelNode::Located { span, node: Box::new(n) }).collect())
+            }
+
             ToplevelNode::ConstantDeclaration { variable, value } => {
                 // Resolve the constant declaration
 
