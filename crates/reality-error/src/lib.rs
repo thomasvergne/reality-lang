@@ -1,3 +1,4 @@
+use reality_ast::internal::types::Type;
 use thiserror::Error;
 
 #[derive(Error, Debug, Clone)]
@@ -28,7 +29,28 @@ pub enum RealityError {
     CycleDetected(String),
 
     #[error("Should not reach a require statement at this point")]
-    NoRequireStatement
+    NoRequireStatement,
+
+    #[error("Type mismatch between {0} and {1}")]
+    TypeMismatch(Type<String>, Type<String>),
+
+    #[error("Signed integer {0} cannot be casted to unsigned {1}")]
+    UnsignedIntegerMismatch(Type<String>, Type<String>),
+
+    #[error("Variable {0} not found")]
+    VariableNotFound(String),
+
+    #[error("Expected function type but found {0}")]
+    ExpectedFunction(Type<String>),
+
+    #[error("Argument count mismatch: expected {expected}, found {found}")]
+    ArgumentCountMismatch { expected: usize, found: usize },
+
+    #[error("Should not reach a require statement at this point")]
+    NoModuleDeclaration,
+
+    #[error("Infinite type detected: {0}")]
+    InfiniteType(String),
 }
 
 pub fn report_error<'a>(
