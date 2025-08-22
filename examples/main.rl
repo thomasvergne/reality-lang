@@ -11,8 +11,6 @@ fn const[X, Y](x: X) -> fn(Y) -> X {
 }
 
 fn main() -> i32 {
-    let y = id(x);
-    let z = id("test");
-    let a = const(5)("test");
-    80
+    let x = const(3)(9.5);
+    x
 }
