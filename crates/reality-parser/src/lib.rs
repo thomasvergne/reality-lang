@@ -432,6 +432,7 @@ impl Parser {
                 self.consume_token(",")?;
             }
         }
+        self.consume_token(")")?;
 
         self.consume_token("->")?;
         let (return_type, (_, end)) = self.parse_type()?;
@@ -486,8 +487,6 @@ impl Parser {
         {
             let (literal, pos) = self.parse_literal_number()?;
             return Ok((ASTNode::Literal(literal).located(pos, self.file.clone()), pos));
-        } else if let Ok((call, pos)) = self.parse_call_expression() {
-            return Ok((call.located(pos, self.file.clone()), pos));
         } else if self.peek_token("if") {
             return self.parse_if_expression();
         } else if self.peek_token("let") {
@@ -500,6 +499,12 @@ impl Parser {
                 .map(|(lit, pos)| (ASTNode::Literal(lit).located(pos, self.file.clone()), pos));
         } else if self.peek_token("|") {
             return self.parse_lambda();
+        } else if let Ok((ident, pos)) = self.parse_identifier() {
+            return Ok((ASTNode::Identifier(Annotation {
+                name: vec![ident],
+                value: None,
+                location: pos,
+            }).located(pos, self.file.clone()), pos));
         }
 
         Err(RealityError::ExpectedToken("term".to_string()))
@@ -645,70 +650,6 @@ impl Parser {
         ))
     }
 
-    fn parse_callee(&mut self) -> Result<ASTNode> {
-        if self.peek_token("(") {
-            self.consume_token("(")?;
-            let callee = self.parse_expression(0)?;
-            if self.peek_token(")") {
-                self.consume_token(")")?;
-                return Ok(callee);
-            }
-        } else if let Ok((identifier, pos)) = self.parse_scoped_identifier() {
-            return Ok((
-                ASTNode::Identifier(Annotation {
-                    name: identifier,
-                    value: None,
-                    location: pos,
-                })
-                .located(pos, self.file.clone()),
-                pos,
-            ));
-        }
-
-        Err(RealityError::ExpectedToken("callee".to_string()))
-    }
-
-    fn parse_call_expression(&mut self) -> Result<ASTNode> {
-        let start_pos = self.position;
-        let (callee, callee_pos) = self.parse_callee()?;
-
-        if !self.peek_token("(") {
-            return Ok((callee.located(callee_pos, self.file.clone()), callee_pos));
-        }
-
-        self.consume_token("(")?;
-
-        let mut arguments = Vec::new();
-
-        while !self.peek_token(")") {
-            self.skip_whitespaces();
-            if self.position >= self.input.len() {
-                return Err(RealityError::UnexpectedEndOfFile);
-            }
-            let (argument, _) = self.parse_expression(0)?;
-            arguments.push(argument);
-            self.skip_whitespaces();
-            if self.peek_token(",") {
-                self.consume_token(",")?;
-            } else if !self.peek_token(")") {
-                return Err(RealityError::ExpectedToken(")".to_string()));
-            }
-        }
-
-        let (_, (_, end_pos)) = self.consume_token(")")?;
-
-        let pos = (start_pos, end_pos);
-
-        Ok((
-            ASTNode::Application {
-                function: Box::new(callee),
-                arguments,
-            }
-            .located(pos, self.file.clone()),
-            pos,
-        ))
-    }
-
     fn parse_if_expression(&mut self) -> Result<ASTNode> {
         let (_, (start_pos, _)) = self.consume_token("if")?;
 
@@ -845,6 +786,26 @@ impl Parser {
                         end = end_postfix_pos;
                     }
                 }
+            } else if let Ok(_) = self.consume_token("(") {
+                let mut arguments = Vec::new();
+
+                while !self.peek_token(")") {
+                    self.skip_whitespaces();
+                    let (arg, _) = self.parse_expression(0)?;
+                    arguments.push(arg);
+                    self.skip_whitespaces();
+                    if self.peek_token(",") {
+                        self.consume_token(",")?;
+                    } else if !self.peek_token(")") {
+                        return Err(RealityError::ExpectedToken(")".to_string()));
+                    }
+                }
+
+                self.consume_token(")")?;
+
+                lhs = ASTNode::Application { function: Box::new(lhs), arguments }.located((start_pos, end_pos), self.file.clone());
+
+                continue;
             }
 
             break;
