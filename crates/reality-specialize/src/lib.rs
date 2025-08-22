@@ -12,6 +12,8 @@ type Type = types::Type<String>;
 
 pub struct Specializer<'a> {
     pub variables: HashMap<String, (Scheme, TypedToplevelNode)>,
+    pub structures: HashMap<String, HashMap<String, Type>>,
+
     pub typechecker: &'a mut Typechecker<'a>,
 
     pub source: (usize, usize, String),
@@ -23,6 +25,7 @@ impl<'a> Specializer<'a> {
     pub fn new(typechecker: &'a mut Typechecker<'a>) -> Self {
         Specializer {
             variables: HashMap::new(),
+            structures: HashMap::new(),
             typechecker,
             source: (0, 0, String::new()),
         }
@@ -104,6 +107,17 @@ impl<'a> Specializer<'a> {
             return self.specialize_node(*inner);
         }
 
+        if let ToplevelNode::StructureDeclaration { header, fields } = node {
+            let field_map = fields
+                .iter()
+                .map(|(f, t)| (f.clone(), t.clone()))
+                .collect::<HashMap<_, _>>();
+
+            self.structures.insert(header.name.clone(), field_map);
+
+            return Ok((Some(ToplevelNode::StructureDeclaration { header, fields }), vec![]));
+        }
+
         Ok((Some(node), vec![]))
     }
 
@@ -112,6 +126,24 @@ impl<'a> Specializer<'a> {
         expr: TypedASTNode,
     ) -> Result<(TypedASTNode, Vec<TypedToplevelNode>)> {
         match expr {
+            ASTNode::StructureCreation { fields, structure_name } => {
+                let mut specialized_fields = HashMap::new();
+                let mut ns = Vec::new();
+
+                for (name, field) in fields {
+                    let (specialized_field, n) = self.specialize_expr(field)?;
+                    specialized_fields.insert(name, specialized_field);
+                    ns.extend(n);
+                }
+
+                Ok((ASTNode::StructureCreation { fields: specialized_fields, structure_name }, ns))
+            }
+
+            ASTNode::StructureAccess { structure, field } => {
+                let (specialized_structure, ns) = self.specialize_expr(*structure)?;
+                Ok((ASTNode::StructureAccess { structure: Box::new(specialized_structure), field }, ns))
+            }
+
             ASTNode::Literal(_) => Ok((expr, vec![])),
             ASTNode::Located { span, node } => {
                 let old_source = self.source.clone();
@@ -192,6 +224,7 @@ impl<'a> Specializer<'a> {
             ASTNode::Application {
                 function,
                 arguments,
+                function_type
             } => {
                 let (specialized_function, mut n1) = self.specialize_expr(*function)?;
 
@@ -207,6 +240,7 @@ impl<'a> Specializer<'a> {
                     ASTNode::Application {
                         function: Box::new(specialized_function),
                         arguments: specialized_arguments,
+                        function_type
                     },
                     n1,
                 ))
@@ -292,6 +326,23 @@ impl<'a> Specializer<'a> {
 
     fn apply_sub(&mut self, expr: TypedASTNode, subst: &HashMap<String, Type>) -> TypedASTNode {
         match expr {
+            ASTNode::StructureCreation { fields, structure_name } => {
+                let specialized_fields = fields
+                    .into_iter()
+                    .map(|(name, field)| (name, self.apply_sub(field, subst)))
+                    .collect();
+
+                ASTNode::StructureCreation { fields: specialized_fields, structure_name }
+            }
+
+            ASTNode::StructureAccess { structure, field } => {
+                let specialized_structure = self.apply_sub(*structure, subst);
+                ASTNode::StructureAccess {
+                    structure: Box::new(specialized_structure),
+                    field,
+                }
+            }
+
             ASTNode::Literal(_) => expr,
             ASTNode::Located { span, node } => {
                 let specialized_node = self.apply_sub(*node, subst);
@@ -389,8 +440,16 @@ impl<'a> Specializer<'a> {
             ASTNode::Application {
                 function,
                 arguments,
+                function_type
             } => {
                 let specialized_function = self.apply_sub(*function, subst);
+
+                let subst_as_vec = subst
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect::<Vec<_>>();
+
+                let specialized_function_type = function_type.substitute_all(subst_as_vec.clone());
 
                 let specialized_arguments = arguments
                     .into_iter()
@@ -400,6 +459,7 @@ impl<'a> Specializer<'a> {
                 ASTNode::Application {
                     function: Box::new(specialized_function),
                     arguments: specialized_arguments,
+                    function_type: specialized_function_type,
                 }
             }
         }
