@@ -7,6 +7,7 @@ use reality_ast::{
         types::{self, TypeVariable},
     }, ASTNode, ToplevelNode
 };
+use reality_error::{Generics, RealityError};
 
 pub struct Typechecker<'a> {
     pub input: &'a str,
@@ -72,13 +73,17 @@ impl<'a> Typechecker<'a> {
                 let old_file_name = self.file;
                 self.position = (span.0, span.1);
                 self.file = Box::leak(span.2.clone().into_boxed_str());
-                
-                let result = self.check_toplevel(*node)?;
 
-                self.position = old_position;
-                self.file = old_file_name;
-
-                Ok(result)
+                match self.check_toplevel(*node) {
+                    Ok(result) => {
+                        self.position = old_position;
+                        self.file = old_file_name;
+                        Ok(result)
+                    }
+                    Err(err) => {
+                        Err(err)
+                    }
+                }
             }
 
             ToplevelNode::FunctionDeclaration { name, parameters, body, return_type } => {
@@ -112,6 +117,16 @@ impl<'a> Typechecker<'a> {
                 self.environment.clear();
                 self.environment.extend(old_env);
                 self.environment.insert(name.name.clone(), scheme);
+
+                let free_types = body.free_types();
+
+                if free_types.len() > 0 {
+                    let portion = free_types[0..3].to_vec();
+
+                    return Err(
+                        RealityError::UnboundGenerics(Generics(portion))
+                    );
+                }
 
                 Ok(ToplevelNode::FunctionDeclaration {
                     name,
@@ -513,7 +528,7 @@ impl<'a> Typechecker<'a> {
         }
     }
 
-    fn instantiate(&mut self, scheme: Scheme) -> Type {
+    pub fn instantiate(&mut self, scheme: Scheme) -> Type {
         let mut type_vars = HashMap::new();
         for var in scheme.variables {
             type_vars.insert(var.clone(), self.new_type(var.clone()));
@@ -522,6 +537,18 @@ impl<'a> Typechecker<'a> {
         type_vars
             .into_iter()
             .fold(scheme.body, |acc, (var, ty)| acc.substitute(&var, ty))
+    }
+
+    pub fn instantiate_and_sub(&mut self, scheme: Scheme) -> (Type, HashMap<String, Type>) {
+        let mut type_vars = HashMap::new();
+        for var in scheme.variables {
+            type_vars.insert(var.clone(), self.new_type(var.clone()));
+        }
+
+        (type_vars
+            .clone()
+            .into_iter()
+            .fold(scheme.body, |acc, (var, ty)| acc.substitute(&var, ty)), type_vars)
     }
 
     fn check_literal(&mut self, value: Literal, expected: Type) -> Result<Literal> {
@@ -557,7 +584,7 @@ impl<'a> Typechecker<'a> {
         }
     }
 
-    fn is_subtype(&mut self, subtype: Type, supertype: Type) -> Result<()> {
+    pub fn is_subtype(&mut self, subtype: Type, supertype: Type) -> Result<()> {
         let old_subtype = subtype.clone();
         let old_supertype = supertype.clone();
 
