@@ -38,6 +38,7 @@ dependencies = [
  "reality-error",
  "reality-module",
  "reality-parser",
+ "reality-specialize",
  "reality-typechecker",
 ]
 
@@ -74,6 +75,11 @@ dependencies = [
 [[package]]
 name = "reality-specialize"
 version = "0.1.0"
+dependencies = [
+ "reality-ast",
+ "reality-error",
+ "reality-typechecker",
+]
 
 [[package]]
 name = "reality-typechecker"
