@@ -169,7 +169,12 @@ impl<'a> ImportResolver<'a> {
         for module in ast.iter() {
             let old_location = self.position;
 
-            if let ToplevelNode::Located { node, .. } = module {
+            if let ToplevelNode::Located { node, span } = module {
+                let old_location: (usize, usize) = self.position;
+                let old_file = self.file;
+                self.position = (span.0, span.1);
+                self.file = Box::leak(span.clone().2.into_boxed_str());
+                
                 if let ToplevelNode::ImportDeclaration(paths) = *node.clone() {
                     let mut paths = paths.clone();
                     let mut should_flatten_module = false;
@@ -192,6 +197,9 @@ impl<'a> ImportResolver<'a> {
                 } else {
                     resolved_modules.push(module.clone());
                 }
+
+                self.position = old_location;
+                self.file = old_file;
             } else if let ToplevelNode::ImportDeclaration(paths) = module {
                 let mut paths = paths.clone();
                 let mut should_flatten_module = false;

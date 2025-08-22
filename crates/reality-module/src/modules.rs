@@ -89,6 +89,8 @@ impl<'a> ModuleResolver<'a> {
 
             ToplevelNode::ImportDeclaration(_) => 
                 Err(RealityError::NoRequireStatement),
+            
+            _ => Ok(vec![node]),
         }
     }
 }
