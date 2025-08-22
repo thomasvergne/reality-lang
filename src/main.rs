@@ -1,3 +1,5 @@
+use reality_anf::ANF;
+use reality_cgen::CodeGeneration;
 use reality_closure::ClosureConverter;
 use reality_error::report_error;
 use reality_module::{imports::ImportResolver, modules::ModuleResolver};
@@ -98,4 +100,12 @@ fn main() {
     for node in &ast {
         println!("{:?}", node);
     }
+
+    let mut anf_converter = ANF::new();
+    let ast = anf_converter.compile(ast);
+
+    let code_generator = CodeGeneration::new();
+    let result = code_generator.generate(ast);
+
+    println!("{}", result);
 }
