@@ -55,7 +55,13 @@ pub enum RealityError {
     InfiniteType(String),
 
     #[error("Unbound generics found in function body {0}")]
-    UnboundGenerics(Generics)
+    UnboundGenerics(Generics),
+
+    #[error("No field {field} found in structure {structure}")]
+    NoFieldInStructure { structure: String, field: String },
+
+    #[error("Expected structure type but found {0}")]
+    NotAStructure(Type<String>),
 }
 
 #[derive(Clone)]
