@@ -18,8 +18,9 @@ pub struct Typechecker<'a> {
 
     counter: RefCell<usize>,
     environment: HashMap<String, Scheme>,
-    level: RefCell<usize>,
     type_aliases: HashMap<String, Scheme>,
+    structures: HashMap<String, HashMap<String, Type>>,
+    level: RefCell<usize>,
 }
 
 type Type = types::Type<String>;
@@ -39,6 +40,7 @@ impl<'a> Typechecker<'a> {
             environment: HashMap::new(),
             level: RefCell::new(0),
             type_aliases: HashMap::new(),
+            structures: HashMap::new(),
         }
     }
 
@@ -68,6 +70,17 @@ impl<'a> Typechecker<'a> {
 
     pub fn check_toplevel(&mut self, node: ToplevelNode) -> Result<TypedToplevelNode> {
         match node {
+            ToplevelNode::StructureDeclaration { header, fields } => {
+                let mut fields_types = HashMap::new();
+                for (field_name, field_type) in fields {
+                    fields_types.insert(field_name, field_type.normalize());
+                }
+
+                self.structures.insert(header.name.clone(), fields_types.clone());
+
+                Ok(ToplevelNode::StructureDeclaration { header, fields: fields_types })
+            }
+
             ToplevelNode::Located { span, node } => {
                 let old_position = self.position;
                 let old_file_name = self.file;
@@ -203,6 +216,67 @@ impl<'a> Typechecker<'a> {
         expr: ASTNode<Vec<String>, Option<types::Type<Vec<String>>>>,
     ) -> Result<(TypedASTNode, Type)> {
         match expr {
+            ASTNode::StructureCreation { fields, structure_name } => {
+                if let Some(field_types) = self.structures.clone().get(&structure_name) {
+                    let mut specialized_fields = HashMap::new();
+
+                    for (field_name, field_expr) in fields {
+                        if let Some(expected_type) = field_types.get(&field_name) {
+                            let checked_field = self.check(field_expr, expected_type.clone())?;
+                            specialized_fields.insert(field_name, checked_field);
+                        } else {
+                            return Err(RealityError::NoFieldInStructure {
+                                structure: structure_name.clone(),
+                                field: field_name,
+                            });
+                        }
+                    }
+
+                    return Ok((
+                        ASTNode::StructureCreation {
+                            fields: specialized_fields,
+                            structure_name: structure_name.clone(),
+                        },
+                        Type::TypeApplication(
+                            Box::new(Type::TypeIdentifier(structure_name.clone())),
+                            vec![],
+                        ),
+                    ));
+                } else {
+                    return Err(RealityError::NotAStructure(Type::TypeIdentifier(structure_name)));
+                }
+            }
+
+            ASTNode::StructureAccess { structure, field } => {
+                let (structure, structure_ty) = self.synthesize(*structure)?;
+
+                if let Type::TypeApplication(base, _) = structure_ty.clone() && let Type::TypeIdentifier(structure_name) = *base {
+                    if let Some(fields) = self.structures.get(&structure_name) {
+                        if let Some(field_ty) = fields.get(&field) {
+                            return Ok((ASTNode::StructureAccess { structure: Box::new(structure), field }, field_ty.clone()));
+                        }
+                    }
+
+                    return Err(RealityError::NoFieldInStructure {
+                        structure: structure_name,
+                        field,
+                    });
+                } else if let Type::TypeIdentifier(structure_name) = structure_ty {
+                    if let Some(fields) = self.structures.get(&structure_name) {
+                        if let Some(field_ty) = fields.get(&field) {
+                            return Ok((ASTNode::StructureAccess { structure: Box::new(structure), field }, field_ty.clone()));
+                        }
+                    }
+
+                    return Err(RealityError::NoFieldInStructure {
+                        structure: structure_name,
+                        field,
+                    });
+                }
+
+                return Err(RealityError::NotAStructure(structure_ty));
+            }
+
             ASTNode::Located { span, node } => {
                 let old_position = self.position;
                 let old_file_name = self.file;
@@ -369,13 +443,14 @@ impl<'a> Typechecker<'a> {
             ASTNode::Application {
                 function,
                 arguments,
+                ..
             } => {
                 let (head, func_ty) = self.synthesize((*function).clone())?;
 
                 if let Type::TypeFunction {
                     return_type,
                     parameters,
-                } = func_ty
+                } = func_ty.clone()
                 {
                     let args = arguments
                         .into_iter()
@@ -387,6 +462,7 @@ impl<'a> Typechecker<'a> {
                         ASTNode::Application {
                             function: Box::new(head),
                             arguments: args,
+                            function_type: func_ty
                         },
                         *return_type,
                     ));
