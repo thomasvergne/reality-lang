@@ -7,9 +7,11 @@ edition = "2024"
 resolver = "2"
 members = [
     "crates/reality-ast",
+    "crates/reality-closure",
     "crates/reality-error",
     "crates/reality-module",
-    "crates/reality-parser", "crates/reality-specialize",
+    "crates/reality-parser",
+    "crates/reality-specialize",
     "crates/reality-typechecker",
 ]
 
@@ -20,6 +22,7 @@ members = [
 "reality-module" = { path = "crates/reality-module" }
 "reality-typechecker" = { path = "crates/reality-typechecker" }
 "reality-specialize" = { path = "crates/reality-specialize" }
+"reality-closure" = { path = "crates/reality-closure" }
 
 [profile.release]
 opt-level = 3

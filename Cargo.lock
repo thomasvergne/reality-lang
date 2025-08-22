@@ -35,6 +35,7 @@ name = "reality"
 version = "0.1.0"
 dependencies = [
  "reality-ast",
+ "reality-closure",
  "reality-error",
  "reality-module",
  "reality-parser",
@@ -45,6 +46,14 @@ dependencies = [
 [[package]]
 name = "reality-ast"
 version = "0.1.0"
+
+[[package]]
+name = "reality-closure"
+version = "0.1.0"
+dependencies = [
+ "reality-ast",
+ "reality-error",
+]
 
 [[package]]
 name = "reality-error"
