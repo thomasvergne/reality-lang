@@ -5,8 +5,8 @@ edition = "2024"
 
 [workspace]
 resolver = "2"
-members = [
-    "crates/reality-ast",
+members = [ "crates/reality-anf",
+    "crates/reality-ast", "crates/reality-cgen",
     "crates/reality-closure",
     "crates/reality-error",
     "crates/reality-module",
@@ -23,6 +23,8 @@ members = [
 "reality-typechecker" = { path = "crates/reality-typechecker" }
 "reality-specialize" = { path = "crates/reality-specialize" }
 "reality-closure" = { path = "crates/reality-closure" }
+"reality-cgen" = { path = "crates/reality-cgen" }
+"reality-anf" = { path = "crates/reality-anf" }
 
 [profile.release]
 opt-level = 3
