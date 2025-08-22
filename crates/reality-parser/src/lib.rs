@@ -543,6 +543,7 @@ impl Parser {
                 },
                 value: Box::new(value),
                 body: Box::new(unit()),
+                return_ty: None,
             }
             .located(pos, self.file.clone()),
             pos,
@@ -652,6 +653,7 @@ impl Parser {
                 },
                 value: Box::new(value),
                 body: Box::new(unit()),
+                return_ty: None,
             }
             .located(pos, self.file.clone()),
             pos,
@@ -676,6 +678,7 @@ impl Parser {
                 condition: Box::new(condition),
                 then_branch: Box::new(then_branch),
                 else_branch: Box::new(else_branch),
+                return_ty: None,
             }
             .located(position, self.file.clone()),
             position,

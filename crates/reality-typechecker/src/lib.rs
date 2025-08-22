@@ -306,6 +306,7 @@ impl<'a> Typechecker<'a> {
                 variable,
                 value,
                 body,
+                ..
             } => {
                 let annot_type: Type;
                 let typed_value: TypedASTNode;
@@ -340,6 +341,7 @@ impl<'a> Typechecker<'a> {
                         },
                         value: Box::new(typed_value),
                         body: Box::new(body),
+                        return_ty: return_type.clone()
                     },
                     return_type,
                 ));
@@ -405,6 +407,7 @@ impl<'a> Typechecker<'a> {
                 condition,
                 then_branch,
                 else_branch,
+                ..
             } => {
                 let (condition, cond_ty) = self.synthesize(*condition)?;
                 self.is_subtype(cond_ty, Type::TypeIdentifier("bool".to_string()))?;
@@ -417,6 +420,7 @@ impl<'a> Typechecker<'a> {
                         condition: Box::new(condition),
                         then_branch: Box::new(then_branch),
                         else_branch: Box::new(else_branch),
+                        return_ty: then_ty.clone(),
                     },
                     then_ty,
                 ));
@@ -526,6 +530,7 @@ impl<'a> Typechecker<'a> {
                 variable,
                 value,
                 body,
+                ..
             } => {
                 let annot_type: Type;
                 let typed_value: TypedASTNode;
@@ -548,7 +553,7 @@ impl<'a> Typechecker<'a> {
                     },
                 );
 
-                let body = self.check(*body, expected)?;
+                let body = self.check(*body, expected.clone())?;
 
                 self.environment.remove(&variable.name);
 
@@ -560,6 +565,7 @@ impl<'a> Typechecker<'a> {
                     },
                     value: Box::new(typed_value),
                     body: Box::new(body),
+                    return_ty: expected
                 });
             }
 
@@ -621,6 +627,7 @@ impl<'a> Typechecker<'a> {
                 condition,
                 then_branch,
                 else_branch,
+                ..
             } => {
                 let condition = self.check(*condition, Type::TypeIdentifier("bool".to_string()))?;
                 let then_branch = self.check(*then_branch, expected.clone())?;
@@ -630,6 +637,7 @@ impl<'a> Typechecker<'a> {
                     condition: Box::new(condition),
                     then_branch: Box::new(then_branch),
                     else_branch: Box::new(else_branch),
+                    return_ty: expected,
                 })
             }
 
