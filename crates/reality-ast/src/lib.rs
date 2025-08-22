@@ -34,6 +34,7 @@ use std::{collections::HashMap, fmt::Debug};
 use crate::internal::{annotation::Annotation, literal::Literal, types::Type};
 
 pub mod internal;
+pub mod llir;
 
 #[derive(Clone, PartialEq)]
 pub enum ASTNode<N = Vec<String>, T = Option<Type<N>>> {
@@ -57,12 +58,15 @@ pub enum ASTNode<N = Vec<String>, T = Option<Type<N>>> {
         variable: Annotation<T>,
         value: Box<ASTNode<N, T>>,
         body: Box<ASTNode<N, T>>,
+        return_ty: T,
     },
 
     If {
         condition: Box<ASTNode<N, T>>,
         then_branch: Box<ASTNode<N, T>>,
         else_branch: Box<ASTNode<N, T>>,
+
+        return_ty: T,
     },
 
     Located {
@@ -178,6 +182,7 @@ impl<T: Debug, N: Debug> Debug for ASTNode<N, T> {
                 variable,
                 value,
                 body,
+                ..
             } => {
                 write!(f, "let {:?} = {:?}; {:?}", variable, value, body)
             }
@@ -185,6 +190,7 @@ impl<T: Debug, N: Debug> Debug for ASTNode<N, T> {
                 condition,
                 then_branch,
                 else_branch,
+                ..
             } => {
                 write!(
                     f,
@@ -304,10 +310,12 @@ impl<T: Clone, N: Clone> ASTNode<N, T> {
                 variable,
                 value,
                 body,
+                return_ty,
             } => ASTNode::LetIn {
                 variable: variable.clone(),
                 value: Box::new(value.flatten_locations()),
                 body: Box::new(body.flatten_locations()),
+                return_ty: return_ty.clone(),
             },
             ASTNode::Lambda {
                 parameters,
@@ -322,10 +330,12 @@ impl<T: Clone, N: Clone> ASTNode<N, T> {
                 condition,
                 then_branch,
                 else_branch,
+                return_ty
             } => ASTNode::If {
                 condition: Box::new(condition.flatten_locations()),
                 then_branch: Box::new(then_branch.flatten_locations()),
                 else_branch: Box::new(else_branch.flatten_locations()),
+                return_ty: return_ty.clone(),
             },
             ASTNode::Literal(literal) => ASTNode::Literal(literal.clone()),
             ASTNode::Identifier(ann) => ASTNode::Identifier(ann.clone()),
@@ -354,7 +364,7 @@ impl ASTNode<String, Type<String>> {
                 }
                 free
             }
-            ASTNode::LetIn { variable, value, body } => {
+            ASTNode::LetIn { variable, value, body, .. } => {
                 let mut free = value.free_variables();
                 free.extend(body.free_variables());
                 free.retain(|v, _| v != &variable.name);
@@ -369,7 +379,7 @@ impl ASTNode<String, Type<String>> {
 
                 free
             }
-            ASTNode::If { condition, then_branch, else_branch } => {
+            ASTNode::If { condition, then_branch, else_branch, .. } => {
                 let mut free = condition.free_variables();
                 free.extend(then_branch.free_variables());
                 free.extend(else_branch.free_variables());
@@ -409,10 +419,12 @@ impl ASTNode<String, Type<String>> {
                 variable,
                 value,
                 body,
+                return_ty
             } => {
                 let mut free = value.free_types();
                 free.extend(body.free_types());
                 free.extend(variable.value.free());
+                free.extend(return_ty.free());
                 free
             }
             ASTNode::Lambda {
@@ -434,10 +446,12 @@ impl ASTNode<String, Type<String>> {
                 condition,
                 then_branch,
                 else_branch,
+                return_ty,
             } => {
                 let mut free = condition.free_types();
                 free.extend(then_branch.free_types());
                 free.extend(else_branch.free_types());
+                free.extend(return_ty.free());
                 free
             }
             ASTNode::Literal(_) => vec![],
@@ -475,12 +489,14 @@ pub fn build_block_from_statements(statements: &[ASTNode]) -> ASTNode {
                 variable,
                 value,
                 body,
+                return_ty
             },
             rest @ ..,
         ] if body.is_unit() => ASTNode::LetIn {
             variable: variable.clone(),
             value: value.clone(),
             body: Box::new(build_block_from_statements(rest)),
+            return_ty: return_ty.clone(),
         },
         [first, rest @ ..] => ASTNode::LetIn {
             variable: Annotation {
@@ -490,6 +506,7 @@ pub fn build_block_from_statements(statements: &[ASTNode]) -> ASTNode {
             },
             value: Box::new(first.clone()),
             body: Box::new(build_block_from_statements(rest)),
+            return_ty: None,
         },
         [] => unit(),
     }
