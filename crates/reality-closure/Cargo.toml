@@ -1,0 +1,8 @@
+[package]
+name = "reality-closure"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+"reality-ast" = { path = "../reality-ast" }
+"reality-error" = { path = "../reality-error" }

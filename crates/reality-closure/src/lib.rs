@@ -1,0 +1,513 @@
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
+
+use reality_ast::{
+    internal::{annotation::Annotation, types::{Type, TypeVariable}}, ASTNode, ToplevelNode, TypedASTNode, TypedToplevelNode
+};
+use reality_error::RealityError;
+
+pub struct ClosureConverter {
+    pub source: (usize, usize, String),
+
+    pub symbol_counter: Rc<RefCell<usize>>,
+
+    pub globals: HashMap<String, (i32, Type<String>)>,
+    pub natives: HashMap<String, (i32, Type<String>)>,
+    pub locals: HashMap<String, Type<String>>,
+}
+
+type Result<T> = std::result::Result<(T, Vec<TypedToplevelNode>), RealityError>;
+
+impl ClosureConverter {
+    pub fn new() -> Self {
+        ClosureConverter {
+            source: (0, 0, String::new()),
+            symbol_counter: Rc::new(RefCell::new(0)),
+            globals: HashMap::new(),
+            locals: HashMap::new(),
+            natives: HashMap::new(),
+        }
+    }
+
+    fn void_pointer(&mut self) -> Type<String> {
+        Type::TypeApplication(
+            Box::new(Type::TypeIdentifier("pointer".to_string())),
+            vec![Type::TypeIdentifier("void".to_string())],
+        )
+    }
+
+    fn convert_type(&mut self, ty: Type<String>) -> Type<String> {
+        match ty.clone() {
+            Type::TypeIdentifier(name) => Type::TypeIdentifier(name),
+            Type::TypeFunction {
+                parameters,
+                return_type,
+            } => {
+                let new_params = parameters
+                    .into_iter()
+                    .map(|p| self.convert_type(p))
+                    .collect::<Vec<_>>();
+
+                let new_return = self.convert_type(*return_type);
+
+                let env_var = self.void_pointer();
+
+                Type::AnonymousStructure {
+                    fields: HashMap::from([
+                        ("env".to_string(), env_var.clone()),
+                        (
+                            "fun".to_string(),
+                            Type::TypeFunction {
+                                parameters: vec![env_var]
+                                    .iter()
+                                    .chain(new_params.iter())
+                                    .cloned()
+                                    .collect(),
+                                return_type: new_return.into(),
+                            },
+                        ),
+                    ]),
+                }
+            }
+           
+            Type::TypeVariable(var) => {
+                if let TypeVariable::Bound(ty) = &*var.borrow() {
+                    return self.convert_type(*ty.clone());
+                }
+
+                ty
+            }
+
+            Type::TypeApplication(func, args) => {
+                let new_func = self.convert_type(*func);
+                let new_args = args.into_iter().map(|a| self.convert_type(a)).collect();
+
+                Type::TypeApplication(Box::new(new_func), new_args)
+            }
+
+            Type::TypeAliased(ty, _) => {
+                let new_ty = self.convert_type(*ty);
+                new_ty
+            }
+
+            Type::AnonymousStructure { fields } => {
+                let fields = fields
+                    .iter()
+                    .map(|(k, v)| (k.clone(), self.convert_type(v.clone())))
+                    .collect();
+                Type::AnonymousStructure { fields }
+            }
+        }
+    }
+
+    pub fn convert(
+        &mut self,
+        ast: Vec<TypedToplevelNode>,
+    ) -> std::result::Result<Vec<TypedToplevelNode>, RealityError> {
+        let mut new_ast = Vec::new();
+
+        for node in ast {
+            let (converted, ns) = self.convert_node(node)?;
+            new_ast.extend(ns);
+            new_ast.push(converted);
+        }
+
+        Ok(new_ast)
+    }
+
+    fn convert_node(&mut self, node: TypedToplevelNode) -> Result<TypedToplevelNode> {
+        match node {
+            ToplevelNode::FunctionDeclaration { name, parameters, return_type, body } => {
+                let (converted_body, ns) = self.convert_exp(*body)?;
+
+                Ok((ToplevelNode::FunctionDeclaration { name, parameters, return_type, body: Box::new(converted_body) }, ns))
+            }
+            ToplevelNode::StructureDeclaration { header, fields } => {
+                let mut hm = HashMap::new();
+
+                for (name, value) in fields {
+                    let converted_type = self.convert_type(value);
+                    hm.insert(name, converted_type);
+                }
+
+                Ok((ToplevelNode::StructureDeclaration { header, fields: hm }, vec![]))
+            }
+            _ => Ok((node, Vec::new())),
+        }
+    }
+
+    fn convert_exp(&mut self, expr: TypedASTNode) -> Result<TypedASTNode> {
+        // Implement the conversion logic for a single expression here
+        match expr {
+            ASTNode::Lambda { .. } => self.convert_lambda(expr, vec![]),
+
+            ASTNode::LetIn {
+                variable,
+                value,
+                body,
+            } => match value.get_lambda() {
+                Some(lambda) => {
+                    let (converted, mut ns) =
+                        self.convert_lambda(lambda.clone(), vec![variable.name.clone()])?;
+
+                    let (converted_body, mut ns2) = self.convert_exp(*body)?;
+                    ns.append(&mut ns2);
+
+                    self.locals
+                        .insert(variable.name.clone(), variable.value.clone());
+
+                    let converted_type = self.convert_type(variable.value.clone());
+
+                    Ok((
+                        ASTNode::LetIn {
+                            variable: Annotation {
+                                name: variable.name.clone(),
+                                location: variable.location,
+                                value: converted_type,
+                            },
+                            value: Box::new(converted),
+                            body: Box::new(converted_body),
+                        },
+                        ns,
+                    ))
+                }
+
+                None => {
+                    let (converted_value, mut ns1) = self.convert_exp(*value)?;
+                    let (converted_body, mut ns2) = self.convert_exp(*body)?;
+                    ns1.append(&mut ns2);
+
+                    let converted_type = self.convert_type(variable.value.clone());
+
+                    Ok((
+                        ASTNode::LetIn {
+                            variable: Annotation {
+                                name: variable.name.clone(),
+                                location: variable.location,
+                                value: converted_type,
+                            },
+                            value: Box::new(converted_value),
+                            body: Box::new(converted_body),
+                        },
+                        ns1,
+                    ))
+                }
+            },
+
+            ASTNode::StructureCreation {
+                structure_name,
+                fields,
+            } => {
+                let mut specialized_fields = HashMap::new();
+                let mut ns = Vec::new();
+
+                for (name, value) in fields {
+                    let (converted_value, mut ns1) = self.convert_exp(value)?;
+                    specialized_fields.insert(name, converted_value);
+                    ns.append(&mut ns1);
+                }
+
+                Ok((
+                    ASTNode::StructureCreation {
+                        structure_name,
+                        fields: specialized_fields,
+                    },
+                    ns,
+                ))
+            }
+
+            ASTNode::StructureAccess { structure, field } => {
+                let (converted_structure, ns) = self.convert_exp(*structure)?;
+                Ok((ASTNode::StructureAccess { structure: Box::new(converted_structure), field }, ns))
+            }
+
+            ASTNode::Located { span, node } => {
+                let (converted_node, ns) = self.convert_exp(*node)?;
+                Ok((
+                    ASTNode::Located {
+                        span,
+                        node: Box::new(converted_node),
+                    },
+                    ns,
+                ))
+            }
+
+            ASTNode::Literal(value) => Ok((ASTNode::Literal(value), Vec::new())),
+
+            ASTNode::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let (converted_condition, mut ns1) = self.convert_exp(*condition)?;
+                let (converted_then, mut ns2) = self.convert_exp(*then_branch)?;
+                let (converted_else, mut ns3) = self.convert_exp(*else_branch)?;
+
+                ns1.append(&mut ns2);
+                ns1.append(&mut ns3);
+
+                Ok((
+                    ASTNode::If {
+                        condition: Box::new(converted_condition),
+                        then_branch: Box::new(converted_then),
+                        else_branch: Box::new(converted_else),
+                    },
+                    ns1,
+                ))
+            }
+
+            ASTNode::Identifier(name) => {
+                let converted_type = self.convert_type(name.value.clone());
+
+                Ok((ASTNode::Identifier(Annotation {
+                    name: name.name,
+                    location: name.location,
+                    value: converted_type,
+                }), vec![]))
+            }
+
+            ASTNode::Application {
+                function,
+                arguments,
+                function_type
+            } => {
+                let mut new_arguments = vec![];
+                let mut ns = vec![];
+
+                let native_functions = self.natives.clone();
+
+                for argument in arguments {
+                    let (converted_argument, mut ns1) = self.convert_exp(argument)?;
+                    new_arguments.push(converted_argument);
+                    ns.append(&mut ns1);
+                }
+
+                if let ASTNode::Identifier(ann) = function.flatten_locations()
+                    && let Some(_) = native_functions.get(&ann.name)
+                {
+                    return Ok((
+                        ASTNode::Application {
+                            function,
+                            arguments: new_arguments,
+                            function_type: function_type.clone(),
+                        },
+                        ns,
+                    ));
+                }
+
+                let (converted_function, mut ns1) = self.convert_exp(*function)?;
+
+                ns.append(&mut ns1);
+
+                let lambda_name = format!("closure_lambda_{}", self.symbol_counter.borrow());
+
+                let call_var = ASTNode::Identifier(Annotation {
+                    name: lambda_name.clone(),
+                    value: Type::TypeIdentifier(lambda_name.clone()),
+                    location: (0, 0),
+                });
+
+                let function = ASTNode::StructureAccess {
+                    structure: Box::new(call_var.clone()),
+                    field: "fun".to_string(),
+                };
+
+                let env = ASTNode::StructureAccess {
+                    structure: Box::new(call_var.clone()),
+                    field: "env".to_string(),
+                };
+
+                let lambda_ty = self.convert_type(function_type);
+
+                let call = ASTNode::Application {
+                    function: Box::new(function),
+                    arguments: vec![env]
+                        .iter()
+                        .chain(new_arguments.iter())
+                        .cloned()
+                        .collect(),
+                    function_type: lambda_ty.clone(),
+                };
+
+                self.symbol_counter.replace_with(|v| *v + 1);
+
+                Ok((
+                    ASTNode::LetIn {
+                        variable: Annotation {
+                            name: lambda_name,
+                            location: (0, 0),
+                            value: lambda_ty,
+                        },
+                        body: Box::new(call),
+                        value: Box::new(converted_function),
+                    },
+                    ns,
+                ))
+            }
+        }
+    }
+
+    fn convert_lambda(
+        &mut self,
+        expr: TypedASTNode,
+        reserved: Vec<String>,
+    ) -> Result<TypedASTNode> {
+        if let ASTNode::Lambda {
+            parameters,
+            return_type,
+            body,
+        } = expr.clone()
+        {
+            let mut free_vars = body.free_variables();
+            let native_functions = self.natives.clone();
+            let global_functions = self.globals.clone();
+
+            let final_native_functions = native_functions.keys().collect::<Vec<_>>();
+            let final_globals_functions = global_functions.keys().collect::<Vec<_>>();
+
+            let grouped_functions = final_native_functions
+                .iter()
+                .chain(final_globals_functions.iter())
+                .cloned()
+                .collect::<Vec<_>>();
+
+            let parameter_names = parameters
+                .iter()
+                .map(|p| p.name.clone())
+                .collect::<Vec<_>>();
+
+            let final_functions = grouped_functions
+                .into_iter()
+                .filter(|f| !parameter_names.contains(f))
+                .collect::<Vec<_>>();
+
+            // freeVars Set.\\ (finalNativesFuns <> Set.fromList args <> reserved)
+            free_vars.retain(|v, _| {
+                !final_functions.contains(&v)
+                    && !parameter_names.contains(&v)
+                    && !reserved.contains(&v)
+            });
+
+            let structure_name = format!("closure_struct_{}", self.symbol_counter.borrow());
+            let lambda_struct_name = format!("closure_lambda_{}", self.symbol_counter.borrow());
+
+            let structure = ASTNode::StructureCreation {
+                structure_name: structure_name.clone(),
+                fields: free_vars
+                    .iter()
+                    .map(|(v, t)| {
+                        (
+                            v.clone(),
+                            ASTNode::Identifier(Annotation {
+                                name: v.clone(),
+                                value: t.clone(),
+                                location: (0, 0),
+                            }),
+                        )
+                    })
+                    .collect(),
+            };
+
+            let env_var = ASTNode::Identifier(Annotation {
+                name: format!("closure_env_{}", self.symbol_counter.borrow()),
+                value: Type::TypeIdentifier(structure_name.clone()),
+                location: (0, 0),
+            });
+
+            let old_locals = self.locals.clone();
+            self.locals.extend(
+                parameters
+                    .iter()
+                    .map(|ann| (ann.name.clone(), ann.value.clone())),
+            );
+
+            let (body, mut ns) = self.convert_exp(*body.clone())?;
+
+            self.locals = old_locals;
+
+            let new_body = free_vars.iter().fold(body, |acc, (v, t)| ASTNode::LetIn {
+                variable: Annotation {
+                    name: v.clone(),
+                    value: t.clone(),
+                    location: (0, 0),
+                },
+                value: Box::new(ASTNode::StructureAccess {
+                    structure: Box::new(env_var.clone()),
+                    field: v.clone(),
+                }),
+                body: Box::new(acc),
+            });
+
+            let structure_definition: ToplevelNode<String, Type<String>, Type<String>> =
+                ToplevelNode::StructureDeclaration {
+                    header: Annotation {
+                        name: structure_name.clone(),
+                        value: vec![],
+                        location: (0, 0),
+                    },
+                    fields: free_vars,
+                };
+
+            let param_tys = vec![Type::TypeIdentifier(structure_name.clone())]
+                .iter()
+                .chain(parameters.iter().map(|p| &p.value))
+                .map(|f| f.clone())
+                .collect::<Vec<_>>();
+
+            let lambda_structure_definition: ToplevelNode<String, Type<String>, Type<String>> =
+                ToplevelNode::StructureDeclaration {
+                    header: Annotation {
+                        name: lambda_struct_name.clone(),
+                        value: vec![],
+                        location: (0, 0),
+                    },
+                    fields: HashMap::from([
+                        (
+                            "env".to_string(),
+                            Type::TypeIdentifier(structure_name.clone()),
+                        ),
+                        (
+                            "fun".to_string(),
+                            Type::TypeFunction {
+                                parameters: param_tys,
+                                return_type: Box::new(return_type.clone()),
+                            },
+                        ),
+                    ]),
+                };
+
+            let env_annot = Annotation {
+                name: format!("closure_env_{}", self.symbol_counter.borrow()),
+                value: Type::TypeIdentifier(structure_name.clone()),
+                location: (0, 0),
+            };
+
+            let lambda_structure = ASTNode::StructureCreation {
+                structure_name: lambda_struct_name,
+                fields: HashMap::from([
+                    ("env".to_string(), structure),
+                    (
+                        "fun".to_string(),
+                        ASTNode::Lambda {
+                            parameters: vec![env_annot]
+                                .iter()
+                                .chain(parameters.iter())
+                                .map(|ann| ann.clone())
+                                .collect::<Vec<_>>(),
+                            return_type,
+                            body: Box::new(new_body),
+                        },
+                    ),
+                ]),
+            };
+
+            ns.push(structure_definition);
+            ns.push(lambda_structure_definition);
+
+            self.symbol_counter.replace_with(|v| *v + 1);
+
+            return Ok((lambda_structure, ns));
+        }
+
+        Ok((expr, vec![]))
+    }
+}
