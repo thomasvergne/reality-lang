@@ -486,7 +486,10 @@ impl Parser {
             .is_numeric()
         {
             let (literal, pos) = self.parse_literal_number()?;
-            return Ok((ASTNode::Literal(literal).located(pos, self.file.clone()), pos));
+            return Ok((
+                ASTNode::Literal(literal).located(pos, self.file.clone()),
+                pos,
+            ));
         } else if self.peek_token("if") {
             return self.parse_if_expression();
         } else if self.peek_token("let") {
@@ -500,11 +503,15 @@ impl Parser {
         } else if self.peek_token("|") {
             return self.parse_lambda();
         } else if let Ok((ident, pos)) = self.parse_identifier() {
-            return Ok((ASTNode::Identifier(Annotation {
-                name: vec![ident],
-                value: None,
-                location: pos,
-            }).located(pos, self.file.clone()), pos));
+            return Ok((
+                ASTNode::Identifier(Annotation {
+                    name: vec![ident],
+                    value: None,
+                    location: pos,
+                })
+                .located(pos, self.file.clone()),
+                pos,
+            ));
         }
 
         Err(RealityError::ExpectedToken("term".to_string()))
@@ -605,7 +612,8 @@ impl Parser {
         let end_pos = self.position;
 
         Ok((
-            build_block_from_statements(expressions.as_slice()).located((start_pos, end_pos), self.file.clone()),
+            build_block_from_statements(expressions.as_slice())
+                .located((start_pos, end_pos), self.file.clone()),
             (start_pos, end_pos),
         ))
     }
@@ -803,7 +811,12 @@ impl Parser {
 
                 self.consume_token(")")?;
 
-                lhs = ASTNode::Application { function: Box::new(lhs), arguments }.located((start_pos, end_pos), self.file.clone());
+                lhs = ASTNode::Application {
+                    function: Box::new(lhs),
+                    arguments,
+                    function_type: None,
+                }
+                .located((start_pos, end_pos), self.file.clone());
 
                 continue;
             }
@@ -970,7 +983,8 @@ impl Parser {
                 .chars()
                 .next()
                 .unwrap()
-                .is_alphanumeric() || self.input[self.position..].starts_with('_'))
+                .is_alphanumeric()
+                || self.input[self.position..].starts_with('_'))
         {
             self.position += 1;
         }
@@ -1001,6 +1015,7 @@ fn operator(name: &str, a: &ASTNode, b: &ASTNode) -> ASTNode {
             location: (0, 0), // Placeholder for location, can be adjusted later
         })),
         arguments: vec![a.clone(), b.clone()],
+        function_type: None,
     }
 }
 
@@ -1155,6 +1170,7 @@ pub fn add_default_operators(parser: &mut Parser) {
                         location: (0, 0), // Placeholder for location, can be ajusté plus tard
                     })),
                     arguments: vec![a.clone()],
+                    function_type: None,
                 }
             },
         ),
