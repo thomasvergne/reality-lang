@@ -1,11 +1,12 @@
 use std::{cell::RefCell, collections::HashMap};
 
 use reality_ast::{
+    ASTNode, ToplevelNode,
     internal::{
         annotation::Annotation,
         literal::Literal,
         types::{self, TypeVariable},
-    }, ASTNode, ToplevelNode
+    },
 };
 use reality_error::{Generics, RealityError};
 
@@ -49,10 +50,9 @@ impl<'a> Typechecker<'a> {
 
     fn new_type(&mut self, prefix: String) -> Type {
         use std::rc::Rc;
-        types::Type::TypeVariable(Rc::new(std::cell::RefCell::new(types::TypeVariable::Unbound(
-            self.new_symbol(prefix),
-            *self.level.borrow(),
-        ))))
+        types::Type::TypeVariable(Rc::new(std::cell::RefCell::new(
+            types::TypeVariable::Unbound(self.new_symbol(prefix), *self.level.borrow()),
+        )))
     }
 
     pub fn check_program(&mut self, ast: Vec<ToplevelNode>) -> Result<Vec<TypedToplevelNode>> {
@@ -80,13 +80,16 @@ impl<'a> Typechecker<'a> {
                         self.file = old_file_name;
                         Ok(result)
                     }
-                    Err(err) => {
-                        Err(err)
-                    }
+                    Err(err) => Err(err),
                 }
             }
 
-            ToplevelNode::FunctionDeclaration { name, parameters, body, return_type } => {
+            ToplevelNode::FunctionDeclaration {
+                name,
+                parameters,
+                body,
+                return_type,
+            } => {
                 let old_env = self.environment.clone();
                 let mut new_params = Vec::new();
                 for param in parameters {
@@ -97,17 +100,23 @@ impl<'a> Typechecker<'a> {
                         location: param.location,
                     });
 
-                    self.environment.insert(param.name.clone(), Scheme {
-                        variables: vec![],
-                        body: ty.clone(),
-                    });
+                    self.environment.insert(
+                        param.name.clone(),
+                        Scheme {
+                            variables: vec![],
+                            body: ty.clone(),
+                        },
+                    );
                 }
 
                 let return_type = return_type.normalize();
 
                 let scheme = Scheme {
                     variables: name.clone().value,
-                    body: Type::TypeFunction { parameters: new_params.iter().map(|p| p.value.clone()).collect(), return_type: Box::new(return_type.clone()) }
+                    body: Type::TypeFunction {
+                        parameters: new_params.iter().map(|p| p.value.clone()).collect(),
+                        return_type: Box::new(return_type.clone()),
+                    },
                 };
 
                 self.environment.insert(name.name.clone(), scheme.clone());
@@ -123,9 +132,7 @@ impl<'a> Typechecker<'a> {
                 if free_types.len() > 0 {
                     let portion = free_types[0..3].to_vec();
 
-                    return Err(
-                        RealityError::UnboundGenerics(Generics(portion))
-                    );
+                    return Err(RealityError::UnboundGenerics(Generics(portion)));
                 }
 
                 Ok(ToplevelNode::FunctionDeclaration {
@@ -149,10 +156,13 @@ impl<'a> Typechecker<'a> {
                     final_ty = ty.clone();
                 }
 
-                self.environment.insert(variable.name.clone(), Scheme {
-                    variables: vec![],
-                    body: final_ty.clone(),
-                });
+                self.environment.insert(
+                    variable.name.clone(),
+                    Scheme {
+                        variables: vec![],
+                        body: final_ty.clone(),
+                    },
+                );
                 Ok(ToplevelNode::ConstantDeclaration {
                     variable: Annotation {
                         name: variable.name,
@@ -165,23 +175,26 @@ impl<'a> Typechecker<'a> {
 
             ToplevelNode::TypeAlias { name, body } => {
                 let body = body.normalize();
-                self.type_aliases.insert(name.name.clone(), Scheme {
-                    variables: vec![],
-                    body: body.clone(),
-                });
+                self.type_aliases.insert(
+                    name.name.clone(),
+                    Scheme {
+                        variables: vec![],
+                        body: body.clone(),
+                    },
+                );
 
-                Ok(ToplevelNode::TypeAlias {
-                    name,
-                    body,
-                })
+                Ok(ToplevelNode::TypeAlias { name, body })
             }
 
             ToplevelNode::PublicDeclaration(inner) => self.check_toplevel(*inner),
-            
-            ToplevelNode::ImportDeclaration(_) => Err(reality_error::RealityError::NoRequireStatement),
 
-            ToplevelNode::ModuleDeclaration { .. } => Err(reality_error::RealityError::NoModuleDeclaration),
+            ToplevelNode::ImportDeclaration(_) => {
+                Err(reality_error::RealityError::NoRequireStatement)
+            }
 
+            ToplevelNode::ModuleDeclaration { .. } => {
+                Err(reality_error::RealityError::NoModuleDeclaration)
+            }
         }
     }
 
@@ -279,14 +292,15 @@ impl<'a> Typechecker<'a> {
                 }
 
                 let old_env = self.environment.clone();
-                self.environment.extend(
-                    new_parameters
-                        .iter()
-                        .map(|p| (p.name.clone(), Scheme {
+                self.environment.extend(new_parameters.iter().map(|p| {
+                    (
+                        p.name.clone(),
+                        Scheme {
                             variables: vec![],
                             body: p.value.clone(),
-                        }))
-                );
+                        },
+                    )
+                }));
 
                 let (body, return_type) = if let Some(ty) = return_type {
                     let body = self.check(*body, ty.normalize())?;
@@ -306,7 +320,10 @@ impl<'a> Typechecker<'a> {
                         return_type: return_type.clone(),
                         body: Box::new(body),
                     },
-                    Type::TypeFunction { parameters: new_parameters.iter().map(|p| p.value.clone()).collect(), return_type: Box::new(return_type.clone()) },
+                    Type::TypeFunction {
+                        parameters: new_parameters.iter().map(|p| p.value.clone()).collect(),
+                        return_type: Box::new(return_type.clone()),
+                    },
                 ));
             }
 
@@ -355,14 +372,24 @@ impl<'a> Typechecker<'a> {
             } => {
                 let (head, func_ty) = self.synthesize((*function).clone())?;
 
-                if let Type::TypeFunction { return_type, parameters } = func_ty {
+                if let Type::TypeFunction {
+                    return_type,
+                    parameters,
+                } = func_ty
+                {
                     let args = arguments
                         .into_iter()
                         .zip(parameters)
                         .map(|(arg, ty)| self.check(arg, ty))
                         .collect::<Result<Vec<_>>>()?;
 
-                    return Ok((ASTNode::Application { function: Box::new(head), arguments: args }, *return_type));
+                    return Ok((
+                        ASTNode::Application {
+                            function: Box::new(head),
+                            arguments: args,
+                        },
+                        *return_type,
+                    ));
                 }
 
                 Err(reality_error::RealityError::ExpectedFunction(func_ty))
@@ -388,13 +415,13 @@ impl<'a> Typechecker<'a> {
                     Ok(node) => {
                         self.position = old_position;
                         self.file = old_file_name;
-                        
+
                         Ok(ASTNode::Located {
                             span,
                             node: Box::new(node),
                         })
                     }
-                    Err(err) => Err(err)
+                    Err(err) => Err(err),
                 }
             }
 
@@ -461,44 +488,58 @@ impl<'a> Typechecker<'a> {
             }
 
             ASTNode::Lambda {
-                parameters, body, ..
-            } => {
-                let mut new_parameters: Vec<Annotation<Type, String>> = Vec::new();
+                parameters, body, return_type
+            } => match expected {
+                Type::TypeFunction {
+                    parameters: param_tys,
+                    return_type: ret_ty,
+                } => {
+                    let mut new_parameters: Vec<Annotation<Type, String>> = Vec::new();
 
-                for param in parameters {
-                    let param_ty = if let Some(ty) = param.value {
-                        ty.normalize()
-                    } else {
-                        self.new_type("".to_string())
-                    };
+                    for (param, param_ty) in parameters.iter().zip(param_tys) {
+                        if let Some(ty) = &param.value {
+                            self.is_subtype(ty.normalize(), param_ty.clone())?;
+                        }
 
-                    new_parameters.push(Annotation {
-                        name: param.name,
-                        value: param_ty,
-                        location: param.location,
-                    });
+                        new_parameters.push(Annotation {
+                            name: param.clone().name,
+                            value: param_ty,
+                            location: param.location,
+                        });
+                    }
+
+                    let old_env = self.environment.clone();
+                    self.environment.extend(new_parameters.iter().map(|p| {
+                        (
+                            p.name.clone(),
+                            Scheme {
+                                variables: vec![],
+                                body: p.value.clone(),
+                            },
+                        )
+                    }));
+
+                    let mut ret  = *ret_ty.clone();
+
+                    if let Some(return_type) = return_type {
+                        self.is_subtype(return_type.normalize(), *ret_ty)?;
+
+                        ret = return_type.normalize();
+                    }
+
+                    let body = self.check(*body, ret.clone())?;
+
+                    self.environment = old_env;
+
+                    Ok(ASTNode::Lambda {
+                        parameters: new_parameters,
+                        return_type: ret,
+                        body: Box::new(body),
+                    })
                 }
 
-                let old_env = self.environment.clone();
-                self.environment.extend(
-                    new_parameters
-                        .iter()
-                        .map(|p| (p.name.clone(), Scheme {
-                            variables: vec![],
-                            body: p.value.clone(),
-                        }))
-                );
-
-                let body = self.check(*body, expected.clone())?;
-
-                self.environment = old_env;
-
-                Ok(ASTNode::Lambda {
-                    parameters: new_parameters,
-                    return_type: expected,
-                    body: Box::new(body),
-                })
-            }
+                _ => Err(RealityError::ExpectedFunction(expected)),
+            },
 
             ASTNode::If {
                 condition,
@@ -545,10 +586,13 @@ impl<'a> Typechecker<'a> {
             type_vars.insert(var.clone(), self.new_type(var.clone()));
         }
 
-        (type_vars
-            .clone()
-            .into_iter()
-            .fold(scheme.body, |acc, (var, ty)| acc.substitute(&var, ty)), type_vars)
+        (
+            type_vars
+                .clone()
+                .into_iter()
+                .fold(scheme.body, |acc, (var, ty)| acc.substitute(&var, ty)),
+            type_vars,
+        )
     }
 
     fn check_literal(&mut self, value: Literal, expected: Type) -> Result<Literal> {
@@ -675,7 +719,10 @@ impl<'a> Typechecker<'a> {
 
             Type::TypeApplication(base, args) => {
                 let base = self.remove_alias(*base);
-                let args = args.iter().map(|arg| self.remove_alias(arg.clone())).collect::<Vec<_>>();
+                let args = args
+                    .iter()
+                    .map(|arg| self.remove_alias(arg.clone()))
+                    .collect::<Vec<_>>();
 
                 if let Type::TypeIdentifier(name) = base {
                     match self.type_aliases.get(&name) {
@@ -684,13 +731,21 @@ impl<'a> Typechecker<'a> {
                                 return ty;
                             }
 
-                            let subst = scheme.variables.iter().cloned().zip(args).collect::<Vec<_>>();
-                            return Type::TypeAliased(Box::new(scheme.body.substitute_all(subst)), name);
+                            let subst = scheme
+                                .variables
+                                .iter()
+                                .cloned()
+                                .zip(args)
+                                .collect::<Vec<_>>();
+                            return Type::TypeAliased(
+                                Box::new(scheme.body.substitute_all(subst)),
+                                name,
+                            );
                         }
                         None => return ty,
                     }
                 }
-                
+
                 return Type::TypeApplication(Box::new(base.clone()), args);
             }
 
@@ -702,22 +757,27 @@ impl<'a> Typechecker<'a> {
                 }
             }
 
-            Type::TypeFunction { parameters, return_type } => {
-                let parameters = parameters.iter().map(|param| self.remove_alias(param.clone())).collect::<Vec<_>>();
+            Type::TypeFunction {
+                parameters,
+                return_type,
+            } => {
+                let parameters = parameters
+                    .iter()
+                    .map(|param| self.remove_alias(param.clone()))
+                    .collect::<Vec<_>>();
                 let return_type = self.remove_alias(*return_type).clone();
 
-                return Type::TypeFunction { parameters, return_type: Box::new(return_type) };
+                return Type::TypeFunction {
+                    parameters,
+                    return_type: Box::new(return_type),
+                };
             }
 
             _ => ty,
         }
     }
 
-    fn does_occur_b(
-        &self,
-        tvr: &mut TypeVariable<String>,
-        ty: &Type,
-    ) -> Result<bool> {
+    fn does_occur_b(&self, tvr: &mut TypeVariable<String>, ty: &Type) -> Result<bool> {
         match ty {
             Type::TypeVariable(tv_) => {
                 let mut mut_tv = tv_.borrow_mut();
@@ -752,7 +812,10 @@ impl<'a> Typechecker<'a> {
                 Ok(false)
             }
 
-            Type::TypeFunction { parameters, return_type } => {
+            Type::TypeFunction {
+                parameters,
+                return_type,
+            } => {
                 if self.does_occur_b(tvr, return_type)? {
                     return Ok(true);
                 }
@@ -807,7 +870,12 @@ impl<'a> Typechecker<'a> {
         {
             if base1 == base2 && args1.len() == args2.len() {
                 for (arg1, arg2) in args1.iter().zip(args2.iter()) {
-                    self.unifies_with(arg1.clone(), arg2.clone(), base_ty1.clone(), base_ty2.clone())?;
+                    self.unifies_with(
+                        arg1.clone(),
+                        arg2.clone(),
+                        base_ty1.clone(),
+                        base_ty2.clone(),
+                    )?;
                 }
                 return Ok(());
             }
@@ -824,12 +892,24 @@ impl<'a> Typechecker<'a> {
         {
             if parameters.len() == other_parameters.len() {
                 for (param, other_param) in parameters.iter().zip(other_parameters.iter()) {
-                    self.unifies_with(param.clone(), other_param.clone(), base_ty1.clone(), base_ty2.clone())?;
+                    self.unifies_with(
+                        param.clone(),
+                        other_param.clone(),
+                        base_ty1.clone(),
+                        base_ty2.clone(),
+                    )?;
                 }
-                return self.unifies_with(*return_type.clone(), *other_return_type.clone(), base_ty1, base_ty2);
+                return self.unifies_with(
+                    *return_type.clone(),
+                    *other_return_type.clone(),
+                    base_ty1,
+                    base_ty2,
+                );
             }
         }
 
-        Err(reality_error::RealityError::TypeMismatch(base_ty1, base_ty2))
+        Err(reality_error::RealityError::TypeMismatch(
+            base_ty1, base_ty2,
+        ))
     }
 }
