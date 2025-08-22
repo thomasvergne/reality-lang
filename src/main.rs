@@ -1,6 +1,7 @@
 use reality_error::report_error;
 use reality_module::{imports::ImportResolver, modules::ModuleResolver};
 use reality_parser::{Parser, add_default_operators};
+use reality_specialize::Specializer;
 use reality_typechecker::Typechecker;
 
 fn main() {
@@ -61,6 +62,19 @@ fn main() {
         return report_error(
             typechecker.file,
             typechecker.position,
+            err.clone(),
+        );
+    }
+
+    let ast = result.unwrap();
+
+    let mut specializer = Specializer::new(&mut typechecker);
+    let result = specializer.specialize(ast);
+
+    if let Err(err) = result {
+        return report_error(
+            specializer.source.2.as_str(),
+            (specializer.source.0, specializer.source.1),
             err.clone(),
         );
     }
