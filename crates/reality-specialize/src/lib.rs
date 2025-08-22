@@ -157,6 +157,7 @@ impl<'a> Specializer<'a> {
                 variable,
                 value,
                 body,
+                return_ty
             } => {
                 let (specialized_value, mut n1) = self.specialize_expr(*value)?;
                 let (specialized_body, n2) = self.specialize_expr(*body)?;
@@ -168,6 +169,7 @@ impl<'a> Specializer<'a> {
                         variable,
                         value: Box::new(specialized_value),
                         body: Box::new(specialized_body),
+                        return_ty: return_ty.clone()
                     },
                     n1,
                 ))
@@ -193,6 +195,7 @@ impl<'a> Specializer<'a> {
                 condition,
                 then_branch,
                 else_branch,
+                return_ty,
             } => {
                 let (specialized_condition, mut n1) = self.specialize_expr(*condition)?;
                 let (specialized_then, n2) = self.specialize_expr(*then_branch)?;
@@ -206,6 +209,7 @@ impl<'a> Specializer<'a> {
                         condition: Box::new(specialized_condition),
                         then_branch: Box::new(specialized_then),
                         else_branch: Box::new(specialized_else),
+                        return_ty,
                     },
                     n1,
                 ))
@@ -356,6 +360,7 @@ impl<'a> Specializer<'a> {
                 variable,
                 value,
                 body,
+                return_ty
             } => {
                 let subst_as_vec = subst
                     .iter()
@@ -365,6 +370,7 @@ impl<'a> Specializer<'a> {
                 let specialized_value = self.apply_sub(*value, subst);
                 let specialized_body = self.apply_sub(*body, subst);
 
+                
                 let new_variable = Annotation {
                     name: variable.name,
                     value: variable.value.substitute_all(subst_as_vec.clone()),
@@ -375,6 +381,7 @@ impl<'a> Specializer<'a> {
                     variable: new_variable,
                     value: Box::new(specialized_value),
                     body: Box::new(specialized_body),
+                    return_ty: return_ty.substitute_all(subst_as_vec.clone())
                 }
             }
 
@@ -411,15 +418,24 @@ impl<'a> Specializer<'a> {
                 condition,
                 then_branch,
                 else_branch,
+                return_ty,
             } => {
                 let specialized_condition = self.apply_sub(*condition, subst);
                 let specialized_then = self.apply_sub(*then_branch, subst);
                 let specialized_else = self.apply_sub(*else_branch, subst);
 
+                let subst_as_vec = subst
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect::<Vec<_>>();
+
+                let specialized_return_ty = return_ty.substitute_all(subst_as_vec);
+
                 ASTNode::If {
                     condition: Box::new(specialized_condition),
                     then_branch: Box::new(specialized_then),
                     else_branch: Box::new(specialized_else),
+                    return_ty: specialized_return_ty,
                 }
             }
 
