@@ -6,11 +6,7 @@ fn id[T](x: T) -> T {
     x
 }
 
-fn const[X, Y](x: X) -> fn(Y) -> X {
-    |_: Y| x
-}
-
 fn main() -> i32 {
-    let x = const(3)(9.5);
+    let x = id(9);
     x
 }
