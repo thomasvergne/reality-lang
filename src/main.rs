@@ -1,3 +1,4 @@
+use reality_closure::ClosureConverter;
 use reality_error::report_error;
 use reality_module::{imports::ImportResolver, modules::ModuleResolver};
 use reality_parser::{Parser, add_default_operators};
@@ -75,6 +76,19 @@ fn main() {
         return report_error(
             specializer.source.2.as_str(),
             (specializer.source.0, specializer.source.1),
+            err.clone(),
+        );
+    }
+
+    let ast = result.unwrap();
+
+    let mut closure_converter = ClosureConverter::new();
+    let result = closure_converter.convert(ast);
+
+    if let Err(err) = result {
+        return report_error(
+            closure_converter.source.2.as_str(),
+            (closure_converter.source.0, closure_converter.source.1),
             err.clone(),
         );
     }
