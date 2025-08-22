@@ -29,7 +29,7 @@
 //
 // <==== AST MODULE ====>
 
-use std::fmt::Debug;
+use std::{collections::HashMap, fmt::Debug};
 
 use crate::internal::{annotation::Annotation, literal::Literal, types::Type};
 
@@ -43,6 +43,8 @@ pub enum ASTNode<N = Vec<String>, T = Option<Type<N>>> {
     Application {
         function: Box<ASTNode<N, T>>,
         arguments: Vec<ASTNode<N, T>>,
+
+        function_type: T,
     },
 
     Lambda {
@@ -67,6 +69,16 @@ pub enum ASTNode<N = Vec<String>, T = Option<Type<N>>> {
         span: (usize, usize, String),
         node: Box<ASTNode<N, T>>,
     },
+
+    StructureAccess {
+        structure: Box<ASTNode<N, T>>,
+        field: String,
+    },
+
+    StructureCreation {
+        structure_name: String,
+        fields: HashMap<String, ASTNode<N, T>>,
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -101,6 +113,11 @@ pub enum ToplevelNode<N = Vec<String>, T = Type<N>, AT = Option<Type<N>>> {
         span: (usize, usize, String),
         node: Box<ToplevelNode<N, T, AT>>,
     },
+
+    StructureDeclaration {
+        header: Annotation<Vec<String>>,
+        fields: HashMap<String, Type<N>>,
+    }
 }
 
 pub type TypedASTNode<N = String, T = Type<N>> = ASTNode<N, T>;
@@ -109,15 +126,29 @@ pub type TypedToplevelNode<N = String, T = Type<N>, AT = Type<N>> = ToplevelNode
 impl<T: Debug, N: Debug> Debug for ASTNode<N, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ASTNode::StructureCreation { structure_name, fields } => {
+                write!(f, "struct {} {{ ", structure_name)?;
+                for (name, field) in fields {
+                    write!(f, "{}: {:?}, ", name, field)?;
+                }
+                write!(f, "}}")
+            }
+
             ASTNode::Literal(lit) => write!(f, "{:?}", lit),
             ASTNode::Identifier(id) => {
                 write!(f, "{:?}", id.name)?;
 
                 Ok(())
             }
+
+            ASTNode::StructureAccess { structure, field } => {
+                write!(f, "{:?}.{}", structure, field)
+            }
+
             ASTNode::Application {
                 function,
                 arguments,
+                ..
             } => {
                 write!(f, "{:?}(", function)?;
                 for (i, arg) in arguments.iter().enumerate() {
@@ -169,6 +200,17 @@ impl<T: Debug, N: Debug> Debug for ASTNode<N, T> {
 impl<T: Debug, AT: Debug, N: Debug> Debug for ToplevelNode<N, T, AT> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ToplevelNode::StructureDeclaration { header, fields } => {
+                write!(f, "struct {} {{ ", header.name)?;
+                for (i, (field_name, field_type)) in fields.iter().enumerate() {
+                    write!(f, "{}: {:?}", field_name, field_type)?;
+                    if i < fields.len() - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, " }}")
+            }
+
             ToplevelNode::Located { node, .. } => write!(f, "{:?}", node),
             ToplevelNode::ModuleDeclaration { name, body } => {
                 write!(f, "module {} {{ {:?} }}", name, body)
@@ -231,13 +273,32 @@ impl<T: Clone> ASTNode<Vec<String>, T> {
 impl<T: Clone, N: Clone> ASTNode<N, T> {
     pub fn flatten_locations(&self) -> ASTNode<N, T> {
         match self {
+            ASTNode::StructureCreation { fields, structure_name } => {
+                ASTNode::StructureCreation {
+                    fields: fields
+                        .iter()
+                        .map(|(name, field)| (name.clone(), field.flatten_locations()))
+                        .collect(),
+                    structure_name: structure_name.clone(),
+                }
+            }
+
+            ASTNode::StructureAccess { structure, field } => {
+                ASTNode::StructureAccess {
+                    structure: Box::new(structure.flatten_locations()),
+                    field: field.clone(),
+                }
+            }
+
             ASTNode::Located { node, .. } => node.flatten_locations(),
             ASTNode::Application {
                 function,
                 arguments,
+                function_type
             } => ASTNode::Application {
                 function: Box::new(function.flatten_locations()),
                 arguments: arguments.iter().map(ASTNode::flatten_locations).collect(),
+                function_type: function_type.clone(),
             },
             ASTNode::LetIn {
                 variable,
@@ -272,18 +333,76 @@ impl<T: Clone, N: Clone> ASTNode<N, T> {
     }
 }
 
-impl<N: Clone> ASTNode<N, Type<String>> {
+impl ASTNode<String, Type<String>> {
+    pub fn free_variables(&self) -> HashMap<String, Type<String>> {
+        match self {
+            ASTNode::StructureCreation { fields, .. } => {
+                fields.iter().flat_map(|(_, field)| field.free_variables()).collect()
+            }
+
+            ASTNode::StructureAccess { structure, .. } => structure.free_variables(),
+            ASTNode::Located { node, .. } => node.free_variables(),
+            ASTNode::Identifier(ann) => {
+                let mut map = HashMap::new();
+                map.insert(ann.name.clone(), ann.value.clone());
+                map
+            },
+            ASTNode::Application { function, arguments, .. } => {
+                let mut free = function.free_variables();
+                for arg in arguments {
+                    free.extend(arg.free_variables());
+                }
+                free
+            }
+            ASTNode::LetIn { variable, value, body } => {
+                let mut free = value.free_variables();
+                free.extend(body.free_variables());
+                free.retain(|v, _| v != &variable.name);
+                free
+            }
+            ASTNode::Lambda { parameters, body, .. } => {
+                let mut free = body.free_variables();
+                
+                for param in parameters {
+                    free.retain(|v, _| v != &param.name);
+                }
+
+                free
+            }
+            ASTNode::If { condition, then_branch, else_branch } => {
+                let mut free = condition.free_variables();
+                free.extend(then_branch.free_variables());
+                free.extend(else_branch.free_variables());
+                free
+            }
+            ASTNode::Literal(_) => HashMap::new(),
+        }
+    }
+
     pub fn free_types(&self) -> Vec<String> {
         match self {
+            ASTNode::StructureCreation { fields, .. } => {
+                fields.iter().flat_map(|(_, field)| field.free_types()).collect()
+            }
+
+            ASTNode::StructureAccess { structure, .. } => {
+                let free = structure.free_types();
+                free
+            }
+
             ASTNode::Located { node, .. } => node.free_types(),
             ASTNode::Application {
                 function,
                 arguments,
+                function_type
             } => {
                 let mut free = function.free_types();
                 for arg in arguments {
                     free.extend(arg.free_types());
                 }
+
+                free.extend(function_type.free());
+
                 free
             }
             ASTNode::LetIn {
@@ -323,6 +442,14 @@ impl<N: Clone> ASTNode<N, Type<String>> {
             }
             ASTNode::Literal(_) => vec![],
             ASTNode::Identifier(ann) => ann.value.clone().free(),
+        }
+    }
+
+    pub fn get_lambda(&self) -> Option<&Self> {
+        match self {
+            ASTNode::Lambda { .. } => Some(self),
+            ASTNode::Located { node, .. } => node.get_lambda(),
+            _ => None,
         }
     }
 }

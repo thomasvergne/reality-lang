@@ -23,7 +23,7 @@
 //
 // <==== TYPES MODULE ====>
 
-use std::{cell::RefCell, rc::Rc, fmt::{Debug, Display}};
+use std::{cell::RefCell, collections::HashMap, fmt::{Debug, Display}, rc::Rc};
 
 #[derive(Clone, PartialEq)]
 pub enum Type<N = Vec<String>> {
@@ -35,6 +35,10 @@ pub enum Type<N = Vec<String>> {
         return_type: Box<Type<N>>,
     },
     TypeAliased(Box<Type<N>>, String),
+
+    AnonymousStructure {
+        fields: HashMap<String, Type<N>>,
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -84,6 +88,11 @@ impl Type<String> {
 impl Type<Vec<String>> {
     pub fn normalize(&self) -> Type<String> {
         match self {
+            Type::AnonymousStructure { fields } => {
+                let fields = fields.iter().map(|(k, v)| (k.clone(), v.normalize())).collect();
+                Type::AnonymousStructure { fields }
+            }
+
             Type::TypeIdentifier(name) => Type::TypeIdentifier(name.join("::")),
             Type::TypeApplication(base, args) => {
                 let base = base.normalize();
@@ -142,6 +151,17 @@ impl<N: Display> Display for TypeVariable<N> {
 impl<N: Debug> Debug for Type<N> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
+            Type::AnonymousStructure { fields } => {
+                write!(f, "{{")?;
+                for (i, (k, v)) in fields.iter().enumerate() {
+                    write!(f, "{}: {:?}", k, v)?;
+                    if i < fields.len() - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, "}}")
+            }
+
             Type::TypeIdentifier(name) => write!(f, "{:?}", name),
             Type::TypeApplication(base, args) => {
                 write!(f, "{:?}<", base)?;
@@ -178,6 +198,17 @@ impl<N: Debug> Debug for Type<N> {
 impl<N: Display> Display for Type<N> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
+            Type::AnonymousStructure { fields } => {
+                write!(f, "{{")?;
+                for (i, (k, v)) in fields.iter().enumerate() {
+                    write!(f, "{}: {}", k, v)?;
+                    if i < fields.len() - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, "}}")
+            }
+
             Type::TypeIdentifier(name) => write!(f, "{}", name),
             Type::TypeApplication(base, args) => {
                 write!(f, "{}<", base)?;
@@ -246,6 +277,14 @@ impl<N: Display> Display for Scheme<N> {
 impl Type<String> {
     pub fn substitute<'a>(&self, name: &'a str, replacement: Self) -> Self {
         match self {
+            Type::AnonymousStructure { fields } => {
+                let fields = fields
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.substitute(name, replacement.clone())))
+                    .collect();
+                Type::AnonymousStructure { fields }
+            }
+
             Type::TypeIdentifier(id) => if id == name {
                 replacement
             } else {
@@ -283,6 +322,14 @@ impl Type<String> {
 
     pub fn substitute_all<'a>(&self, substitutions: Vec<(String, Self)>) -> Self {
         match self {
+            Type::AnonymousStructure { fields } => {
+                let fields = fields
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.substitute_all(substitutions.clone())))
+                    .collect();
+                Type::AnonymousStructure { fields }
+            }
+
             Type::TypeIdentifier(name) => {
                 if let Some((_, replacement)) = substitutions.iter().find(|(n, _)| n == name) {
                     return replacement.clone();
@@ -324,6 +371,15 @@ impl Type<String> {
 
     pub fn free(&self) -> Vec<String> {
         match self {
+            Type::AnonymousStructure { fields } => {
+                let mut free_vars = Vec::new();
+                for (name, ty) in fields {
+                    free_vars.push(name.clone());
+                    free_vars.extend(ty.free());
+                }
+                free_vars
+            }
+
             Type::TypeIdentifier(_) => vec![],
             Type::TypeApplication(base, args) => {
                 let mut free_vars = base.free();
