@@ -272,6 +272,61 @@ impl<T: Clone, N: Clone> ASTNode<N, T> {
     }
 }
 
+impl<N: Clone> ASTNode<N, Type<String>> {
+    pub fn free_types(&self) -> Vec<String> {
+        match self {
+            ASTNode::Located { node, .. } => node.free_types(),
+            ASTNode::Application {
+                function,
+                arguments,
+            } => {
+                let mut free = function.free_types();
+                for arg in arguments {
+                    free.extend(arg.free_types());
+                }
+                free
+            }
+            ASTNode::LetIn {
+                variable,
+                value,
+                body,
+            } => {
+                let mut free = value.free_types();
+                free.extend(body.free_types());
+                free.extend(variable.value.free());
+                free
+            }
+            ASTNode::Lambda {
+                parameters,
+                body,
+                return_type,
+            } => {
+                let mut free = body.free_types();
+                let parameters_free = parameters
+                    .iter()
+                    .map(|param| param.value.free())
+                    .collect::<Vec<_>>()
+                    .concat();
+                free.extend(return_type.clone().free());
+                free.extend_from_slice(&parameters_free);
+                free
+            }
+            ASTNode::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let mut free = condition.free_types();
+                free.extend(then_branch.free_types());
+                free.extend(else_branch.free_types());
+                free
+            }
+            ASTNode::Literal(_) => vec![],
+            ASTNode::Identifier(ann) => ann.value.clone().free(),
+        }
+    }
+}
+
 pub fn build_block_from_statements(statements: &[ASTNode]) -> ASTNode {
     if statements.is_empty() {
         return unit();

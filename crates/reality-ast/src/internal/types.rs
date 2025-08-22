@@ -189,7 +189,13 @@ impl<N: Display> Display for Type<N> {
                 }
                 write!(f, ">")
             }
-            Type::TypeVariable(var) => write!(f, "{}", var.borrow()),
+            Type::TypeVariable(var) => {
+                if let TypeVariable::Unbound(_, _) = &*var.borrow() {
+                    write!(f, "{{unknown}}")
+                } else {
+                    write!(f, "{}", var.borrow())
+                }
+            },
             Type::TypeFunction {
                 parameters,
                 return_type,
@@ -312,6 +318,40 @@ impl Type<String> {
 
             Type::TypeAliased(inner, name) => {
                 Type::TypeAliased(Box::new(inner.substitute_all(substitutions)), name.clone())
+            }
+        }
+    }
+
+    pub fn free(&self) -> Vec<String> {
+        match self {
+            Type::TypeIdentifier(_) => vec![],
+            Type::TypeApplication(base, args) => {
+                let mut free_vars = base.free();
+                for arg in args {
+                    free_vars.extend(arg.free());
+                }
+                free_vars
+            }
+            Type::TypeVariable(var) => {
+                if let TypeVariable::Bound(ty) = &*var.borrow() {
+                    return ty.free();
+                } else if let TypeVariable::Unbound(name, _) = &*var.borrow() {
+                    return vec![name.clone()];
+                }
+
+                return vec![];
+            }
+            Type::TypeFunction { parameters, return_type } => {
+                let mut free_vars = return_type.free();
+                for param in parameters {
+                    free_vars.extend(param.free());
+                }
+                free_vars
+            }
+            Type::TypeAliased(inner, name) => {
+                let mut free_vars = inner.free();
+                free_vars.push(name.clone());
+                free_vars
             }
         }
     }
