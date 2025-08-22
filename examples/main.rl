@@ -7,7 +7,7 @@ fn id[T](x: T) -> T {
 }
 
 fn main() -> i32 {
-    let id_ = |x| x;
     let y = id(x);
+    let z = id("test");
     80
 }
