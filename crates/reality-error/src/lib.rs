@@ -1,3 +1,5 @@
+use std::fmt::{Debug, Display};
+
 use reality_ast::internal::types::Type;
 use thiserror::Error;
 
@@ -51,6 +53,36 @@ pub enum RealityError {
 
     #[error("Infinite type detected: {0}")]
     InfiniteType(String),
+
+    #[error("Unbound generics found in function body {0}")]
+    UnboundGenerics(Generics)
+}
+
+#[derive(Clone)]
+pub struct Generics(pub Vec<String>);
+
+impl Display for Generics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, s) in self.0.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", s)?;
+        }
+        Ok(())
+    }
+}
+
+impl Debug for Generics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, s) in self.0.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", s)?;
+        }
+        Ok(())
+    }
 }
 
 pub fn report_error<'a>(
