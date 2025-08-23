@@ -55,6 +55,10 @@ impl ANF {
                 Some(ToplevelLLIR::StructureDeclaration { header: header.name, fields })
             }
 
+            TypedToplevelNode::ExternalFunction { name, parameters, return_type } => {
+                Some(ToplevelLLIR::ExternalFunction { name: name.name, parameters, return_type })
+            }
+
             _ => None,
         }
     }
@@ -105,13 +109,17 @@ impl ANF {
                 let new_name = format!("let_{}", self.symbol_counter.borrow());
                 self.symbol_counter.replace_with(|c| *c + 1);
 
-                let anf_let = LLIR::Let {
-                    name: variable.name,
-                    annotation: variable.value,
-                    value: Some(Box::new(anf_value))
-                };
-
-                anf_lets.push(anf_let);
+                if variable.name != "_" {
+                    anf_lets.push(LLIR::Let {
+                        name: variable.name,
+                        annotation: variable.value,
+                        value: Some(Box::new(anf_value)),
+                    });
+                } else {
+                    // If the variable is "_", we don't bind the value to a name
+                    // but we still need to ensure the value is computed
+                    anf_lets.push(anf_value);
+                }
 
                 for let_binding in anf_body_lets {
                     anf_lets.push(let_binding);

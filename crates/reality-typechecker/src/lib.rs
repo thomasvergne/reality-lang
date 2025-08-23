@@ -68,6 +68,32 @@ impl<'a> Typechecker<'a> {
 
     pub fn check_toplevel(&mut self, node: ToplevelNode) -> Result<TypedToplevelNode> {
         match node {
+            ToplevelNode::ExternalFunction { name, parameters, return_type } => {
+                let parameters = parameters
+                    .into_iter()
+                    .map(|p| Annotation {
+                        name: p.name,
+                        value: self.remove_alias(p.value.normalize()),
+                        location: p.location,
+                    })
+                    .collect::<Vec<_>>();
+                let return_type = self.remove_alias(return_type.normalize());
+
+                self.environment.insert(name.name.clone(), Scheme {
+                    variables: name.value.clone(),
+                    body: Type::TypeFunction {
+                        parameters: parameters.iter().map(|p| p.value.clone()).collect(),
+                        return_type: Box::new(return_type.clone()),
+                    },
+                });
+
+                Ok(ToplevelNode::ExternalFunction {
+                    name,
+                    parameters,
+                    return_type,
+                })
+            }
+
             ToplevelNode::StructureDeclaration { header, fields } => {
                 let mut fields_types = HashMap::new();
                 for (field_name, field_type) in fields {

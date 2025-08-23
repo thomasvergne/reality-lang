@@ -150,6 +150,40 @@ impl ClosureConverter {
 
     fn convert_node(&mut self, node: TypedToplevelNode) -> Result<TypedToplevelNode> {
         match node {
+            ToplevelNode::ExternalFunction { name, parameters, return_type } => {
+                let converted_params = parameters
+                    .iter()
+                    .map(|p| Annotation {
+                        name: p.name.clone(),
+                        value: self.convert_type(p.value.clone()),
+                        location: p.location,
+                    })
+                    .collect::<Vec<_>>();
+
+                let converted_return_type = self.convert_type(return_type);
+
+                self.natives.insert(
+                    name.name.clone(),
+                    (
+                        converted_params.len(),
+                        Type::TypeFunction {
+                            parameters: converted_params.iter().map(|p| p.value.clone()).collect(),
+                            return_type: Box::new(converted_return_type.clone()),
+                        },
+                    ),
+                );
+
+                Ok((
+                    ToplevelNode::ExternalFunction {
+                        name,
+                        parameters: converted_params,
+                        return_type: converted_return_type,
+                    },
+                    Vec::new(),
+                    self.void_pointer(),
+                ))
+            }
+
             ToplevelNode::FunctionDeclaration {
                 name,
                 parameters,
