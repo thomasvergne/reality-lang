@@ -29,7 +29,7 @@ impl CodeGeneration {
     fn generate_type(&self, ty: Type<String>, name: Option<String>) -> String {
         match ty {
             Type::TypeAliased(ty, alias) => {
-                format!("/* {} */ {}", alias, self.generate_type(*ty, None))
+                format!("/* {} */ {}", alias, self.generate_type(*ty, name))
             }
 
             Type::AnonymousStructure { fields } => {
@@ -52,12 +52,14 @@ impl CodeGeneration {
 
             Type::TypeIdentifier(ty) => {
                 let ty = match ty.as_str() {
+                    "i8" => "int8_t".into(),
                     "i16" => "int16_t".into(),
                     "i32" => "int32_t".into(),
                     "i64" => "int64_t".into(),
                     "f32" => "float32_t".into(),
                     "f64" => "float64_t".into(),
                     "bool" => "bool".into(),
+                    "u8" => "uint8_t".into(),
                     "u16" => "uint16_t".into(),
                     "u32" => "uint32_t".into(),
                     "u64" => "uint64_t".into(),
@@ -94,7 +96,7 @@ impl CodeGeneration {
 
             Type::TypeApplication(base, args) if self.is_pointer_type(*base.clone()) => {
                 let mut result = String::new();
-                result.push_str(&format!("{}*", self.generate_type(args[0].clone(), None)));
+                result.push_str(&format!("{}* {}", self.generate_type(args[0].clone(), None), name.unwrap_or_default()));
                 result
             }
 
