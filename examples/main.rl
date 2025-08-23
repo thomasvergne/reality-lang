@@ -1,6 +1,8 @@
-const x: i64 = 5;
+const x: i32 = 5;
 
 import string::*;
+
+const y: string = "test";
 
 fn id[A](x: A) -> A {
     x
@@ -11,6 +13,7 @@ fn const[A, B](x: A) -> fn(B) -> A {
 }
 
 fn main() -> i32 {
-    let c = const(5)(5.4);
+    let id_ = |x| x;
+    let c = const(id_(x))(5.4);
     c
 }
