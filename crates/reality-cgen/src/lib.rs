@@ -36,7 +36,7 @@ impl CodeGeneration {
                 let mut result = String::new();
                 result.push_str("struct {\n");
                 for (name, ty) in fields {
-                    result.push_str(&format!("    {}: {},\n", name, self.generate_type(ty, None)));
+                    result.push_str(&format!("  {};\n", self.generate_type(ty, Some(name))));
                 }
                 result.push_str(format!("}} {}", name.unwrap_or_default()).as_str());
                 result
@@ -77,7 +77,7 @@ impl CodeGeneration {
 
                 let return_type = self.generate_type(*return_type, None);
 
-                function.push_str(&format!("{} (*{})", return_type, name.unwrap_or_default()));
+                function.push_str(&format!("{} (*{})(", return_type, name.unwrap_or_default()));
 
                 for (i, param) in params.iter().enumerate() {
                     function.push_str(&format!(" {}", param));
@@ -94,7 +94,7 @@ impl CodeGeneration {
 
             Type::TypeApplication(base, args) if self.is_pointer_type(*base.clone()) => {
                 let mut result = String::new();
-                result.push_str(&format!("(*{})", self.generate_type(args[0].clone(), None)));
+                result.push_str(&format!("{}*", self.generate_type(args[0].clone(), None)));
                 result
             }
 
@@ -108,13 +108,15 @@ impl CodeGeneration {
         match ast {
             ToplevelLLIR::StructureDeclaration { header, fields } => {
                 let mut result = String::new();
-                result.push_str(&format!("struct {} {{\n", header));
+                result.push_str(&format!("typedef struct {} {{\n", header));
 
                 for (field, ty) in fields {
                     result.push_str(&self.generate_type(ty, Some(field.clone())));
+
+                    result.push_str(";");
                 }
                 
-                result.push_str("}");
+                result.push_str(&format!("}} {};", header));
                 result
             }
 
@@ -125,8 +127,12 @@ impl CodeGeneration {
 
                 result.push_str(&format!("{}(", name_with_type));
 
-                for Annotation { name, value, .. } in parameters {
-                    result.push_str(&self.generate_type(value, Some(name)));
+                for (i, Annotation { name, value, .. }) in parameters.iter().enumerate() {
+                    result.push_str(&self.generate_type(value.clone(), Some(name.clone())));
+
+                    if i < parameters.len() - 1 {
+                        result.push_str(", ");
+                    }
                 }
 
                 result.push_str(") {");
@@ -181,7 +187,7 @@ impl CodeGeneration {
             LLIR::StructureCreation { structure_name, fields } => {
                 let mut result = format!("(struct {}) {{\n", structure_name);
                 for (field, value) in fields {
-                    result.push_str(&format!("    {}: {},\n", field, self.generate_expression(value)));
+                    result.push_str(&format!("    .{} = {},\n", field, self.generate_expression(value)));
                 }
                 result.push_str("}");
                 result
