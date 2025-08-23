@@ -265,8 +265,6 @@ impl<'a> Specializer<'a> {
                 new_hm.insert(f, self.specialize_type(t));
             }
 
-            // println!("{:?}", )
-
             let new_name = if args.len() == 0 {
                 name.clone()
             } else {
@@ -526,8 +524,6 @@ impl<'a> Specializer<'a> {
             let (impl_ty, subst) = self.typechecker.instantiate_and_sub(prop_scheme.clone());
 
             self.typechecker.is_subtype(impl_ty, name.value.clone())?;
-
-            println!("{:?} {:?}", subst, prop_scheme.clone());
 
             let ordered_vars = prop_scheme
                 .variables

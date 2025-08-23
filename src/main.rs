@@ -11,6 +11,7 @@ use reality_typechecker::Typechecker;
 
 fn main() {
     let file = "examples/structures.rl";
+    let c_imports = vec!["<stdint.h>", "<stdlib.h>"];
     let file_content = include_str!("../examples/structures.rl");
     let current_dir = std::env::current_dir().unwrap().join("examples");
 
@@ -103,17 +104,16 @@ fn main() {
 
     let hoisted_ast = hoister.hoist(ast);
 
-    for node in &hoisted_ast {
-        println!("{:?}", node);
-    }
-
     let mut anf_converter = ANF::new();
     let ast = anf_converter.compile(hoisted_ast);
 
     let code_generator = CodeGeneration::new();
     let result = code_generator.generate(ast);
 
-    let result = write("output.c", result);
+    let mut final_code = c_imports.iter().map(|s| format!("#include {}\n", s)).collect::<Vec<_>>().join("");
+    final_code.push_str(&result);
+
+    let result = write("output.c", final_code);
 
     if let Err(err) = result {
         eprintln!("Error writing to output.c: {}", err);
