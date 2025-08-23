@@ -440,8 +440,6 @@ impl ClosureConverter {
                     ns.append(&mut ns1);
                 }
 
-                println!("{:?} {:?}", function, native_functions);
-
                 if let ASTNode::Identifier(ann) = function.flatten_locations()
                     && let Some((_, ty)) = native_functions.get(&ann.name)
                 {

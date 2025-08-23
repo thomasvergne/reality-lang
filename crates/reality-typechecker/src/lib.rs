@@ -644,8 +644,6 @@ impl<'a> Typechecker<'a> {
             _ => {
                 let (inferred, inferred_type) = self.synthesize(expr)?;
 
-                println!("Inferred type: {:?}", inferred_type);
-
                 self.is_subtype(inferred_type, expected)?;
 
                 Ok(inferred)
