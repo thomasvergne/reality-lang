@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 "reality-ast" = { path = "../reality-ast" }
 "reality-error" = { path = "../reality-error" }
+"reality-typechecker" = { path = "../reality-typechecker" }

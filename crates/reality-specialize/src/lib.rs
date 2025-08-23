@@ -13,6 +13,7 @@ use reality_typechecker::Typechecker;
 type Scheme = types::Scheme<Type>;
 type Type = types::Type<String>;
 
+#[derive(Debug, Clone)]
 pub struct Specializer<'a> {
     pub variables: HashMap<String, (Scheme, TypedToplevelNode)>,
     pub structures: HashMap<String, (Vec<String>, HashMap<String, Type>)>,
@@ -23,7 +24,7 @@ pub struct Specializer<'a> {
     pub already_converted_structures: Vec<String>,
     pub already_converted_implementations: Vec<String>,
 
-    pub typechecker: &'a mut Typechecker<'a>,
+    pub typechecker: Typechecker<'a>,
 
     pub source: (usize, usize, String),
 }
@@ -31,7 +32,7 @@ pub struct Specializer<'a> {
 type Result<T> = std::result::Result<T, RealityError>;
 
 impl<'a> Specializer<'a> {
-    pub fn new(typechecker: &'a mut Typechecker<'a>) -> Self {
+    pub fn new(typechecker: Typechecker<'a>) -> Self {
         Specializer {
             variables: HashMap::new(),
             structures: HashMap::new(),

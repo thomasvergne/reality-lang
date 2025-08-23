@@ -9,10 +9,12 @@ use reality_ast::{
     },
 };
 use reality_error::RealityError;
+use reality_typechecker::Typechecker;
 
 pub mod hoisting;
 
-pub struct ClosureConverter {
+#[derive(Debug, Clone)]
+pub struct ClosureConverter<'a> {
     pub source: (usize, usize, String),
 
     pub symbol_counter: Rc<RefCell<usize>>,
@@ -21,12 +23,14 @@ pub struct ClosureConverter {
     pub natives: HashMap<String, (usize, Type<String>)>,
     pub locals: HashMap<String, Type<String>>,
     pub structures: HashMap<String, HashMap<String, Type<String>>>,
+
+    pub typechecker: Typechecker<'a>,
 }
 
 type Result<T> = std::result::Result<(T, Vec<TypedToplevelNode>, Type<String>), RealityError>;
 
-impl ClosureConverter {
-    pub fn new() -> Self {
+impl<'a> ClosureConverter<'a> {
+    pub fn new(typechecker: Typechecker<'a>) -> Self {
         ClosureConverter {
             source: (0, 0, String::new()),
             symbol_counter: Rc::new(RefCell::new(0)),
@@ -34,6 +38,7 @@ impl ClosureConverter {
             locals: HashMap::new(),
             natives: HashMap::new(),
             structures: HashMap::new(),
+            typechecker,
         }
     }
 
@@ -87,8 +92,11 @@ impl ClosureConverter {
                     ]),
                 }
             }
-            
-            Type::TypeFunction { parameters, return_type } => {
+
+            Type::TypeFunction {
+                parameters,
+                return_type,
+            } => {
                 let new_params = parameters
                     .into_iter()
                     .map(|p| self.convert_type(p))
@@ -96,7 +104,6 @@ impl ClosureConverter {
 
                 let new_return = self.convert_type(*return_type);
 
-        
                 return Type::TypeFunction {
                     parameters: new_params,
                     return_type: new_return.into(),
@@ -150,7 +157,11 @@ impl ClosureConverter {
 
     fn convert_node(&mut self, node: TypedToplevelNode) -> Result<TypedToplevelNode> {
         match node {
-            ToplevelNode::ExternalFunction { name, parameters, return_type } => {
+            ToplevelNode::ExternalFunction {
+                name,
+                parameters,
+                return_type,
+            } => {
                 let converted_params = parameters
                     .iter()
                     .map(|p| Annotation {
@@ -210,6 +221,8 @@ impl ClosureConverter {
 
                 let (converted_body, ns, ty) = self.convert_exp(*body)?;
 
+                println!("{}: {:?}", name.name, ty);
+
                 let param_types = parameters
                     .iter()
                     .map(|p| Annotation {
@@ -261,7 +274,14 @@ impl ClosureConverter {
 
             ToplevelNode::Located { span, node } => {
                 let (converted, ns, ty) = self.convert_node(*node)?;
-                Ok((ToplevelNode::Located { span, node: Box::new(converted) }, ns, ty))
+                Ok((
+                    ToplevelNode::Located {
+                        span,
+                        node: Box::new(converted),
+                    },
+                    ns,
+                    ty,
+                ))
             }
 
             _ => Ok((node, Vec::new(), self.void_pointer())),
@@ -423,7 +443,11 @@ impl ClosureConverter {
                 ns1.append(&mut ns2);
                 ns1.append(&mut ns3);
 
-                let return_ty = if then_ty == else_ty {
+                let return_ty = if self
+                    .typechecker
+                    .is_subtype(then_ty.clone(), else_ty.clone())
+                    .is_ok()
+                {
                     then_ty
                 } else {
                     self.void_pointer()
@@ -437,7 +461,7 @@ impl ClosureConverter {
                         return_ty: converted_return_ty,
                     },
                     ns1,
-                    return_ty
+                    return_ty,
                 ))
             }
 
@@ -498,7 +522,7 @@ impl ClosureConverter {
                             function_type: function_type.clone(),
                         },
                         ns,
-                        return_ty
+                        return_ty,
                     ));
                 }
 
@@ -557,7 +581,7 @@ impl ClosureConverter {
                         return_ty: converted_return_ty.clone(),
                     },
                     ns,
-                    converted_return_ty
+                    converted_return_ty,
                 ))
             }
         }
@@ -569,9 +593,7 @@ impl ClosureConverter {
         reserved: Vec<String>,
     ) -> Result<TypedASTNode> {
         if let ASTNode::Lambda {
-            parameters,
-            body,
-            ..
+            parameters, body, ..
         } = expr.clone()
         {
             let mut free_vars = body.free_variables();
@@ -733,7 +755,11 @@ impl ClosureConverter {
 
             self.symbol_counter.replace_with(|v| *v + 1);
 
-            return Ok((lambda_structure, ns, Type::TypeIdentifier(lambda_struct_name)));
+            return Ok((
+                lambda_structure,
+                ns,
+                Type::TypeIdentifier(lambda_struct_name),
+            ));
         }
 
         Ok((expr, vec![], self.void_pointer()))

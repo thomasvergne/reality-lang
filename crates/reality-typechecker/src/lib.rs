@@ -10,6 +10,7 @@ use reality_ast::{
 };
 use reality_error::{Generics, RealityError};
 
+#[derive(Debug, Clone)]
 pub struct Typechecker<'a> {
     pub input: &'a str,
     pub file: &'a str,
@@ -1137,7 +1138,7 @@ impl<'a> Typechecker<'a> {
         }
     }
 
-    fn unifies_with(&mut self, ty1: Type, ty2: Type, base_ty1: Type, base_ty2: Type) -> Result<()> {
+    pub fn unifies_with(&mut self, ty1: Type, ty2: Type, base_ty1: Type, base_ty2: Type) -> Result<()> {
         if ty1 == ty2 {
             return Ok(());
         }
