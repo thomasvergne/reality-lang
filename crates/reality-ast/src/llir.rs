@@ -51,5 +51,11 @@ pub enum ToplevelLLIR {
     StructureDeclaration {
         header: String,
         fields: HashMap<String, Type<String>>,
+    },
+
+    ExternalFunction {
+        name: String,
+        parameters: Vec<Annotation<Type<String>>>,
+        return_type: Type<String>,
     }
 }

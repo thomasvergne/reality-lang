@@ -151,6 +151,10 @@ impl Parser {
             return self.parse_top_struct();
         }
 
+        if self.peek_token("extern") {
+            return self.parse_top_external();
+        }
+
         Err(RealityError::ExpectedToken("<toplevel>".to_string()))
     }
 
@@ -274,6 +278,67 @@ impl Parser {
                 body: Box::new(body),
             },
             (start_pos, end_pos),
+        ))
+    }
+
+    fn parse_top_external(&mut self) -> Result<ToplevelNode> {
+        let (_, (start_pos, _)) = self.consume_token("extern")?;
+
+        self.consume_token("fn")?;
+
+        let (name, (name_start, name_end)) = self.parse_identifier()?;
+
+        self.consume_token("(")?;
+
+        let mut parameters = Vec::new();
+
+        while !self.peek_token(")") {
+            self.skip_whitespaces();
+            if self.position >= self.input.len() {
+                return Err(RealityError::UnexpectedEndOfFile);
+            }
+            let (param, (start, _)) = self.parse_identifier()?;
+
+            self.consume_token(":")?;
+
+            let (param_type, (_, end)) = self.parse_type()?;
+
+            parameters.push(Annotation {
+                name: param.to_string(),
+                value: param_type,
+                location: (start, end),
+            });
+
+            self.skip_whitespaces();
+            if self.peek_token(",") {
+                self.consume_token(",")?;
+            } else if !self.peek_token(")") {
+                return Err(RealityError::ExpectedToken(")".to_string()));
+            }
+        }
+
+        self.consume_token(")")?;
+
+        let mut return_type = Type::TypeIdentifier(vec!["unit".to_string()]);
+
+        if self.peek_token("->") {
+            self.consume_token("->")?;
+            let (ty, _) = self.parse_type()?;
+
+            return_type = ty;
+        }
+
+        Ok((
+            ToplevelNode::ExternalFunction {
+                name: Annotation {
+                    name: name.to_string(),
+                    value: Vec::new(),
+                    location: (name_start, name_end),
+                },
+                parameters,
+                return_type,
+            },
+            (start_pos, self.position),
         ))
     }
 

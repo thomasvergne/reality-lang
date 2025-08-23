@@ -121,6 +121,12 @@ pub enum ToplevelNode<N = Vec<String>, T = Type<N>, AT = Option<Type<N>>> {
     StructureDeclaration {
         header: Annotation<Vec<String>>,
         fields: HashMap<String, Type<N>>,
+    },
+
+    ExternalFunction {
+        name: Annotation<Vec<String>>,
+        parameters: Vec<Annotation<Type<N>>>,
+        return_type: Type<N>,
     }
 }
 
@@ -206,6 +212,17 @@ impl<T: Debug, N: Debug> Debug for ASTNode<N, T> {
 impl<T: Debug, AT: Debug, N: Debug> Debug for ToplevelNode<N, T, AT> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ToplevelNode::ExternalFunction { name, parameters, return_type } => {
+                write!(f, "extern fn {}[{:?}](", name.name, name.value)?;
+                for (i, param) in parameters.iter().enumerate() {
+                    write!(f, "{:?}", param)?;
+                    if i < parameters.len() - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ") -> {:?} {{ ... }}", return_type)
+            }
+
             ToplevelNode::StructureDeclaration { header, fields } => {
                 write!(f, "struct {} {{ ", header.name)?;
                 for (i, (field_name, field_type)) in fields.iter().enumerate() {
@@ -264,6 +281,14 @@ impl<T, AT, N> ToplevelNode<N, T, AT> {
 impl<T: Clone, AT: Clone, N: Clone> ToplevelNode<N, T, AT> {
     pub fn flatten_locations(&self) -> ToplevelNode<N, T, AT> {
         match self {
+            ToplevelNode::ExternalFunction { name, parameters, return_type } => {
+                ToplevelNode::ExternalFunction {
+                    name: name.clone(),
+                    parameters: parameters.clone(),
+                    return_type: return_type.clone(),
+                }
+            }
+
             ToplevelNode::ModuleDeclaration { name, body } => ToplevelNode::ModuleDeclaration {
                 name: name.clone(),
                 body: body.iter().map(ToplevelNode::flatten_locations).collect(),
@@ -552,7 +577,7 @@ pub fn build_block_from_statements(statements: &[ASTNode]) -> ASTNode {
         },
         [first, rest @ ..] => ASTNode::LetIn {
             variable: Annotation {
-                name: "block".to_string(),
+                name: "_".to_string(),
                 value: None,
                 location: (0, 0),
             },
