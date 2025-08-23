@@ -299,22 +299,26 @@ impl<'a> Specializer<'a> {
 
             let new_name = format!("{}_{}", name.name, new_subst.values().map(|t| t.to_string()).collect::<Vec<_>>().join("_"));
 
-            return Ok((
-                Annotation {
-                    name: new_name.clone(),
-                    value: ty,
-                    location: name.location,
-                },
-                vec![ToplevelNode::FunctionDeclaration {
+            let (new_body, mut ns) = self.specialize_expr(new_body)?;
+
+            ns.push(ToplevelNode::FunctionDeclaration {
                     name: Annotation {
-                        name: new_name,
+                        name: new_name.clone(),
                         value: vec![],
                         location: name.location,
                     },
                     parameters: new_parameters,
                     return_type: new_return_type,
                     body: Box::new(new_body),
-                }],
+                });
+
+            return Ok((
+                Annotation {
+                    name: new_name.clone(),
+                    value: ty,
+                    location: name.location,
+                },
+                ns
             ));
         }
 
