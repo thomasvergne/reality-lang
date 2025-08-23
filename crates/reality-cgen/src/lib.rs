@@ -108,6 +108,20 @@ impl CodeGeneration {
 
     fn generate_node(&self, ast: ToplevelLLIR) -> String {
         match ast {
+            ToplevelLLIR::ExternalFunction { name, parameters, return_type } => {
+                // extern void printf(const char*);
+                let mut result = String::new();
+                result.push_str(&format!("extern {}(", self.generate_type(return_type, Some(name))));
+                for (i, param) in parameters.iter().enumerate() {
+                    result.push_str(&self.generate_type(param.value.clone(), Some(param.name.clone())));
+                    if i < parameters.len() - 1 {
+                        result.push_str(", ");
+                    }
+                }
+                result.push_str(");");
+                result
+            }
+            
             ToplevelLLIR::StructureDeclaration { header, fields } => {
                 let mut result = String::new();
                 result.push_str(&format!("typedef struct {} {{\n", name_mangle(header.clone())));
