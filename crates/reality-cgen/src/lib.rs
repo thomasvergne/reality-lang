@@ -183,6 +183,13 @@ impl CodeGeneration {
 
     fn generate_expression(&self, expr: LLIR) -> String {
         match expr {
+            LLIR::Reference(inner) => {
+                format!("&{}", self.generate_expression(*inner))
+            }
+            LLIR::Dereference(inner) => {
+                format!("*{}", self.generate_expression(*inner))
+            }
+
             LLIR::Block(expressions) => {
                 let mut result = String::new();
                 result.push_str("{\n");

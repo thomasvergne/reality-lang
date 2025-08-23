@@ -31,7 +31,10 @@ pub enum LLIR {
         fields: HashMap<String, LLIR>,
     },
 
-    Block(Vec<LLIR>)
+    Block(Vec<LLIR>),
+
+    Reference(Box<LLIR>),
+    Dereference(Box<LLIR>),
 }
 
 #[derive(Debug, Clone)]

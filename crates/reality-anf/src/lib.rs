@@ -1,6 +1,9 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use reality_ast::{llir::{ToplevelLLIR, LLIR}, ASTNode, TypedASTNode, TypedToplevelNode};
+use reality_ast::{
+    ASTNode, TypedASTNode, TypedToplevelNode,
+    llir::{LLIR, ToplevelLLIR},
+};
 
 pub struct ANF {
     pub symbol_counter: Rc<RefCell<usize>>,
@@ -28,21 +31,46 @@ impl ANF {
     fn compile_toplevel_node(&mut self, node: TypedToplevelNode) -> Option<ToplevelLLIR> {
         // Implement the ANF transformation for a single top-level node
         match node {
-            TypedToplevelNode::FunctionDeclaration { name, parameters, return_type, body } => {
+            TypedToplevelNode::FunctionDeclaration {
+                name,
+                parameters,
+                return_type,
+                body,
+            } => {
                 let (anf_body, mut anf_lets) = self.compile_expr(*body);
 
                 anf_lets.push(anf_body);
-                
+
+                if name.name == "main" {
+                    anf_lets.insert(
+                        0,
+                        LLIR::Application {
+                            function: Box::new(LLIR::Identifier("gc_start".into())),
+                            arguments: vec![
+                                LLIR::Reference(Box::new(LLIR::Identifier("gc".into()))),
+                                LLIR::Reference(Box::new(LLIR::Identifier("argc".into()))),
+                            ],
+                        },
+                    );
+
+                    anf_lets.insert(anf_lets.len() - 1, LLIR::Application {
+                        function: Box::new(LLIR::Identifier("gc_stop".into())),
+                        arguments: vec![
+                            LLIR::Reference(Box::new(LLIR::Identifier("gc".into()))),
+                        ],
+                    });
+                }
+
                 Some(ToplevelLLIR::FunctionDeclaration {
                     name: name.name,
                     parameters,
                     return_type,
-                    body: anf_lets
+                    body: anf_lets,
                 })
             }
 
             TypedToplevelNode::ConstantDeclaration { variable, value } => {
-                let (value, _)= self.compile_expr(*value);
+                let (value, _) = self.compile_expr(*value);
 
                 Some(ToplevelLLIR::ConstantDeclaration {
                     name: variable.name,
@@ -52,20 +80,32 @@ impl ANF {
             }
 
             TypedToplevelNode::StructureDeclaration { header, fields } => {
-                Some(ToplevelLLIR::StructureDeclaration { header: header.name, fields })
+                Some(ToplevelLLIR::StructureDeclaration {
+                    header: header.name,
+                    fields,
+                })
             }
 
-            TypedToplevelNode::ExternalFunction { name, parameters, return_type } => {
-                Some(ToplevelLLIR::ExternalFunction { name: name.name, parameters, return_type })
-            }
+            TypedToplevelNode::ExternalFunction {
+                name,
+                parameters,
+                return_type,
+            } => Some(ToplevelLLIR::ExternalFunction {
+                name: name.name,
+                parameters,
+                return_type,
+            }),
 
             _ => None,
         }
     }
-    
+
     fn compile_expr(&mut self, node: TypedASTNode) -> (LLIR, Vec<LLIR>) {
         match node {
-            ASTNode::StructureCreation { structure_name, fields } => {
+            ASTNode::StructureCreation {
+                structure_name,
+                fields,
+            } => {
                 let mut anf_values = Vec::new();
                 let mut new_fields = HashMap::new();
 
@@ -102,7 +142,12 @@ impl ANF {
 
             ASTNode::Identifier(name) => (LLIR::Identifier(name.name), vec![]),
 
-            ASTNode::LetIn { variable, value, body, return_ty } => {
+            ASTNode::LetIn {
+                variable,
+                value,
+                body,
+                return_ty,
+            } => {
                 let (anf_value, mut anf_lets) = self.compile_expr(*value);
                 let (anf_body, anf_body_lets) = self.compile_expr(*body);
 
@@ -124,7 +169,7 @@ impl ANF {
                 for let_binding in anf_body_lets {
                     anf_lets.push(let_binding);
                 }
-                
+
                 anf_lets.push(LLIR::Let {
                     name: new_name.clone(),
                     annotation: return_ty,
@@ -136,13 +181,18 @@ impl ANF {
 
             ASTNode::Lambda { .. } => panic!("Lambda expressions are not supported"),
 
-            ASTNode::If { condition, then_branch, else_branch, return_ty } => {
+            ASTNode::If {
+                condition,
+                then_branch,
+                else_branch,
+                return_ty,
+            } => {
                 let new_name = format!("if_{}", self.symbol_counter.borrow());
                 self.symbol_counter.replace_with(|c| *c + 1);
 
                 let (anf_condition, mut anf_lets) = self.compile_expr(*condition);
                 let (anf_then, mut anf_then_lets) = self.compile_expr(*then_branch);
-                let (anf_else,  mut anf_else_lets) = self.compile_expr(*else_branch);
+                let (anf_else, mut anf_else_lets) = self.compile_expr(*else_branch);
 
                 let let_binding = LLIR::Let {
                     name: new_name,
@@ -150,7 +200,6 @@ impl ANF {
                     value: None,
                 };
 
-                
                 anf_then_lets.push(anf_then);
                 anf_else_lets.push(anf_else);
 
@@ -165,7 +214,11 @@ impl ANF {
                 (anf_if, anf_lets)
             }
 
-            ASTNode::Application { function, arguments, .. } => {
+            ASTNode::Application {
+                function,
+                arguments,
+                ..
+            } => {
                 let (anf_function, mut anf_lets) = self.compile_expr(*function);
                 let mut anf_arguments = Vec::new();
 
