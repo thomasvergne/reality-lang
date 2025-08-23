@@ -233,7 +233,7 @@ impl<'a> ImportResolver<'a> {
     fn flatten_one_level(&self, ast: Vec<ToplevelNode>) -> Vec<ToplevelNode> {
         ast.into_iter()
             .flat_map(|node| {
-                if let ToplevelNode::ModuleDeclaration { body, .. } = node {
+                if let ToplevelNode::ModuleDeclaration { body, .. } = node.flatten_locations() {
                     body
                 } else {
                     vec![node]

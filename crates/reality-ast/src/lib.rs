@@ -261,6 +261,58 @@ impl<T, AT, N> ToplevelNode<N, T, AT> {
     }
 }
 
+impl<T: Clone, AT: Clone, N: Clone> ToplevelNode<N, T, AT> {
+    pub fn flatten_locations(&self) -> ToplevelNode<N, T, AT> {
+        match self {
+            ToplevelNode::ModuleDeclaration { name, body } => ToplevelNode::ModuleDeclaration {
+                name: name.clone(),
+                body: body.iter().map(ToplevelNode::flatten_locations).collect(),
+            },
+
+            ToplevelNode::Located { node, .. } => node.flatten_locations(),
+
+            ToplevelNode::ConstantDeclaration { variable, value } => {
+                ToplevelNode::ConstantDeclaration {
+                    variable: variable.clone(),
+                    value: Box::new(value.flatten_locations()),
+                }
+            }
+
+            ToplevelNode::FunctionDeclaration {
+                name,
+                parameters,
+                return_type,
+                body,
+            } => ToplevelNode::FunctionDeclaration {
+                name: name.clone(),
+                parameters: parameters.clone(),
+                return_type: return_type.clone(),
+                body: Box::new(body.flatten_locations()),
+            },
+
+            ToplevelNode::PublicDeclaration(inner) => {
+                ToplevelNode::PublicDeclaration(Box::new(inner.flatten_locations()))
+            }
+
+            ToplevelNode::TypeAlias { name, body } => ToplevelNode::TypeAlias {
+                name: name.clone(),
+                body: body.clone(),
+            },
+
+            ToplevelNode::ImportDeclaration(module) => {
+                ToplevelNode::ImportDeclaration(module.clone())
+            }
+
+            ToplevelNode::StructureDeclaration { header, fields } => {
+                ToplevelNode::StructureDeclaration {
+                    header: header.clone(),
+                    fields: fields.clone(),
+                }
+            }
+        }
+    }
+}
+
 impl<T: Clone> ASTNode<Vec<String>, T> {
     pub fn located(self, span: (usize, usize), file: String) -> Self {
         ASTNode::Located {
