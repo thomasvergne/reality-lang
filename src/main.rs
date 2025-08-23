@@ -10,8 +10,8 @@ use reality_specialize::Specializer;
 use reality_typechecker::Typechecker;
 
 fn main() {
-    let file = "examples/main.rl";
-    let file_content = include_str!("../examples/main.rl");
+    let file = "examples/structures.rl";
+    let file_content = include_str!("../examples/structures.rl");
     let current_dir = std::env::current_dir().unwrap().join("examples");
 
     let mut parser = Parser::new(file_content, file);
