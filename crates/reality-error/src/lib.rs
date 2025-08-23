@@ -62,6 +62,15 @@ pub enum RealityError {
 
     #[error("Expected structure type but found {0}")]
     NotAStructure(Type<String>),
+
+    #[error("Expected {expected} type arguments but found {found}")]
+    WrongNumberOfTypeArguments {
+        expected: usize,
+        found: usize,
+    },
+
+    #[error("Unknown structure {0}")]
+    UnknownStructure(String),
 }
 
 #[derive(Clone)]

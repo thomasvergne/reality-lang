@@ -320,7 +320,7 @@ impl ClosureConverter {
                         fields: specialized_fields,
                     },
                     ns,
-                    Type::TypeIdentifier(structure_name),
+                    Type::TypeIdentifier(structure_name.name),
                 ))
             }
 
@@ -574,7 +574,11 @@ impl ClosureConverter {
             let lambda_struct_name = format!("closure_lambda_{}", self.symbol_counter.borrow());
 
             let structure = ASTNode::StructureCreation {
-                structure_name: structure_name.clone(),
+                structure_name: Annotation {
+                    name: structure_name.clone(),
+                    location: (0, 0),
+                    value: Type::TypeIdentifier(structure_name.clone()),
+                },
                 fields: free_vars
                     .iter()
                     .map(|(v, t)| {
@@ -668,7 +672,11 @@ impl ClosureConverter {
             };
 
             let lambda_structure = ASTNode::StructureCreation {
-                structure_name: lambda_struct_name.clone(),
+                structure_name: Annotation {
+                    name: lambda_struct_name.clone(),
+                    location: (0, 0),
+                    value: Type::TypeIdentifier(lambda_struct_name.clone()),
+                },
                 fields: HashMap::from([
                     ("env".to_string(), structure),
                     (

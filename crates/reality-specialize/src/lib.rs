@@ -1,18 +1,17 @@
 use std::collections::HashMap;
 
 use reality_ast::{
-    ASTNode, ToplevelNode, TypedASTNode, TypedToplevelNode,
-    internal::{annotation::Annotation, types},
+    internal::{annotation::Annotation, types::{self, TypeVariable}}, ASTNode, ToplevelNode, TypedASTNode, TypedToplevelNode
 };
 use reality_error::RealityError;
 use reality_typechecker::Typechecker;
 
-type Scheme = types::Scheme<String>;
+type Scheme = types::Scheme<Type>;
 type Type = types::Type<String>;
 
 pub struct Specializer<'a> {
     pub variables: HashMap<String, (Scheme, TypedToplevelNode)>,
-    pub structures: HashMap<String, HashMap<String, Type>>,
+    pub structures: HashMap<String, (Vec<String>, HashMap<String, Type>)>,
 
     pub typechecker: &'a mut Typechecker<'a>,
 
@@ -59,6 +58,16 @@ impl<'a> Specializer<'a> {
 
             if scheme_vars.is_empty() {
                 let (body, ns) = self.specialize_expr(*body)?;
+
+                let return_type = self.specialize_type(return_type.clone());
+                let parameters = parameters
+                    .into_iter()
+                    .map(|p| Annotation {
+                        location: p.location,
+                        name: p.name,
+                        value: self.specialize_type(p.value.clone()),
+                    })
+                    .collect::<Vec<_>>();
 
                 return Ok((
                     Some(ToplevelNode::FunctionDeclaration {
@@ -108,17 +117,107 @@ impl<'a> Specializer<'a> {
         }
 
         if let ToplevelNode::StructureDeclaration { header, fields } = node {
-            let field_map = fields
+            if header.value.len() > 0 {
+                let field_map = fields
                 .iter()
                 .map(|(f, t)| (f.clone(), t.clone()))
                 .collect::<HashMap<_, _>>();
 
-            self.structures.insert(header.name.clone(), field_map);
+                self.structures
+                    .insert(header.name.clone(), (header.value.clone(), field_map));
 
-            return Ok((Some(ToplevelNode::StructureDeclaration { header, fields }), vec![]));
+                return Ok((
+                    None,
+                    vec![],
+                ));
+            } else {
+                let field_map = fields
+                    .iter()
+                    .map(|(f, t)| (f.clone(), self.specialize_type(t.clone())))
+                    .collect::<HashMap<_, _>>();
+
+                self.structures
+                    .insert(header.name.clone(), (header.value.clone(), field_map));
+
+                return Ok((
+                    Some(ToplevelNode::StructureDeclaration { header, fields }),
+                    vec![],
+                ));
+            }
         }
 
         Ok((Some(node), vec![]))
+    }
+
+    fn specialize_structure(
+        &mut self,
+        ann: Type,
+        name: String,
+    ) -> Result<(String, Type, Vec<TypedToplevelNode>)> {
+        let struct_type = ann.clone();
+
+        let args = if let Type::TypeApplication(_, args) = struct_type.clone() {
+            args
+        } else {
+            vec![]
+        };
+
+        let mut subst = HashMap::new();
+
+        if let Some((scheme_vars, hm)) = self.structures.get(&name) {
+            if scheme_vars.len() != args.len() {
+                return Err(RealityError::WrongNumberOfTypeArguments {
+                    expected: scheme_vars.len(),
+                    found: args.len(),
+                });
+            }
+
+            for (var, ty) in scheme_vars.iter().zip(args.iter()) {
+                subst.insert(var.clone(), ty.clone());
+            }
+
+            let subst_as_vec = subst
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect::<Vec<_>>();
+
+            let specialized_fields = hm
+                .iter()
+                .map(|(f, t)| 
+                    (f.clone(), t.substitute_all(subst_as_vec.clone()))
+                )
+                .collect::<HashMap<_, _>>();
+
+            let mut new_hm = HashMap::new();
+
+            for (f, t) in specialized_fields.clone() {
+                new_hm.insert(f, self.specialize_type(t));
+            }
+
+            let new_name = format!(
+                "{}_{}",
+                name,
+                args.iter()
+                    .map(|a| format!("{}", self.remove_alias(a.clone())))
+                    .collect::<Vec<_>>()
+                    .join("_")
+            );
+
+            self.structures.insert(new_name.clone(), (vec![], new_hm));
+
+            Ok((new_name.clone(), Type::TypeIdentifier(new_name.clone()), vec![
+                ToplevelNode::StructureDeclaration {
+                    header: Annotation {
+                        location: (0, 0),
+                        name: new_name.clone(),
+                        value: vec![],
+                    },
+                    fields: specialized_fields,
+                }
+            ]))
+        } else {
+            return Err(RealityError::UnknownStructure(name));
+        }
     }
 
     fn specialize_expr(
@@ -126,9 +225,16 @@ impl<'a> Specializer<'a> {
         expr: TypedASTNode,
     ) -> Result<(TypedASTNode, Vec<TypedToplevelNode>)> {
         match expr {
-            ASTNode::StructureCreation { fields, structure_name } => {
+            ASTNode::StructureCreation {
+                fields,
+                structure_name,
+            } => {
                 let mut specialized_fields = HashMap::new();
                 let mut ns = Vec::new();
+
+                let (name, ty, structure) = self.specialize_structure(structure_name.value, structure_name.name)?;
+
+                ns.extend(structure);
 
                 for (name, field) in fields {
                     let (specialized_field, n) = self.specialize_expr(field)?;
@@ -136,12 +242,28 @@ impl<'a> Specializer<'a> {
                     ns.extend(n);
                 }
 
-                Ok((ASTNode::StructureCreation { fields: specialized_fields, structure_name }, ns))
+                Ok((
+                    ASTNode::StructureCreation {
+                        fields: specialized_fields,
+                        structure_name: Annotation {
+                            name: name.clone(),
+                            value: ty,
+                            location: structure_name.location,
+                        },
+                    },
+                    ns,
+                ))
             }
 
             ASTNode::StructureAccess { structure, field } => {
                 let (specialized_structure, ns) = self.specialize_expr(*structure)?;
-                Ok((ASTNode::StructureAccess { structure: Box::new(specialized_structure), field }, ns))
+                Ok((
+                    ASTNode::StructureAccess {
+                        structure: Box::new(specialized_structure),
+                        field,
+                    },
+                    ns,
+                ))
             }
 
             ASTNode::Literal(_) => Ok((expr, vec![])),
@@ -157,7 +279,7 @@ impl<'a> Specializer<'a> {
                 variable,
                 value,
                 body,
-                return_ty
+                return_ty,
             } => {
                 let (specialized_value, mut n1) = self.specialize_expr(*value)?;
                 let (specialized_body, n2) = self.specialize_expr(*body)?;
@@ -169,7 +291,7 @@ impl<'a> Specializer<'a> {
                         variable,
                         value: Box::new(specialized_value),
                         body: Box::new(specialized_body),
-                        return_ty: return_ty.clone()
+                        return_ty: return_ty.clone(),
                     },
                     n1,
                 ))
@@ -181,9 +303,20 @@ impl<'a> Specializer<'a> {
                 body,
             } => {
                 let (specialized_body, ns) = self.specialize_expr(*body)?;
+
+                let return_type = self.specialize_type(return_type.clone());
+                let args = parameters
+                    .into_iter()
+                    .map(|param| Annotation {
+                        location: param.location,
+                        name: param.name,
+                        value: self.specialize_type(param.value),
+                    })
+                    .collect::<Vec<_>>();
+
                 Ok((
                     ASTNode::Lambda {
-                        parameters,
+                        parameters: args,
                         return_type,
                         body: Box::new(specialized_body),
                     },
@@ -204,6 +337,8 @@ impl<'a> Specializer<'a> {
                 n1.extend(n2);
                 n1.extend(n3);
 
+                let return_ty = self.specialize_type(return_ty.clone());
+
                 Ok((
                     ASTNode::If {
                         condition: Box::new(specialized_condition),
@@ -216,19 +351,25 @@ impl<'a> Specializer<'a> {
             }
 
             ASTNode::Identifier(name) => {
+                let ty = self.specialize_type(name.value.clone());
+
                 if let Some(scheme) = self.variables.get(&name.name) {
                     let (specialized, ns) = self.specialize_identifier(name, scheme.clone())?;
 
                     return Ok((ASTNode::Identifier(specialized), ns));
                 }
 
-                return Ok((ASTNode::Identifier(name), vec![]));
+                return Ok((ASTNode::Identifier(Annotation {
+                    location: name.location,
+                    name: name.name,
+                    value: ty,
+                }), vec![]));
             }
 
             ASTNode::Application {
                 function,
                 arguments,
-                function_type
+                function_type,
             } => {
                 let (specialized_function, mut n1) = self.specialize_expr(*function)?;
 
@@ -240,11 +381,13 @@ impl<'a> Specializer<'a> {
                 let n2_concatenated = n2.into_iter().flatten().collect::<Vec<_>>();
                 n1.extend(n2_concatenated);
 
+                let function_type = self.specialize_type(function_type.clone());
+
                 Ok((
                     ASTNode::Application {
                         function: Box::new(specialized_function),
                         arguments: specialized_arguments,
-                        function_type
+                        function_type,
                     },
                     n1,
                 ))
@@ -297,20 +440,28 @@ impl<'a> Specializer<'a> {
 
             let new_body = self.apply_sub(*body, &new_subst);
 
-            let new_name = format!("{}_{}", name.name, new_subst.values().map(|t| t.to_string()).collect::<Vec<_>>().join("_"));
+            let new_name = format!(
+                "{}_{}",
+                name.name,
+                new_subst
+                    .values()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<_>>()
+                    .join("_")
+            );
 
             let (new_body, mut ns) = self.specialize_expr(new_body)?;
 
             ns.push(ToplevelNode::FunctionDeclaration {
-                    name: Annotation {
-                        name: new_name.clone(),
-                        value: vec![],
-                        location: name.location,
-                    },
-                    parameters: new_parameters,
-                    return_type: new_return_type,
-                    body: Box::new(new_body),
-                });
+                name: Annotation {
+                    name: new_name.clone(),
+                    value: vec![],
+                    location: name.location,
+                },
+                parameters: new_parameters,
+                return_type: new_return_type,
+                body: Box::new(new_body),
+            });
 
             return Ok((
                 Annotation {
@@ -318,7 +469,7 @@ impl<'a> Specializer<'a> {
                     value: ty,
                     location: name.location,
                 },
-                ns
+                ns,
             ));
         }
 
@@ -334,13 +485,33 @@ impl<'a> Specializer<'a> {
 
     fn apply_sub(&mut self, expr: TypedASTNode, subst: &HashMap<String, Type>) -> TypedASTNode {
         match expr {
-            ASTNode::StructureCreation { fields, structure_name } => {
+            ASTNode::StructureCreation {
+                fields,
+                structure_name: Annotation {
+                    location,
+                    name,
+                    value
+                },
+            } => {
                 let specialized_fields = fields
                     .into_iter()
                     .map(|(name, field)| (name, self.apply_sub(field, subst)))
                     .collect();
 
-                ASTNode::StructureCreation { fields: specialized_fields, structure_name }
+                let structure_name = Annotation {
+                    location,
+                    name,
+                    value: value.substitute_all(
+                        subst.iter()
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect::<Vec<_>>(),
+                    ),
+                };
+
+                ASTNode::StructureCreation {
+                    fields: specialized_fields,
+                    structure_name,
+                }
             }
 
             ASTNode::StructureAccess { structure, field } => {
@@ -364,7 +535,7 @@ impl<'a> Specializer<'a> {
                 variable,
                 value,
                 body,
-                return_ty
+                return_ty,
             } => {
                 let subst_as_vec = subst
                     .iter()
@@ -374,7 +545,6 @@ impl<'a> Specializer<'a> {
                 let specialized_value = self.apply_sub(*value, subst);
                 let specialized_body = self.apply_sub(*body, subst);
 
-                
                 let new_variable = Annotation {
                     name: variable.name,
                     value: variable.value.substitute_all(subst_as_vec.clone()),
@@ -385,7 +555,7 @@ impl<'a> Specializer<'a> {
                     variable: new_variable,
                     value: Box::new(specialized_value),
                     body: Box::new(specialized_body),
-                    return_ty: return_ty.substitute_all(subst_as_vec.clone())
+                    return_ty: return_ty.substitute_all(subst_as_vec.clone()),
                 }
             }
 
@@ -460,7 +630,7 @@ impl<'a> Specializer<'a> {
             ASTNode::Application {
                 function,
                 arguments,
-                function_type
+                function_type,
             } => {
                 let specialized_function = self.apply_sub(*function, subst);
 
@@ -482,6 +652,65 @@ impl<'a> Specializer<'a> {
                     function_type: specialized_function_type,
                 }
             }
+        }
+    }
+
+    fn specialize_type(&mut self, ty: Type) -> Type {
+        match ty.clone() {
+            Type::TypeIdentifier(name) => Type::TypeIdentifier(name),
+            Type::TypeVariable(name) => Type::TypeVariable(name),
+            Type::TypeFunction {
+                parameters,
+                return_type,
+            } => Type::TypeFunction {
+                parameters: parameters
+                    .into_iter()
+                    .map(|param| self.specialize_type(param))
+                    .collect(),
+                return_type: Box::new(self.specialize_type(*return_type)),
+            },
+
+            Type::TypeApplication(name, args) => {
+                if let Type::TypeIdentifier(name) = self.remove_alias(*name.clone())
+                    && let Ok((_, struct_type, _)) = self.specialize_structure(ty, name)
+                {
+                    // If specialization is successful, use the new structure
+                    return struct_type;
+                    // Continue with the new structure
+                }
+
+                let specialized_args = args
+                    .into_iter()
+                    .map(|arg| self.specialize_type(arg))
+                    .collect();
+
+                let specialized_function_type = self.specialize_type(*name);
+
+                Type::TypeApplication(Box::new(specialized_function_type), specialized_args)
+            }
+            Type::TypeAliased(inner, alias) => {
+                Type::TypeAliased(Box::new(self.specialize_type(*inner)), alias)
+            }
+            Type::AnonymousStructure { fields } => Type::AnonymousStructure {
+                fields: fields
+                    .into_iter()
+                    .map(|(name, ty)| (name, self.specialize_type(ty)))
+                    .collect(),
+            },
+        }
+    }
+
+    fn remove_alias(&self, ty: Type) -> Type {
+        match ty.clone() {
+            Type::TypeAliased(inner, _) => self.remove_alias(*inner),
+            types::Type::TypeVariable(var) => {
+                if let TypeVariable::Bound(ty) = &*var.borrow() {
+                    self.remove_alias(*ty.clone())
+                } else {
+                    ty
+                }
+            }
+            _ => ty
         }
     }
 }
