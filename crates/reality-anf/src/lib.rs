@@ -112,15 +112,16 @@ impl ANF {
                 };
 
                 anf_lets.push(anf_let);
+
+                for let_binding in anf_body_lets {
+                    anf_lets.push(let_binding);
+                }
+                
                 anf_lets.push(LLIR::Let {
                     name: new_name.clone(),
                     annotation: return_ty,
                     value: Some(Box::new(anf_body)),
                 });
-
-                for let_binding in anf_body_lets {
-                    anf_lets.push(let_binding);
-                }
 
                 (LLIR::Identifier(new_name), anf_lets)
             }
