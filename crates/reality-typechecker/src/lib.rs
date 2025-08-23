@@ -1,12 +1,11 @@
 use std::{cell::RefCell, collections::HashMap};
 
 use reality_ast::{
-    ASTNode, ToplevelNode,
     internal::{
         annotation::Annotation,
         literal::Literal,
-        types::{self, TypeVariable},
-    },
+        types::{self, Scheme, TypeVariable},
+    }, ASTNode, ToplevelNode
 };
 use reality_error::{Generics, RealityError};
 
@@ -17,14 +16,13 @@ pub struct Typechecker<'a> {
     pub position: (usize, usize),
 
     counter: RefCell<usize>,
-    environment: HashMap<String, Scheme>,
-    type_aliases: HashMap<String, Scheme>,
-    structures: HashMap<String, HashMap<String, Type>>,
+    environment: HashMap<String, types::Scheme<Type>>,
+    type_aliases: HashMap<String, types::Scheme<Type>>,
+    structures: HashMap<String, types::Scheme<HashMap<String, Type>>>,
     level: RefCell<usize>,
 }
 
 type Type = types::Type<String>;
-type Scheme = types::Scheme<String>;
 type TypedASTNode = ASTNode<String, Type>;
 type TypedToplevelNode = ToplevelNode<String, Type, Type>;
 
@@ -76,7 +74,10 @@ impl<'a> Typechecker<'a> {
                     fields_types.insert(field_name, field_type.normalize());
                 }
 
-                self.structures.insert(header.name.clone(), fields_types.clone());
+                self.structures.insert(header.name.clone(), Scheme {
+                    variables: header.clone().value,
+                    body: fields_types.clone(),
+                });
 
                 Ok(ToplevelNode::StructureDeclaration { header, fields: fields_types })
             }
@@ -143,7 +144,7 @@ impl<'a> Typechecker<'a> {
                 let free_types = body.free_types();
 
                 if free_types.len() > 0 {
-                    let portion = free_types[0..3].to_vec();
+                    let portion = free_types.clone();
 
                     return Err(RealityError::UnboundGenerics(Generics(portion)));
                 }
@@ -217,43 +218,57 @@ impl<'a> Typechecker<'a> {
     ) -> Result<(TypedASTNode, Type)> {
         match expr {
             ASTNode::StructureCreation { fields, structure_name } => {
-                if let Some(field_types) = self.structures.clone().get(&structure_name) {
+                if let Some(scheme) = self.structures.clone().get(&structure_name.name) {
                     let mut specialized_fields = HashMap::new();
 
+                    let (hashmap_ty, subst) = self.instantiate_hashmap_and_sub(scheme.clone());
+
+                    let ordered_types = scheme.variables.iter().map(|v| subst.get(v).unwrap().clone()).collect::<Vec<_>>();
+
                     for (field_name, field_expr) in fields {
-                        if let Some(expected_type) = field_types.get(&field_name) {
+                        if let Some(expected_type) = hashmap_ty.get(&field_name) {
                             let checked_field = self.check(field_expr, expected_type.clone())?;
                             specialized_fields.insert(field_name, checked_field);
                         } else {
                             return Err(RealityError::NoFieldInStructure {
-                                structure: structure_name.clone(),
+                                structure: structure_name.name.clone(),
                                 field: field_name,
                             });
                         }
                     }
 
+                    let header = Type::TypeApplication(
+                            Box::new(Type::TypeIdentifier(structure_name.name.clone())),
+                            ordered_types,
+                        );
+
                     return Ok((
                         ASTNode::StructureCreation {
                             fields: specialized_fields,
-                            structure_name: structure_name.clone(),
+                            structure_name: Annotation { name: structure_name.name.clone(), value: header.clone(), location: structure_name.location },
                         },
-                        Type::TypeApplication(
-                            Box::new(Type::TypeIdentifier(structure_name.clone())),
-                            vec![],
-                        ),
+                        header
                     ));
                 } else {
-                    return Err(RealityError::NotAStructure(Type::TypeIdentifier(structure_name)));
+                    return Err(RealityError::NotAStructure(Type::TypeIdentifier(structure_name.name.clone())));
                 }
             }
 
             ASTNode::StructureAccess { structure, field } => {
                 let (structure, structure_ty) = self.synthesize(*structure)?;
 
-                if let Type::TypeApplication(base, _) = structure_ty.clone() && let Type::TypeIdentifier(structure_name) = *base {
-                    if let Some(fields) = self.structures.get(&structure_name) {
-                        if let Some(field_ty) = fields.get(&field) {
-                            return Ok((ASTNode::StructureAccess { structure: Box::new(structure), field }, field_ty.clone()));
+                if let Type::TypeApplication(base, args) = structure_ty.clone() && let Type::TypeIdentifier(structure_name) = *base {
+                    if let Some(scheme) = self.structures.get(&structure_name) {
+                        let mut scheme_variables = Vec::new();
+
+                        for (var, arg) in scheme.variables.iter().zip(args.iter()) {
+                            scheme_variables.push((var.clone(), arg.clone()));
+                        }
+
+                        if let Some(field_ty) = scheme.body.get(&field) {
+                            let field_ty_final = field_ty.substitute_all(scheme_variables);
+
+                            return Ok((ASTNode::StructureAccess { structure: Box::new(structure), field }, field_ty_final));
                         }
                     }
 
@@ -262,8 +277,11 @@ impl<'a> Typechecker<'a> {
                         field,
                     });
                 } else if let Type::TypeIdentifier(structure_name) = structure_ty {
-                    if let Some(fields) = self.structures.get(&structure_name) {
-                        if let Some(field_ty) = fields.get(&field) {
+                    if let Some(scheme) = self.structures.get(&structure_name) {
+                        if scheme.variables.len() > 0 {
+                            return Err(RealityError::UnboundGenerics(Generics(scheme.variables.clone())));
+                        }
+                        if let Some(field_ty) = scheme.body.get(&field) {
                             return Ok((ASTNode::StructureAccess { structure: Box::new(structure), field }, field_ty.clone()));
                         }
                     }
@@ -651,7 +669,7 @@ impl<'a> Typechecker<'a> {
         }
     }
 
-    pub fn instantiate(&mut self, scheme: Scheme) -> Type {
+    pub fn instantiate(&mut self, scheme: Scheme<Type>) -> Type {
         let mut type_vars = HashMap::new();
         for var in scheme.variables {
             type_vars.insert(var.clone(), self.new_type(var.clone()));
@@ -662,7 +680,24 @@ impl<'a> Typechecker<'a> {
             .fold(scheme.body, |acc, (var, ty)| acc.substitute(&var, ty))
     }
 
-    pub fn instantiate_and_sub(&mut self, scheme: Scheme) -> (Type, HashMap<String, Type>) {
+    fn instantiate_hashmap_and_sub(&mut self, scheme: types::Scheme<HashMap<String, Type>>) -> (HashMap<String, Type>, HashMap<String, Type>) {
+        let mut type_vars = HashMap::new();
+        for var in scheme.variables {
+            type_vars.insert(var.clone(), self.new_type(var.clone()));
+        }
+
+        let new_ty = scheme.body.into_iter().map(|(key, ty)| {
+            let new_ty = type_vars
+                .clone()
+                .into_iter()
+                .fold(ty, |acc, (var, ty)| acc.substitute(&var, ty));
+            (key, new_ty)
+        }).collect();
+
+        (new_ty, type_vars)
+    }
+
+    pub fn instantiate_and_sub(&mut self, scheme: Scheme<Type>) -> (Type, HashMap<String, Type>) {
         let mut type_vars = HashMap::new();
         for var in scheme.variables {
             type_vars.insert(var.clone(), self.new_type(var.clone()));
