@@ -1,4 +1,4 @@
-use reality_ast::{internal::{annotation::Annotation, types::{Type, TypeVariable}}, llir::{ToplevelLLIR, LLIR}, name_mangle};
+use reality_ast::{internal::{annotation::Annotation, literal::Literal, types::{Type, TypeVariable}}, llir::{ToplevelLLIR, LLIR}, name_mangle};
 
 pub struct CodeGeneration {}
 
@@ -199,7 +199,13 @@ impl CodeGeneration {
                 result
             }
             
-            LLIR::Literal(value) => format!("{:?}", value),
+            LLIR::Literal(value) => match value {
+                Literal::String(s) => format!("\"{}\"", s),
+                Literal::Integer(n) => format!("{}", n),
+                Literal::Boolean(b) => format!("{}", b),
+                Literal::Float(f) => format!("{}", f),
+                Literal::Character(c) => format!("'{}'", c),
+            },
             LLIR::StructureCreation { structure_name, fields } => {
                 let mut result = format!("(struct {}) {{\n", name_mangle(structure_name));
                 for (field, value) in fields {
