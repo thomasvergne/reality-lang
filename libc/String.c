@@ -26,3 +26,23 @@ char* number_to_string(int number) {
 int add_number(int a, int b) {
     return a + b;
 }
+
+int mul_number(int a, int b) {
+    return a * b;
+}
+
+int div_number(int a, int b) {
+    if (b != 0) {
+        return a / b;
+    }
+    // Handle division by zero case
+    return 0;
+}
+
+int sub_number(int a, int b) {
+    return a - b;
+}
+
+bool equals_number(int a, int b) {
+    return a == b;
+}
