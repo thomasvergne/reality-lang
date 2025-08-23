@@ -164,7 +164,7 @@ impl<'a> Typechecker<'a> {
                 if let Some(original_ty) = variable.value {
                     self.is_subtype(ty.clone(), original_ty.normalize())?;
 
-                    final_ty = original_ty.normalize();
+                    final_ty = self.remove_alias(original_ty.normalize());
                 } else {
                     final_ty = ty.clone();
                 }
