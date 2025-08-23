@@ -120,13 +120,27 @@ pub enum ToplevelNode<N = Vec<String>, T = Type<N>, AT = Option<Type<N>>> {
 
     StructureDeclaration {
         header: Annotation<Vec<String>>,
-        fields: HashMap<String, Type<N>>,
+        fields: HashMap<String, T>,
     },
 
     ExternalFunction {
         name: Annotation<Vec<String>>,
-        parameters: Vec<Annotation<Type<N>>>,
-        return_type: Type<N>,
+        parameters: Vec<Annotation<T>>,
+        return_type: T,
+    },
+
+    Property {
+        header: Annotation<Vec<String>>,
+        value: T,
+    },
+
+    Implementation {
+        for_type: Annotation<T>,
+        header: Annotation<Vec<String>>,
+        arguments: Vec<Annotation<T>>,
+        return_type: T,
+
+        body: Box<ASTNode<N, AT>>,
     }
 }
 
@@ -212,6 +226,18 @@ impl<T: Debug, N: Debug> Debug for ASTNode<N, T> {
 impl<T: Debug, AT: Debug, N: Debug> Debug for ToplevelNode<N, T, AT> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ToplevelNode::Implementation { header, for_type, arguments, return_type, body } => {
+                write!(f, "impl ({:?}) {:?} {{", for_type, header)?;
+                for arg in arguments {
+                    write!(f, "{:?}", arg)?;
+                }
+                write!(f, ") -> {:?} {{ {:?} }}", return_type, body)
+            }
+
+            ToplevelNode::Property { header, value } => {
+                write!(f, "property {:?} = {:?}", header, value)
+            }
+
             ToplevelNode::ExternalFunction { name, parameters, return_type } => {
                 write!(f, "extern fn {}[{:?}](", name.name, name.value)?;
                 for (i, param) in parameters.iter().enumerate() {
@@ -281,6 +307,23 @@ impl<T, AT, N> ToplevelNode<N, T, AT> {
 impl<T: Clone, AT: Clone, N: Clone> ToplevelNode<N, T, AT> {
     pub fn flatten_locations(&self) -> ToplevelNode<N, T, AT> {
         match self {
+            ToplevelNode::Implementation { header, for_type, arguments, return_type, body } => {
+                ToplevelNode::Implementation {
+                    header: header.clone(),
+                    for_type: for_type.clone(),
+                    arguments: arguments.clone(),
+                    return_type: return_type.clone(),
+                    body: Box::new(body.flatten_locations()),
+                }
+            }
+
+            ToplevelNode::Property { header, value } => {
+                ToplevelNode::Property {
+                    header: header.clone(),
+                    value: value.clone(),
+                }
+            }
+
             ToplevelNode::ExternalFunction { name, parameters, return_type } => {
                 ToplevelNode::ExternalFunction {
                     name: name.clone(),

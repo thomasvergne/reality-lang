@@ -25,7 +25,7 @@
 
 use std::{cell::RefCell, collections::HashMap, fmt::{Debug, Display}, rc::Rc};
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Type<N = Vec<String>> {
     TypeIdentifier(N),
     TypeApplication(Box<Type<N>>, Vec<Type<N>>),
@@ -41,7 +41,7 @@ pub enum Type<N = Vec<String>> {
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum TypeVariable<N = Vec<String>> {
     Unbound(String, usize),
     Bound(Box<Type<N>>),

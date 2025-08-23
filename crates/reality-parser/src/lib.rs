@@ -155,7 +155,182 @@ impl Parser {
             return self.parse_top_external();
         }
 
+        if self.peek_token("property") {
+            return self.parse_top_property();
+        }
+
+        if self.peek_token("impl") {
+            return self.parse_top_impl();
+        }
+
         Err(RealityError::ExpectedToken("<toplevel>".to_string()))
+    }
+
+    fn parse_top_impl(&mut self) -> Result<ToplevelNode> {
+        let (_, (start_pos, _)) = self.consume_token("impl")?;
+
+        self.consume_token("fn")?;
+
+        self.consume_token("(")?;
+
+        let (id, _) = self.parse_identifier()?;
+
+        self.consume_token(":")?;
+
+        let (type_, _) = self.parse_type()?;
+
+        self.consume_token(")")?;
+
+        let (impl_name, _) = self.parse_identifier()?;
+
+        let mut generics = vec![];
+
+        if self.peek_token("[") {
+            self.consume_token("[")?;
+
+            while !self.peek_token("]") {
+                let (generic, _) = self.parse_identifier()?;
+                generics.push(generic.to_string());
+
+                if self.peek_token(",") {
+                    self.consume_token(",")?;
+                } else if !self.peek_token("]") {
+                    return Err(RealityError::ExpectedToken("]".to_string()));
+                }
+            }
+
+            self.consume_token("]")?;
+        }
+
+        self.consume_token("(")?;
+
+        let mut args = vec![];
+
+        while !self.peek_token(")") {
+            self.skip_whitespaces();
+            if self.position >= self.input.len() {
+                return Err(RealityError::UnexpectedEndOfFile);
+            }
+            let (arg_name, (start, _)) = self.parse_identifier()?;
+            self.consume_token(":")?;
+            let (arg_type, (_, en)) = self.parse_type()?;
+            args.push(Annotation {
+                name: arg_name,
+                value: arg_type,
+                location: (start, en),
+            });
+            self.skip_whitespaces();
+            if self.peek_token(",") {
+                self.consume_token(",")?;
+            }
+        }
+
+        let (_, (_, end)) = self.consume_token(")")?;
+        let mut end_pos = end;
+
+        let mut return_type = Type::TypeIdentifier(vec!["unit".to_string()]);
+
+        if self.peek_token("->") {
+            self.consume_token("->")?;
+
+            let (type_, (_, end)) = self.parse_type()?;
+            return_type = type_;
+
+            end_pos = end;
+        }
+
+        let (body, _) = self.parse_block_expression()?;
+
+        Ok((ToplevelNode::Implementation {
+            for_type: Annotation {
+                name: id,
+                value: type_,
+                location: (start_pos, end_pos),
+            },
+            header: Annotation {
+                name: impl_name,
+                value: generics,
+                location: (start_pos, end_pos),
+            },
+            arguments: args,
+            return_type,
+            body: Box::new(body),
+        }, (start_pos, end_pos)))
+    }
+
+    fn parse_top_property(&mut self) -> Result<ToplevelNode> {
+        let (_, (start_pos, _)) = self.consume_token("property")?;
+
+        let (header, pos) = self.parse_identifier()?;
+
+        let mut generics = vec![];
+
+        if self.peek_token("[") {
+            self.consume_token("[")?;
+            while !self.peek_token("]") {
+                self.skip_whitespaces();
+                if self.position >= self.input.len() {
+                    return Err(RealityError::UnexpectedEndOfFile);
+                }
+                let (generic, _) = self.parse_identifier()?;
+                generics.push(generic.to_string());
+                self.skip_whitespaces();
+                if self.peek_token(",") {
+                    self.consume_token(",")?;
+                }
+            }
+            self.consume_token("]")?;
+        }
+
+        self.consume_token("(")?;
+
+        let mut end_pos;
+
+        let mut args = Vec::new();
+
+        while !self.peek_token(")") {
+            self.skip_whitespaces();
+            if self.position >= self.input.len() {
+                return Err(RealityError::UnexpectedEndOfFile);
+            }
+            self.parse_identifier()?;
+            self.consume_token(":")?;
+            let (type_, _) = self.parse_type()?;
+            args.push(type_);
+            self.skip_whitespaces();
+            if self.peek_token(",") {
+                self.consume_token(",")?;
+            }
+        }
+
+        let (_, (_, end)) = self.consume_token(")")?;
+        end_pos = end;
+
+        let mut return_type = Type::TypeIdentifier(vec!["unit".to_string()]);
+
+        if self.peek_token("->") {
+            self.consume_token("->")?;
+
+            let (type_, (_, end)) = self.parse_type()?;
+            return_type = type_;
+
+            end_pos = end;
+        }
+
+        Ok((
+            ToplevelNode::Property {
+                header: Annotation {
+                    name: header,
+                    value: generics,
+                    location: pos,
+                },
+                value: Type::TypeFunction {
+                    parameters: args.iter().map(|p| p.clone()).collect::<Vec<_>>(),
+                    return_type: Box::new(return_type),
+                },
+            },
+            (start_pos, end_pos),
+        ))
     }
 
     fn parse_type_application(&mut self) -> Result<Type> {
@@ -165,11 +340,11 @@ impl Parser {
         let (identifier, _) = self.parse_scoped_identifier()?;
 
         self.skip_whitespaces();
-        if self.peek_token("(") {
-            self.consume_token("(")?;
+        if self.peek_token("[") {
+            self.consume_token("[")?;
             let mut arguments = Vec::new();
 
-            while !self.peek_token(")") {
+            while !self.peek_token("]") {
                 self.skip_whitespaces();
                 if self.position >= self.input.len() {
                     return Err(RealityError::UnexpectedEndOfFile);
@@ -179,12 +354,12 @@ impl Parser {
                 self.skip_whitespaces();
                 if self.peek_token(",") {
                     self.consume_token(",")?;
-                } else if !self.peek_token(")") {
-                    return Err(RealityError::ExpectedToken(":".to_string()));
+                } else if !self.peek_token("]") {
+                    return Err(RealityError::ExpectedToken("]".to_string()));
                 }
             }
 
-            self.consume_token(")")?;
+            self.consume_token("]")?;
             self.skip_whitespaces();
 
             return Ok((
@@ -637,20 +812,25 @@ impl Parser {
                 .map(|(lit, pos)| (ASTNode::Literal(lit).located(pos, self.file.clone()), pos));
         } else if self.peek_token("|") {
             return self.parse_lambda();
-        } else if let Ok((ident, pos)) = self.parse_identifier() {
-            if self.peek_token("{") {
-                return self.parse_structure_creation(ident.to_string(), pos.0);
+        } else if let Ok((ident, pos)) = self.parse_scoped_identifier() {
+            if self.peek_token("{") && let Some(id) = ident.get(0) {
+                return self.parse_structure_creation(id.to_string(), pos.0);
             }
 
             return Ok((
                 ASTNode::Identifier(Annotation {
-                    name: vec![ident],
+                    name: ident,
                     value: None,
                     location: pos,
                 })
                 .located(pos, self.file.clone()),
                 pos,
             ));
+        } else if self.peek_token("(") {
+            let (_, (start, _)) = self.consume_token("(")?;
+            let (expr, _) = self.parse_expression(0)?;
+            let (_, (_, end)) = self.consume_token(")")?;
+            return Ok((expr, (start, end)));
         }
 
         Err(RealityError::ExpectedToken("term".to_string()))
@@ -691,7 +871,7 @@ impl Parser {
             }
             .located((start_pos, end_pos), self.file.clone()),
             (start_pos, end_pos),
-        ))
+        ));
     }
 
     fn parse_let_declaration(&mut self) -> Result<ASTNode> {
