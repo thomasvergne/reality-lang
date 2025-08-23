@@ -35,6 +35,8 @@ pub enum LLIR {
 
     Reference(Box<LLIR>),
     Dereference(Box<LLIR>),
+
+    Update(Box<LLIR>, Box<LLIR>)
 }
 
 #[derive(Debug, Clone)]

@@ -1020,13 +1020,15 @@ impl Parser {
     fn parse_if_expression(&mut self) -> Result<ASTNode> {
         let (_, (start_pos, _)) = self.consume_token("if")?;
 
+        self.consume_token("(")?;
         let (condition, _) = self.parse_expression(0)?;
+        self.consume_token(")")?;
 
-        let (then_branch, _) = self.parse_block_expression()?;
+        let (then_branch, _) = self.parse_expression(0)?;
 
         self.consume_token("else")?;
 
-        let (else_branch, (_, end_pos)) = self.parse_block_expression()?;
+        let (else_branch, (_, end_pos)) = self.parse_expression(0)?;
 
         let position = (start_pos, end_pos);
 

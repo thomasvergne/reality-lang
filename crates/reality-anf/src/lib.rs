@@ -2,11 +2,16 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use reality_ast::{
     ASTNode, TypedASTNode, TypedToplevelNode,
+    internal::{annotation::Annotation, types::Type},
     llir::{LLIR, ToplevelLLIR},
 };
 
 pub struct ANF {
     pub symbol_counter: Rc<RefCell<usize>>,
+}
+
+pub fn pointer(ty: Type<String>) -> Type<String> {
+    Type::TypeApplication(Box::new(Type::TypeIdentifier("pointer".into())), vec![ty])
 }
 
 impl ANF {
@@ -33,7 +38,7 @@ impl ANF {
         match node {
             TypedToplevelNode::FunctionDeclaration {
                 name,
-                parameters,
+                mut parameters,
                 return_type,
                 body,
             } => {
@@ -53,12 +58,36 @@ impl ANF {
                         },
                     );
 
-                    anf_lets.insert(anf_lets.len() - 1, LLIR::Application {
-                        function: Box::new(LLIR::Identifier("gc_stop".into())),
-                        arguments: vec![
-                            LLIR::Reference(Box::new(LLIR::Identifier("gc".into()))),
-                        ],
-                    });
+                    anf_lets.insert(
+                        anf_lets.len() - 1,
+                        LLIR::Application {
+                            function: Box::new(LLIR::Identifier("gc_stop".into())),
+                            arguments: vec![LLIR::Reference(Box::new(LLIR::Identifier(
+                                "gc".into(),
+                            )))],
+                        },
+                    );
+                }
+
+                if parameters.len() != 2 && name.name == "main" {
+                    if parameters.len() == 1 {
+                        parameters.push(Annotation {
+                            name: "argv".into(),
+                            value: pointer(pointer(Type::TypeIdentifier("char".into()))),
+                            location: (0, 0),
+                        });
+                    } else {
+                        parameters.push(Annotation {
+                            name: "argc".into(),
+                            value: Type::TypeIdentifier("i32".into()),
+                            location: (0, 0),
+                        });
+                        parameters.push(Annotation {
+                            name: "argv".into(),
+                            value: pointer(pointer(Type::TypeIdentifier("char".into()))),
+                            location: (0, 0),
+                        });
+                    }
                 }
 
                 Some(ToplevelLLIR::FunctionDeclaration {
@@ -195,13 +224,19 @@ impl ANF {
                 let (anf_else, mut anf_else_lets) = self.compile_expr(*else_branch);
 
                 let let_binding = LLIR::Let {
-                    name: new_name,
+                    name: new_name.clone(),
                     annotation: return_ty,
                     value: None,
                 };
 
-                anf_then_lets.push(anf_then);
-                anf_else_lets.push(anf_else);
+                anf_then_lets.push(LLIR::Update(
+                    Box::new(LLIR::Identifier(new_name.clone())),
+                    Box::new(anf_then),
+                ));
+                anf_else_lets.push(LLIR::Update(
+                    Box::new(LLIR::Identifier(new_name.clone())),
+                    Box::new(anf_else),
+                ));
 
                 let anf_if = LLIR::If {
                     condition: Box::new(anf_condition),
@@ -211,7 +246,9 @@ impl ANF {
 
                 anf_lets.push(let_binding);
 
-                (anf_if, anf_lets)
+                anf_lets.push(anf_if);
+
+                (LLIR::Identifier(new_name), anf_lets)
             }
 
             ASTNode::Application {

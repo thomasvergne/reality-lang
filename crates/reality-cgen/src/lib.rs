@@ -183,6 +183,10 @@ impl CodeGeneration {
 
     fn generate_expression(&self, expr: LLIR) -> String {
         match expr {
+            LLIR::Update(target, value) => {
+                format!("{} = {}", self.generate_expression(*target), self.generate_expression(*value))
+            }
+
             LLIR::Reference(inner) => {
                 format!("&{}", self.generate_expression(*inner))
             }
@@ -193,14 +197,10 @@ impl CodeGeneration {
             LLIR::Block(expressions) => {
                 let mut result = String::new();
                 result.push_str("{\n");
-                for (i, expr) in expressions.iter().enumerate() {
+                for (_, expr) in expressions.iter().enumerate() {
                     let expr_str = self.generate_expression(expr.clone());
                     
-                    if i == expressions.len() - 1 {
-                        result.push_str(&format!("    return {};\n", expr_str));
-                    } else {
-                        result.push_str(&format!("    {};\n", expr_str));
-                    }
+                    result.push_str(&format!("    {};\n", expr_str));
                 }
                 result.push_str("}");
                 result
