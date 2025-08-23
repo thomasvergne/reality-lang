@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use reality_ast::{
     ASTNode, ToplevelNode, build_block_from_statements,
     internal::{annotation::Annotation, literal::Literal, types::Type},
@@ -143,6 +145,10 @@ impl Parser {
 
         if self.peek_token("mod") {
             return self.parse_top_module();
+        }
+
+        if self.peek_token("struct") {
+            return self.parse_top_struct();
         }
 
         Err(RealityError::ExpectedToken("<toplevel>".to_string()))
@@ -310,6 +316,70 @@ impl Parser {
         Ok((
             ToplevelNode::PublicDeclaration(Box::new(node)),
             (start_pos, end_pos),
+        ))
+    }
+
+    fn parse_top_struct(&mut self) -> Result<ToplevelNode> {
+        let (_, (start_pos, _)) = self.consume_token("struct")?;
+
+        let (name, (name_start, name_end)) = self.parse_identifier()?;
+        let mut annot_end = name_end;
+
+        let mut parameters = Vec::new();
+
+        if self.peek_token("[") {
+            self.consume_token("[")?;
+            while !self.peek_token("]") {
+                self.skip_whitespaces();
+                if self.position >= self.input.len() {
+                    return Err(RealityError::UnexpectedEndOfFile);
+                }
+                let (generic, _) = self.parse_identifier()?;
+                parameters.push(generic.to_string());
+                self.skip_whitespaces();
+                if self.peek_token(",") {
+                    self.consume_token(",")?;
+                } else if !self.peek_token("]") {
+                    return Err(RealityError::ExpectedToken("]".to_string()));
+                }
+            }
+            let (_, (_, end_pos_2)) = self.consume_token("]")?;
+
+            annot_end = end_pos_2;
+        }
+
+        self.consume_token("{")?;
+
+        let mut fields = HashMap::new();
+
+        while !self.peek_token("}") {
+            let (field, _) = self.parse_identifier()?;
+            self.consume_token(":")?;
+            let (field_type, _) = self.parse_type()?;
+
+            fields.insert(field, field_type);
+
+            self.skip_whitespaces();
+
+            if self.peek_token(",") {
+                self.consume_token(",")?;
+            } else if !self.peek_token("}") {
+                return Err(RealityError::ExpectedToken("}".to_string()));
+            }
+        }
+
+        self.consume_token("}")?;
+
+        Ok((
+            ToplevelNode::StructureDeclaration {
+                header: Annotation {
+                    name: name.to_string(),
+                    value: parameters,
+                    location: (name_start, annot_end),
+                },
+                fields,
+            },
+            (start_pos, self.position),
         ))
     }
 
@@ -503,6 +573,10 @@ impl Parser {
         } else if self.peek_token("|") {
             return self.parse_lambda();
         } else if let Ok((ident, pos)) = self.parse_identifier() {
+            if self.peek_token("{") {
+                return self.parse_structure_creation(ident.to_string(), pos.0);
+            }
+
             return Ok((
                 ASTNode::Identifier(Annotation {
                     name: vec![ident],
@@ -515,6 +589,44 @@ impl Parser {
         }
 
         Err(RealityError::ExpectedToken("term".to_string()))
+    }
+
+    fn parse_structure_creation(&mut self, id: String, start_pos: usize) -> Result<ASTNode> {
+        self.consume_token("{")?;
+
+        let mut fields = HashMap::new();
+
+        while !self.peek_token("}") {
+            self.skip_whitespaces();
+            if self.position >= self.input.len() {
+                return Err(RealityError::UnexpectedEndOfFile);
+            }
+
+            let (field, _) = self.parse_identifier()?;
+            self.consume_token(":")?;
+            let (field_type, _) = self.parse_expression(0)?;
+
+            fields.insert(field, field_type);
+
+            self.skip_whitespaces();
+            if self.peek_token(",") {
+                self.consume_token(",")?;
+            }
+        }
+        let (_, (_, end_pos)) = self.consume_token("}")?;
+
+        return Ok((
+            ASTNode::StructureCreation {
+                structure_name: Annotation {
+                    name: id,
+                    value: None,
+                    location: (start_pos, end_pos),
+                },
+                fields,
+            }
+            .located((start_pos, end_pos), self.file.clone()),
+            (start_pos, end_pos),
+        ))
     }
 
     fn parse_let_declaration(&mut self) -> Result<ASTNode> {
@@ -821,6 +933,18 @@ impl Parser {
                 }
                 .located((start_pos, end_pos), self.file.clone());
 
+                continue;
+            } else if let Ok(_) = self.consume_token(".") {
+                // Field access
+                let (field, (_, end_field_pos)) = self.parse_identifier()?;
+
+                lhs = ASTNode::StructureAccess {
+                    structure: Box::new(lhs),
+                    field: field.to_string(),
+                }
+                .located((start_pos, end_field_pos), self.file.clone());
+
+                end = end_field_pos;
                 continue;
             }
 
