@@ -48,9 +48,9 @@ pub enum TypeVariable<N = Vec<String>> {
 }
 
 #[derive(Clone, PartialEq)]
-pub struct Scheme<N = Vec<String>> {
+pub struct Scheme<T> {
     pub variables: Vec<String>,
-    pub body: Type<N>,
+    pub body: T,
 }
 
 impl Type<String> {
@@ -373,8 +373,7 @@ impl Type<String> {
         match self {
             Type::AnonymousStructure { fields } => {
                 let mut free_vars = Vec::new();
-                for (name, ty) in fields {
-                    free_vars.push(name.clone());
+                for (_, ty) in fields {
                     free_vars.extend(ty.free());
                 }
                 free_vars
@@ -404,9 +403,8 @@ impl Type<String> {
                 }
                 free_vars
             }
-            Type::TypeAliased(inner, name) => {
-                let mut free_vars = inner.free();
-                free_vars.push(name.clone());
+            Type::TypeAliased(inner, _) => {
+                let free_vars = inner.free();
                 free_vars
             }
         }

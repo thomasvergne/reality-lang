@@ -80,7 +80,7 @@ pub enum ASTNode<N = Vec<String>, T = Option<Type<N>>> {
     },
 
     StructureCreation {
-        structure_name: String,
+        structure_name: Annotation<T>,
         fields: HashMap<String, ASTNode<N, T>>,
     }
 }
@@ -131,7 +131,7 @@ impl<T: Debug, N: Debug> Debug for ASTNode<N, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ASTNode::StructureCreation { structure_name, fields } => {
-                write!(f, "struct {} {{ ", structure_name)?;
+                write!(f, "struct {:?} {{ ", structure_name)?;
                 for (name, field) in fields {
                     write!(f, "{}: {:?}, ", name, field)?;
                 }
@@ -570,4 +570,17 @@ pub fn unit() -> ASTNode {
         value: None,
         location: (0, 0),
     })
+}
+
+pub fn name_mangle(name: String) -> String {
+    let mut new_name = String::new();
+
+    for c in name.chars() {
+        if !c.is_alphanumeric() && c != '_' {
+            new_name.push_str(&(c as u8).to_string());
+        } else {
+            new_name.push(c);
+        }
+    }
+    new_name
 }
