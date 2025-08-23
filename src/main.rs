@@ -1,6 +1,8 @@
+use std::fs::write;
+
 use reality_anf::ANF;
 use reality_cgen::CodeGeneration;
-use reality_closure::ClosureConverter;
+use reality_closure::{hoisting::Hoister, ClosureConverter};
 use reality_error::report_error;
 use reality_module::{imports::ImportResolver, modules::ModuleResolver};
 use reality_parser::{Parser, add_default_operators};
@@ -97,15 +99,23 @@ fn main() {
 
     let ast = result.unwrap();
 
-    for node in &ast {
+    let hoister = Hoister::new();
+
+    let hoisted_ast = hoister.hoist(ast);
+
+    for node in &hoisted_ast {
         println!("{:?}", node);
     }
 
     let mut anf_converter = ANF::new();
-    let ast = anf_converter.compile(ast);
+    let ast = anf_converter.compile(hoisted_ast);
 
     let code_generator = CodeGeneration::new();
     let result = code_generator.generate(ast);
 
-    println!("{}", result);
+    let result = write("output.c", result);
+
+    if let Err(err) = result {
+        eprintln!("Error writing to output.c: {}", err);
+    }
 }
