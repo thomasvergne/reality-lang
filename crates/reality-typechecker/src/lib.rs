@@ -1,11 +1,12 @@
 use std::{cell::RefCell, collections::HashMap};
 
 use reality_ast::{
+    ASTNode, ToplevelNode,
     internal::{
         annotation::Annotation,
         literal::Literal,
         types::{self, Scheme, TypeVariable},
-    }, ASTNode, ToplevelNode
+    },
 };
 use reality_error::{Generics, RealityError};
 
@@ -68,7 +69,104 @@ impl<'a> Typechecker<'a> {
 
     pub fn check_toplevel(&mut self, node: ToplevelNode) -> Result<TypedToplevelNode> {
         match node {
-            ToplevelNode::ExternalFunction { name, parameters, return_type } => {
+            ToplevelNode::Property { header, value } => {
+                let value = value.normalize();
+
+                self.environment.insert(
+                    header.name.clone(),
+                    Scheme {
+                        variables: header.value.clone(),
+                        body: value.clone(),
+                    },
+                );
+
+                Ok(ToplevelNode::Property { header, value })
+            }
+
+            ToplevelNode::Implementation {
+                for_type,
+                header,
+                arguments,
+                return_type,
+                body,
+            } => {
+                let for_type_value = self.remove_alias(for_type.value.normalize().clone());
+                let scheme_variables = header.value.clone();
+                let mut type_arguments = arguments
+                    .iter()
+                    .map(|arg| self.remove_alias(arg.value.clone().normalize()))
+                    .collect::<Vec<_>>();
+                let return_type = self.remove_alias(return_type.normalize());
+
+                type_arguments.insert(0, for_type_value.clone());
+
+                let function_type = Type::TypeFunction {
+                    parameters: type_arguments,
+                    return_type: Box::new(return_type.clone()),
+                };
+
+                if let Some(existing) = self.environment.clone().get(&header.name) {
+                    let ty1 = self.instantiate(Scheme {
+                        variables: scheme_variables.clone(),
+                        body: function_type.clone(),
+                    });
+
+                    let ty2 = self.instantiate(existing.clone());
+
+                    self.is_subtype(ty1, ty2)?;
+                }
+
+                let args = arguments
+                    .into_iter()
+                    .map(|arg| Annotation {
+                        name: arg.name,
+                        value: self.remove_alias(arg.value.normalize()),
+                        location: arg.location,
+                    })
+                    .collect::<Vec<_>>();
+
+                let old_env = self.environment.clone();
+
+                for Annotation { name, value, .. } in args.clone() {
+                    self.environment.insert(
+                        name.clone(),
+                        Scheme {
+                            variables: vec![],
+                            body: value.clone(),
+                        },
+                    );
+                }
+
+                self.environment.insert(
+                    for_type.name.clone(),
+                    Scheme {
+                        variables: vec![],
+                        body: for_type_value.clone(),
+                    },
+                );
+
+                let body = self.check(*body, return_type.clone())?;
+
+                self.environment = old_env;
+
+                Ok(ToplevelNode::Implementation {
+                    for_type: Annotation {
+                        name: for_type.name,
+                        value: for_type_value,
+                        location: for_type.location,
+                    },
+                    header,
+                    arguments: args,
+                    return_type,
+                    body: Box::new(body),
+                })
+            }
+
+            ToplevelNode::ExternalFunction {
+                name,
+                parameters,
+                return_type,
+            } => {
                 let parameters = parameters
                     .into_iter()
                     .map(|p| Annotation {
@@ -79,13 +177,16 @@ impl<'a> Typechecker<'a> {
                     .collect::<Vec<_>>();
                 let return_type = self.remove_alias(return_type.normalize());
 
-                self.environment.insert(name.name.clone(), Scheme {
-                    variables: name.value.clone(),
-                    body: Type::TypeFunction {
-                        parameters: parameters.iter().map(|p| p.value.clone()).collect(),
-                        return_type: Box::new(return_type.clone()),
+                self.environment.insert(
+                    name.name.clone(),
+                    Scheme {
+                        variables: name.value.clone(),
+                        body: Type::TypeFunction {
+                            parameters: parameters.iter().map(|p| p.value.clone()).collect(),
+                            return_type: Box::new(return_type.clone()),
+                        },
                     },
-                });
+                );
 
                 Ok(ToplevelNode::ExternalFunction {
                     name,
@@ -97,15 +198,21 @@ impl<'a> Typechecker<'a> {
             ToplevelNode::StructureDeclaration { header, fields } => {
                 let mut fields_types = HashMap::new();
                 for (field_name, field_type) in fields {
-                    fields_types.insert(field_name, field_type.normalize());
+                    fields_types.insert(field_name, self.remove_alias(field_type.normalize()));
                 }
 
-                self.structures.insert(header.name.clone(), Scheme {
-                    variables: header.clone().value,
-                    body: fields_types.clone(),
-                });
+                self.structures.insert(
+                    header.name.clone(),
+                    Scheme {
+                        variables: header.clone().value,
+                        body: fields_types.clone(),
+                    },
+                );
 
-                Ok(ToplevelNode::StructureDeclaration { header, fields: fields_types })
+                Ok(ToplevelNode::StructureDeclaration {
+                    header,
+                    fields: fields_types,
+                })
             }
 
             ToplevelNode::Located { span, node } => {
@@ -133,7 +240,7 @@ impl<'a> Typechecker<'a> {
                 let old_env = self.environment.clone();
                 let mut new_params = Vec::new();
                 for param in parameters {
-                    let ty = param.value.normalize();
+                    let ty = self.remove_alias(param.value.normalize());
                     new_params.push(Annotation {
                         name: param.name.clone(),
                         value: ty.clone(),
@@ -243,13 +350,20 @@ impl<'a> Typechecker<'a> {
         expr: ASTNode<Vec<String>, Option<types::Type<Vec<String>>>>,
     ) -> Result<(TypedASTNode, Type)> {
         match expr {
-            ASTNode::StructureCreation { fields, structure_name } => {
+            ASTNode::StructureCreation {
+                fields,
+                structure_name,
+            } => {
                 if let Some(scheme) = self.structures.clone().get(&structure_name.name) {
                     let mut specialized_fields = HashMap::new();
 
                     let (hashmap_ty, subst) = self.instantiate_hashmap_and_sub(scheme.clone());
 
-                    let ordered_types = scheme.variables.iter().map(|v| subst.get(v).unwrap().clone()).collect::<Vec<_>>();
+                    let ordered_types = scheme
+                        .variables
+                        .iter()
+                        .map(|v| subst.get(v).unwrap().clone())
+                        .collect::<Vec<_>>();
 
                     for (field_name, field_expr) in fields {
                         if let Some(expected_type) = hashmap_ty.get(&field_name) {
@@ -263,27 +377,41 @@ impl<'a> Typechecker<'a> {
                         }
                     }
 
-                    let header = Type::TypeApplication(
+                    let header = if ordered_types.len() > 0 {
+                        Type::TypeApplication(
                             Box::new(Type::TypeIdentifier(structure_name.name.clone())),
                             ordered_types,
-                        );
+                        )
+                    } else {
+                        Type::TypeIdentifier(structure_name.name.clone())
+                    };
 
                     return Ok((
                         ASTNode::StructureCreation {
                             fields: specialized_fields,
-                            structure_name: Annotation { name: structure_name.name.clone(), value: header.clone(), location: structure_name.location },
+                            structure_name: Annotation {
+                                name: structure_name.name.clone(),
+                                value: header.clone(),
+                                location: structure_name.location,
+                            },
                         },
-                        header
+                        header,
                     ));
                 } else {
-                    return Err(RealityError::NotAStructure(Type::TypeIdentifier(structure_name.name.clone())));
+                    return Err(RealityError::NotAStructure(Type::TypeIdentifier(
+                        structure_name.name.clone(),
+                    )));
                 }
             }
 
             ASTNode::StructureAccess { structure, field } => {
                 let (structure, structure_ty) = self.synthesize(*structure)?;
 
-                if let Type::TypeApplication(base, args) = structure_ty.clone() && let Type::TypeIdentifier(structure_name) = *base {
+                let structure_ty = self.remove_alias(structure_ty);
+
+                if let Type::TypeApplication(base, args) = structure_ty.clone()
+                    && let Type::TypeIdentifier(structure_name) = *base
+                {
                     if let Some(scheme) = self.structures.get(&structure_name) {
                         let mut scheme_variables = Vec::new();
 
@@ -294,7 +422,13 @@ impl<'a> Typechecker<'a> {
                         if let Some(field_ty) = scheme.body.get(&field) {
                             let field_ty_final = field_ty.substitute_all(scheme_variables);
 
-                            return Ok((ASTNode::StructureAccess { structure: Box::new(structure), field }, field_ty_final));
+                            return Ok((
+                                ASTNode::StructureAccess {
+                                    structure: Box::new(structure),
+                                    field,
+                                },
+                                field_ty_final,
+                            ));
                         }
                     }
 
@@ -305,10 +439,19 @@ impl<'a> Typechecker<'a> {
                 } else if let Type::TypeIdentifier(structure_name) = structure_ty {
                     if let Some(scheme) = self.structures.get(&structure_name) {
                         if scheme.variables.len() > 0 {
-                            return Err(RealityError::UnboundGenerics(Generics(scheme.variables.clone())));
+                            return Err(RealityError::UnboundGenerics(Generics(
+                                scheme.variables.clone(),
+                            )));
                         }
+
                         if let Some(field_ty) = scheme.body.get(&field) {
-                            return Ok((ASTNode::StructureAccess { structure: Box::new(structure), field }, field_ty.clone()));
+                            return Ok((
+                                ASTNode::StructureAccess {
+                                    structure: Box::new(structure),
+                                    field,
+                                },
+                                field_ty.clone(),
+                            ));
                         }
                     }
 
@@ -385,7 +528,7 @@ impl<'a> Typechecker<'a> {
                         },
                         value: Box::new(typed_value),
                         body: Box::new(body),
-                        return_ty: return_type.clone()
+                        return_ty: return_type.clone(),
                     },
                     return_type,
                 ));
@@ -510,7 +653,7 @@ impl<'a> Typechecker<'a> {
                         ASTNode::Application {
                             function: Box::new(head),
                             arguments: args,
-                            function_type: func_ty
+                            function_type: func_ty,
                         },
                         *return_type,
                     ));
@@ -609,12 +752,14 @@ impl<'a> Typechecker<'a> {
                     },
                     value: Box::new(typed_value),
                     body: Box::new(body),
-                    return_ty: expected
+                    return_ty: expected,
                 });
             }
 
             ASTNode::Lambda {
-                parameters, body, return_type
+                parameters,
+                body,
+                return_type,
             } => match expected {
                 Type::TypeFunction {
                     parameters: param_tys,
@@ -645,7 +790,7 @@ impl<'a> Typechecker<'a> {
                         )
                     }));
 
-                    let mut ret  = *ret_ty.clone();
+                    let mut ret = *ret_ty.clone();
 
                     if let Some(return_type) = return_type {
                         self.is_subtype(return_type.normalize(), *ret_ty)?;
@@ -706,19 +851,26 @@ impl<'a> Typechecker<'a> {
             .fold(scheme.body, |acc, (var, ty)| acc.substitute(&var, ty))
     }
 
-    fn instantiate_hashmap_and_sub(&mut self, scheme: types::Scheme<HashMap<String, Type>>) -> (HashMap<String, Type>, HashMap<String, Type>) {
+    fn instantiate_hashmap_and_sub(
+        &mut self,
+        scheme: types::Scheme<HashMap<String, Type>>,
+    ) -> (HashMap<String, Type>, HashMap<String, Type>) {
         let mut type_vars = HashMap::new();
         for var in scheme.variables {
             type_vars.insert(var.clone(), self.new_type(var.clone()));
         }
 
-        let new_ty = scheme.body.into_iter().map(|(key, ty)| {
-            let new_ty = type_vars
-                .clone()
-                .into_iter()
-                .fold(ty, |acc, (var, ty)| acc.substitute(&var, ty));
-            (key, new_ty)
-        }).collect();
+        let new_ty = scheme
+            .body
+            .into_iter()
+            .map(|(key, ty)| {
+                let new_ty = type_vars
+                    .clone()
+                    .into_iter()
+                    .fold(ty, |acc, (var, ty)| acc.substitute(&var, ty));
+                (key, new_ty)
+            })
+            .collect();
 
         (new_ty, type_vars)
     }
@@ -780,6 +932,17 @@ impl<'a> Typechecker<'a> {
 
         if subtype == supertype {
             return Ok(());
+        }
+
+        if let Type::TypeFunction { parameters: p1, return_type: r1 } = subtype.clone() 
+        && let Type::TypeFunction { parameters: p2, return_type: r2 } = supertype.clone() {
+            if p1.len() == p2.len() {
+                for (param1, param2) in p1.into_iter().zip(p2) {
+                    self.is_subtype(param1, param2)?;
+                }
+                self.is_subtype(*r1, *r2)?;
+                return Ok(());
+            }
         }
 
         if let Some(size) = subtype.is_integer_type() {
@@ -991,6 +1154,14 @@ impl<'a> Typechecker<'a> {
                 *mut_var = TypeVariable::Bound(Box::new(ty2.clone()));
                 return Ok(());
             }
+        }
+
+        if let Type::TypeAliased(inner1, _) = &ty1 {
+            return self.unifies_with(*inner1.clone(), ty2, base_ty1, base_ty2);
+        }
+
+        if let Type::TypeAliased(inner2, _) = &ty2 {
+            return self.unifies_with(ty1, *inner2.clone(), base_ty1, base_ty2);
         }
 
         if let Type::TypeVariable(other_var) = ty2.clone() {
