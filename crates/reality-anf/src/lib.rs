@@ -73,7 +73,7 @@ impl ANF {
                 }
 
                 let anf_structure = LLIR::StructureCreation {
-                    structure_name,
+                    structure_name: structure_name.name,
                     fields: new_fields,
                 };
 

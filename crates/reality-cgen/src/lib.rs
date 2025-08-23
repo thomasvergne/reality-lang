@@ -1,4 +1,4 @@
-use reality_ast::{internal::{annotation::Annotation, types::{Type, TypeVariable}}, llir::{ToplevelLLIR, LLIR}};
+use reality_ast::{internal::{annotation::Annotation, types::{Type, TypeVariable}}, llir::{ToplevelLLIR, LLIR}, name_mangle};
 
 pub struct CodeGeneration {}
 
@@ -66,7 +66,7 @@ impl CodeGeneration {
                     _ => ty.clone(),
                 };
 
-                format!("{} {}", ty, name.unwrap_or_default())
+                format!("{} {}", name_mangle(ty), name.unwrap_or_default())
             }
 
             Type::TypeFunction { parameters, return_type } => {
@@ -110,7 +110,7 @@ impl CodeGeneration {
         match ast {
             ToplevelLLIR::StructureDeclaration { header, fields } => {
                 let mut result = String::new();
-                result.push_str(&format!("typedef struct {} {{\n", header));
+                result.push_str(&format!("typedef struct {} {{\n", name_mangle(header.clone())));
 
                 for (field, ty) in fields {
                     result.push_str(&self.generate_type(ty, Some(field.clone())));
@@ -118,19 +118,19 @@ impl CodeGeneration {
                     result.push_str(";");
                 }
                 
-                result.push_str(&format!("}} {};", header));
+                result.push_str(&format!("}} {};", name_mangle(header)));
                 result
             }
 
             ToplevelLLIR::FunctionDeclaration { name, parameters, return_type, body } => {
                 let mut result = String::new();
                 
-                let name_with_type = self.generate_type(return_type, Some(name));
+                let name_with_type = self.generate_type(return_type, Some(name_mangle(name.clone())));
 
                 result.push_str(&format!("{}(", name_with_type));
 
                 for (i, Annotation { name, value, .. }) in parameters.iter().enumerate() {
-                    result.push_str(&self.generate_type(value.clone(), Some(name.clone())));
+                    result.push_str(&self.generate_type(value.clone(), Some(name_mangle(name.clone()))));
 
                     if i < parameters.len() - 1 {
                         result.push_str(", ");
@@ -156,7 +156,7 @@ impl CodeGeneration {
             ToplevelLLIR::ConstantDeclaration { name, annotation, value } => {
                 let mut result = String::new();
 
-                let name_with_type = self.generate_type(annotation, Some(name));
+                let name_with_type = self.generate_type(annotation, Some(name_mangle(name.clone())));
 
                 result.push_str(&format!("{} = ", name_with_type));
                 result.push_str(&self.generate_expression(*value));
@@ -187,21 +187,21 @@ impl CodeGeneration {
             
             LLIR::Literal(value) => format!("{:?}", value),
             LLIR::StructureCreation { structure_name, fields } => {
-                let mut result = format!("(struct {}) {{\n", structure_name);
+                let mut result = format!("(struct {}) {{\n", name_mangle(structure_name));
                 for (field, value) in fields {
-                    result.push_str(&format!("    .{} = {},\n", field, self.generate_expression(value)));
+                    result.push_str(&format!("    .{} = {},\n", name_mangle(field), self.generate_expression(value)));
                 }
                 result.push_str("}");
                 result
             }
 
             LLIR::StructureAccess { structure, field } => {
-                format!("{}.{}", self.generate_expression(*structure), field)
+                format!("{}.{}", self.generate_expression(*structure), name_mangle(field))
             }
 
             LLIR::Let { name, value, annotation } => {
                 let mut string = String::new();
-                string.push_str(&self.generate_type(annotation, Some(name)));
+                string.push_str(&self.generate_type(annotation, Some(name_mangle(name))));
 
                 if let Some(value) = value {
                     string.push_str(&format!(" = {}", self.generate_expression(*value)));
@@ -219,7 +219,7 @@ impl CodeGeneration {
             }
 
             LLIR::Identifier(name) => {
-                format!("{}", name)
+                format!("{}", name_mangle(name))
             }
 
             LLIR::Application { function, arguments, .. } => {
