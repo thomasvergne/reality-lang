@@ -4,10 +4,13 @@ use reality_ast::{
     ASTNode, ToplevelNode, TypedASTNode, TypedToplevelNode,
     internal::{
         annotation::Annotation,
+        literal::Literal,
         types::{Type, TypeVariable},
     },
 };
 use reality_error::RealityError;
+
+pub mod hoisting;
 
 pub struct ClosureConverter {
     pub source: (usize, usize, String),
@@ -17,9 +20,10 @@ pub struct ClosureConverter {
     pub globals: HashMap<String, (usize, Type<String>)>,
     pub natives: HashMap<String, (usize, Type<String>)>,
     pub locals: HashMap<String, Type<String>>,
+    pub structures: HashMap<String, HashMap<String, Type<String>>>,
 }
 
-type Result<T> = std::result::Result<(T, Vec<TypedToplevelNode>), RealityError>;
+type Result<T> = std::result::Result<(T, Vec<TypedToplevelNode>, Type<String>), RealityError>;
 
 impl ClosureConverter {
     pub fn new() -> Self {
@@ -29,6 +33,7 @@ impl ClosureConverter {
             globals: HashMap::new(),
             locals: HashMap::new(),
             natives: HashMap::new(),
+            structures: HashMap::new(),
         }
     }
 
@@ -39,13 +44,23 @@ impl ClosureConverter {
         )
     }
 
+    fn is_void_pointer(&mut self, ty: &Type<String>) -> bool {
+        match ty {
+            Type::TypeApplication(func, args) => {
+                *func.clone() == self.void_pointer() && args.is_empty()
+            }
+            _ => false,
+        }
+    }
+
     fn convert_type(&mut self, ty: Type<String>) -> Type<String> {
         match ty.clone() {
             Type::TypeIdentifier(name) => Type::TypeIdentifier(name),
+
             Type::TypeFunction {
                 parameters,
                 return_type,
-            } => {
+            } if !self.is_void_pointer(&*return_type) => {
                 let new_params = parameters
                     .into_iter()
                     .map(|p| self.convert_type(p))
@@ -71,6 +86,21 @@ impl ClosureConverter {
                         ),
                     ]),
                 }
+            }
+            
+            Type::TypeFunction { parameters, return_type } => {
+                let new_params = parameters
+                    .into_iter()
+                    .map(|p| self.convert_type(p))
+                    .collect::<Vec<_>>();
+
+                let new_return = self.convert_type(*return_type);
+
+        
+                return Type::TypeFunction {
+                    parameters: new_params,
+                    return_type: new_return.into(),
+                };
             }
 
             Type::TypeVariable(var) => {
@@ -110,7 +140,7 @@ impl ClosureConverter {
         let mut new_ast = Vec::new();
 
         for node in ast {
-            let (converted, ns) = self.convert_node(node)?;
+            let (converted, ns, _) = self.convert_node(node)?;
             new_ast.extend(ns);
             new_ast.push(converted);
         }
@@ -123,10 +153,28 @@ impl ClosureConverter {
             ToplevelNode::FunctionDeclaration {
                 name,
                 parameters,
-                return_type,
                 body,
+                return_type,
             } => {
-                let (converted_body, ns) = self.convert_exp(*body)?;
+                let converted_params = parameters
+                    .iter()
+                    .map(|p| self.convert_type(p.value.clone()))
+                    .collect::<Vec<_>>();
+
+                let converted_return_type = self.convert_type(return_type);
+
+                self.globals.insert(
+                    name.clone().name,
+                    (
+                        converted_params.len(),
+                        Type::TypeFunction {
+                            parameters: converted_params,
+                            return_type: Box::new(converted_return_type),
+                        },
+                    ),
+                );
+
+                let (converted_body, ns, ty) = self.convert_exp(*body)?;
 
                 let param_types = parameters
                     .iter()
@@ -137,15 +185,14 @@ impl ClosureConverter {
                     })
                     .collect::<Vec<_>>();
 
-                let return_ty = self.convert_type(return_type);
-
+                self.globals.remove(&name.clone().name);
                 self.globals.insert(
                     name.clone().name,
                     (
                         param_types.len(),
                         Type::TypeFunction {
                             parameters: param_types.iter().map(|p| p.value.clone()).collect(),
-                            return_type: Box::new(return_ty.clone()),
+                            return_type: Box::new(ty.clone()),
                         },
                     ),
                 );
@@ -154,10 +201,11 @@ impl ClosureConverter {
                     ToplevelNode::FunctionDeclaration {
                         name,
                         parameters,
-                        return_type: return_ty,
+                        return_type: ty.clone(),
                         body: Box::new(converted_body),
                     },
                     ns,
+                    ty,
                 ))
             }
             ToplevelNode::StructureDeclaration { header, fields } => {
@@ -168,12 +216,21 @@ impl ClosureConverter {
                     hm.insert(name, converted_type);
                 }
 
+                self.structures.insert(header.name.clone(), hm.clone());
+
                 Ok((
                     ToplevelNode::StructureDeclaration { header, fields: hm },
                     vec![],
+                    self.void_pointer(),
                 ))
             }
-            _ => Ok((node, Vec::new())),
+
+            ToplevelNode::Located { span, node } => {
+                let (converted, ns, ty) = self.convert_node(*node)?;
+                Ok((ToplevelNode::Located { span, node: Box::new(converted) }, ns, ty))
+            }
+
+            _ => Ok((node, Vec::new(), self.void_pointer())),
         }
     }
 
@@ -186,56 +243,58 @@ impl ClosureConverter {
                 variable,
                 value,
                 body,
-                return_ty
+                ..
             } => match value.get_lambda() {
                 Some(lambda) => {
-                    let (converted, mut ns) =
-                        self.convert_lambda(lambda.clone(), vec![variable.name.clone()])?;
-
-                    let (converted_body, mut ns2) = self.convert_exp(*body)?;
-                    ns.append(&mut ns2);
-
                     self.locals
                         .insert(variable.name.clone(), variable.value.clone());
 
-                    let converted_type = self.convert_type(variable.value.clone());
-                    let converted_return_ty = self.convert_type(return_ty);
+                    let (converted, mut ns, lambda_ty) =
+                        self.convert_lambda(lambda.clone(), vec![variable.name.clone()])?;
+
+                    self.locals.remove(&variable.name);
+                    self.locals.insert(variable.name.clone(), lambda_ty.clone());
+
+                    let (converted_body, mut ns2, body_ty) = self.convert_exp(*body)?;
+
+                    self.locals.remove(&variable.name);
+
+                    ns.append(&mut ns2);
 
                     Ok((
                         ASTNode::LetIn {
                             variable: Annotation {
                                 name: variable.name.clone(),
                                 location: variable.location,
-                                value: converted_type,
+                                value: lambda_ty,
                             },
                             value: Box::new(converted),
                             body: Box::new(converted_body),
-                            return_ty: converted_return_ty
+                            return_ty: body_ty.clone(),
                         },
                         ns,
+                        body_ty,
                     ))
                 }
 
                 None => {
-                    let (converted_value, mut ns1) = self.convert_exp(*value)?;
-                    let (converted_body, mut ns2) = self.convert_exp(*body)?;
+                    let (converted_value, mut ns1, value_ty) = self.convert_exp(*value)?;
+                    let (converted_body, mut ns2, body_ty) = self.convert_exp(*body)?;
                     ns1.append(&mut ns2);
-
-                    let converted_type = self.convert_type(variable.value.clone());
-                    let converted_return_ty = self.convert_type(return_ty);
 
                     Ok((
                         ASTNode::LetIn {
                             variable: Annotation {
                                 name: variable.name.clone(),
                                 location: variable.location,
-                                value: converted_type,
+                                value: value_ty,
                             },
                             value: Box::new(converted_value),
                             body: Box::new(converted_body),
-                            return_ty: converted_return_ty,
+                            return_ty: body_ty.clone(),
                         },
                         ns1,
+                        body_ty,
                     ))
                 }
             },
@@ -248,58 +307,93 @@ impl ClosureConverter {
                 let mut ns = Vec::new();
 
                 for (name, value) in fields {
-                    let (converted_value, mut ns1) = self.convert_exp(value)?;
+                    let (converted_value, mut ns1, _) = self.convert_exp(value)?;
+
                     specialized_fields.insert(name, converted_value);
+
                     ns.append(&mut ns1);
                 }
 
                 Ok((
                     ASTNode::StructureCreation {
-                        structure_name,
+                        structure_name: structure_name.clone(),
                         fields: specialized_fields,
                     },
                     ns,
+                    Type::TypeIdentifier(structure_name),
                 ))
             }
 
             ASTNode::StructureAccess { structure, field } => {
-                let (converted_structure, ns) = self.convert_exp(*structure)?;
+                let (converted_structure, ns, ty) = self.convert_exp(*structure)?;
+
+                let mut field_ty = self.void_pointer();
+
+                if let Type::TypeIdentifier(name) = ty {
+                    if let Some(fields) = self.structures.get(&name) {
+                        if let Some(ft) = fields.get(&field) {
+                            field_ty = ft.clone();
+                        }
+                    }
+                }
+
                 Ok((
                     ASTNode::StructureAccess {
                         structure: Box::new(converted_structure),
                         field,
                     },
                     ns,
+                    field_ty,
                 ))
             }
 
             ASTNode::Located { span, node } => {
-                let (converted_node, ns) = self.convert_exp(*node)?;
+                let (converted_node, ns, ty) = self.convert_exp(*node)?;
                 Ok((
                     ASTNode::Located {
                         span,
                         node: Box::new(converted_node),
                     },
                     ns,
+                    ty,
                 ))
             }
 
-            ASTNode::Literal(value) => Ok((ASTNode::Literal(value), Vec::new())),
+            ASTNode::Literal(value) => Ok((
+                ASTNode::Literal(value.clone()),
+                Vec::new(),
+                match value {
+                    Literal::Integer(_) => Type::TypeIdentifier("i32".to_string()),
+                    Literal::Boolean(_) => Type::TypeIdentifier("bool".to_string()),
+                    Literal::String(_) => Type::TypeApplication(
+                        Box::new(Type::TypeIdentifier("pointer".to_string())),
+                        vec![Type::TypeIdentifier("u8".to_string())],
+                    ),
+                    Literal::Character(_) => Type::TypeIdentifier("char".to_string()),
+                    Literal::Float(_) => Type::TypeIdentifier("f32".to_string()),
+                },
+            )),
 
             ASTNode::If {
                 condition,
                 then_branch,
                 else_branch,
 
-                return_ty
+                return_ty,
             } => {
-                let (converted_condition, mut ns1) = self.convert_exp(*condition)?;
-                let (converted_then, mut ns2) = self.convert_exp(*then_branch)?;
-                let (converted_else, mut ns3) = self.convert_exp(*else_branch)?;
+                let (converted_condition, mut ns1, _) = self.convert_exp(*condition)?;
+                let (converted_then, mut ns2, then_ty) = self.convert_exp(*then_branch)?;
+                let (converted_else, mut ns3, else_ty) = self.convert_exp(*else_branch)?;
                 let converted_return_ty = self.convert_type(return_ty);
 
                 ns1.append(&mut ns2);
                 ns1.append(&mut ns3);
+
+                let return_ty = if then_ty == else_ty {
+                    then_ty
+                } else {
+                    self.void_pointer()
+                };
 
                 Ok((
                     ASTNode::If {
@@ -309,6 +403,7 @@ impl ClosureConverter {
                         return_ty: converted_return_ty,
                     },
                     ns1,
+                    return_ty
                 ))
             }
 
@@ -319,9 +414,10 @@ impl ClosureConverter {
                     ASTNode::Identifier(Annotation {
                         name: name.name,
                         location: name.location,
-                        value: converted_type,
+                        value: converted_type.clone(),
                     }),
                     vec![],
+                    converted_type,
                 ))
             }
 
@@ -339,16 +435,22 @@ impl ClosureConverter {
                 native_functions.extend(global_functions);
 
                 for argument in arguments {
-                    let (converted_argument, mut ns1) = self.convert_exp(argument)?;
+                    let (converted_argument, mut ns1, _) = self.convert_exp(argument)?;
                     new_arguments.push(converted_argument);
                     ns.append(&mut ns1);
                 }
 
-                println!("{:?}", native_functions);
+                println!("{:?} {:?}", function, native_functions);
 
                 if let ASTNode::Identifier(ann) = function.flatten_locations()
-                    && let Some(_) = native_functions.get(&ann.name)
+                    && let Some((_, ty)) = native_functions.get(&ann.name)
                 {
+                    let return_ty = if let Type::TypeFunction { return_type, .. } = ty {
+                        self.convert_type(*return_type.clone())
+                    } else {
+                        Type::TypeIdentifier("unit".to_string())
+                    };
+
                     return Ok((
                         ASTNode::Application {
                             function,
@@ -356,14 +458,16 @@ impl ClosureConverter {
                             function_type: function_type.clone(),
                         },
                         ns,
+                        return_ty
                     ));
                 }
 
-                let (converted_function, mut ns1) = self.convert_exp(*function)?;
+                let (converted_function, mut ns1, fun_ty) = self.convert_exp(*function)?;
 
                 ns.append(&mut ns1);
 
                 let lambda_name = format!("closure_lambda_{}", self.symbol_counter.borrow());
+                self.symbol_counter.replace_with(|v| *v + 1);
 
                 let call_var = ASTNode::Identifier(Annotation {
                     name: lambda_name.clone(),
@@ -384,7 +488,7 @@ impl ClosureConverter {
                 let lambda_ty = self.convert_type(function_type.clone());
 
                 let call = ASTNode::Application {
-                    function: Box::new(function),
+                    function: Box::new(function.clone()),
                     arguments: vec![env]
                         .iter()
                         .chain(new_arguments.iter())
@@ -392,8 +496,6 @@ impl ClosureConverter {
                         .collect(),
                     function_type: lambda_ty.clone(),
                 };
-
-                self.symbol_counter.replace_with(|v| *v + 1);
 
                 let converted_return_ty;
 
@@ -406,15 +508,16 @@ impl ClosureConverter {
                 Ok((
                     ASTNode::LetIn {
                         variable: Annotation {
-                            name: lambda_name,
+                            name: lambda_name.clone(),
                             location: (0, 0),
-                            value: lambda_ty,
+                            value: fun_ty,
                         },
                         body: Box::new(call),
                         value: Box::new(converted_function),
-                        return_ty: converted_return_ty,
+                        return_ty: converted_return_ty.clone(),
                     },
                     ns,
+                    converted_return_ty
                 ))
             }
         }
@@ -427,11 +530,10 @@ impl ClosureConverter {
     ) -> Result<TypedASTNode> {
         if let ASTNode::Lambda {
             parameters,
-            return_type,
             body,
+            ..
         } = expr.clone()
         {
-            let return_type = self.convert_type(return_type);
             let mut free_vars = body.free_variables();
             let native_functions = self.natives.clone();
             let global_functions = self.globals.clone();
@@ -495,7 +597,7 @@ impl ClosureConverter {
                     .map(|ann| (ann.name.clone(), ann.value.clone())),
             );
 
-            let (body, mut ns) = self.convert_exp(*body.clone())?;
+            let (body, mut ns, body_ty) = self.convert_exp(*body.clone())?;
 
             self.locals = old_locals;
 
@@ -510,7 +612,7 @@ impl ClosureConverter {
                     field: v.clone(),
                 }),
                 body: Box::new(acc),
-                return_ty: return_type.clone(),
+                return_ty: body_ty.clone(),
             });
 
             let structure_definition: ToplevelNode<String, Type<String>, Type<String>> =
@@ -524,6 +626,8 @@ impl ClosureConverter {
                 };
 
             let mut param_tys = vec![];
+
+            param_tys.push(Type::TypeIdentifier(structure_name.clone()));
 
             for p in parameters.clone() {
                 param_tys.push(self.convert_type(p.value));
@@ -545,7 +649,7 @@ impl ClosureConverter {
                             "fun".to_string(),
                             Type::TypeFunction {
                                 parameters: param_tys,
-                                return_type: Box::new(return_type.clone()),
+                                return_type: Box::new(body_ty.clone()),
                             },
                         ),
                     ]),
@@ -558,7 +662,7 @@ impl ClosureConverter {
             };
 
             let lambda_structure = ASTNode::StructureCreation {
-                structure_name: lambda_struct_name,
+                structure_name: lambda_struct_name.clone(),
                 fields: HashMap::from([
                     ("env".to_string(), structure),
                     (
@@ -569,7 +673,7 @@ impl ClosureConverter {
                                 .chain(parameters.iter())
                                 .map(|ann| ann.clone())
                                 .collect::<Vec<_>>(),
-                            return_type,
+                            return_type: body_ty,
                             body: Box::new(new_body),
                         },
                     ),
@@ -581,9 +685,9 @@ impl ClosureConverter {
 
             self.symbol_counter.replace_with(|v| *v + 1);
 
-            return Ok((lambda_structure, ns));
+            return Ok((lambda_structure, ns, Type::TypeIdentifier(lambda_struct_name)));
         }
 
-        Ok((expr, vec![]))
+        Ok((expr, vec![], self.void_pointer()))
     }
 }
