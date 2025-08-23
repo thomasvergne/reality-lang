@@ -408,7 +408,15 @@ impl ClosureConverter {
             }
 
             ASTNode::Identifier(name) => {
-                let converted_type = self.convert_type(name.value.clone());
+                let mut converted_type = self.convert_type(name.value.clone());
+
+                if let Some(ty) = self.locals.get(&name.name) {
+                    converted_type = ty.clone();
+                } else if let Some((_, ty)) = self.natives.get(&name.name) {
+                    converted_type = ty.clone();
+                } else if let Some((_, ty)) = self.globals.get(&name.name) {
+                    converted_type = ty.clone();
+                }
 
                 Ok((
                     ASTNode::Identifier(Annotation {
