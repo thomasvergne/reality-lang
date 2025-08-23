@@ -74,7 +74,7 @@ fn main() {
 
     let ast = result.unwrap();
 
-    let mut specializer = Specializer::new(&mut typechecker);
+    let mut specializer = Specializer::new(typechecker.clone());
     let result = specializer.specialize(ast);
 
     if let Err(err) = result {
@@ -87,7 +87,7 @@ fn main() {
 
     let ast = result.unwrap();
 
-    let mut closure_converter = ClosureConverter::new();
+    let mut closure_converter = ClosureConverter::new(typechecker);
     let result = closure_converter.convert(ast);
 
     if let Err(err) = result {
@@ -99,6 +99,9 @@ fn main() {
     }
 
     let ast = result.unwrap();
+    for node in &ast {
+        println!("{:#?}", node);
+    }
 
     let hoister = Hoister::new();
 
