@@ -11,7 +11,7 @@ use reality_typechecker::Typechecker;
 
 fn main() {
     let file = "examples/structures.rl";
-    let c_imports = vec!["<stdint.h>", "<stdlib.h>"];
+    let c_imports = vec!["<stdint.h>", "<stdlib.h>", "\"dependencies/gc/src/gc.h\""];
     let file_content = include_str!("../examples/structures.rl");
     let current_dir = std::env::current_dir().unwrap().join("examples");
 
