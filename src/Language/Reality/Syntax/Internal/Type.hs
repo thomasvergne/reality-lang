@@ -114,6 +114,12 @@ pattern MkTyUnit = MkTyId "unit"
 pattern MkTyList :: Type -> Type
 pattern MkTyList a = MkTyApp (MkTyId "list") [a]
 
+-- | POINTER TYPE
+-- | Pointer type is a type that represents a pointer to a value in Bonzai.
+-- | It is used to represent a reference to a value of a given type.
+pattern MkTyPointer :: Type -> Type
+pattern MkTyPointer a = MkTyApp (MkTyId "pointer") [a]
+
 -- | TUPLE TYPE
 -- | Tuple type is a type that represents a tuple of values in Bonzai. It is used
 -- | to represent a fixed-size collection of values of different types.
