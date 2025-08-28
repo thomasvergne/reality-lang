@@ -90,6 +90,55 @@ handle (Left (err, pos@(p1, _))) _ = liftIO $ do
                 )
                 "Resolution"
 
+        FieldNotFound field ->
+            printErrorFromString
+                Nothing
+                ( "Field " <> show field <> " not found in structure"
+                , Nothing
+                , pos
+                )
+                "Resolution"
+        UnboundTypeVariable name ->
+            printErrorFromString
+                Nothing
+                ( "Unbound type variable " <> show name
+                , Nothing
+                , pos
+                )
+                "Resolution"
+        StructureNotFound ty ->
+            printErrorFromString
+                Nothing
+                ( "Structure " <> show (toText ty) <> " not found"
+                , Nothing
+                , pos
+                )
+                "Resolution"
+        CyclicTypeVariable name ty ->
+            printErrorFromString
+                Nothing
+                ( "Cyclic type variable " <> show name <> " in type " <> show (toText ty)
+                , Nothing
+                , pos
+                )
+                "Resolution"
+        ExpectedFunction ty ->
+            printErrorFromString
+                Nothing
+                ( "Expected a function type, but got " <> show (toText ty)
+                , Nothing
+                , pos
+                )
+                "Resolution"
+        InvalidHeader ->
+            printErrorFromString
+                Nothing
+                ( "Invalid header type"
+                , Just "ensure the type is a valid structure type"
+                , pos
+                )
+                "Resolution"
+
 type ImportStack = [FilePath]
 
 type Error = (BonzaiError, HLIR.Position)
@@ -109,8 +158,14 @@ data BonzaiError
     | VariableNotFound Text
     | CompilerError Text
     | UnificationFail HLIR.Type HLIR.Type
+    | CyclicTypeVariable Text HLIR.Type
     | InvalidArgumentQuantity Int Int
+    | FieldNotFound Text
+    | UnboundTypeVariable Text
+    | StructureNotFound HLIR.Type
     | EnvironmentVariableNotFound Text
+    | ExpectedFunction HLIR.Type
+    | InvalidHeader
     deriving (Eq, Generic)
 
 instance Show BonzaiError where
@@ -130,6 +185,13 @@ instance Show BonzaiError where
     show (UnificationFail t1 t2) = "Expected " <> show (toText t1) <> ", but got " <> show (toText t2)
     show (InvalidArgumentQuantity n k) = "Invalid number of arguments, expected " <> show n <> ", received " <> show k
     show (EnvironmentVariableNotFound name) = "Environment variable " <> show name <> " not found"
+    show (FieldNotFound field) = "Field " <> show field <> " not found in structure"
+    show (UnboundTypeVariable name) = "Unbound type variable " <> show name
+    show (StructureNotFound ty) = "Structure " <> show (toText ty)
+    show (CyclicTypeVariable name ty) = "Cyclic type variable " <> show name <> " in type " <> show (toText ty)
+    show (ExpectedFunction ty) = "Expected a function type, but got " <> show
+        (toText ty)
+    show InvalidHeader = "Invalid header type"
 
 showError :: P.ParseError -> String
 showError = P.errorBundlePretty
