@@ -149,13 +149,13 @@ parseExprLambda = do
 
     void $ Lex.symbol "|"
 
-    retType <- P.optional $ do
-        void $ Lex.symbol "->"
-        snd <$> Typ.parseType
+    returnType <- P.optional $ Lex.symbol "->" *> (snd <$> Typ.parseType)
 
-    ((_, end), body) <- parseExprBlock
+    ((_, end), body) <- case returnType of
+        Just _  -> parseExprBlock
+        Nothing -> parseExprFull
 
-    pure ((start, end), HLIR.MkExprLambda params retType body)
+    pure ((start, end), HLIR.MkExprLambda params returnType body)
 
 -- | PARSE STRUCTURE CREATION
 -- | Parse a structure creation expression. A structure creation expression is an
