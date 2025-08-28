@@ -62,7 +62,7 @@ parseTopTypeAlias = do
         ( (start, end)
         , HLIR.MkTopTypeAlias
             { HLIR.name = HLIR.MkAnnotation idt generics
-            , HLIR.typeValue = aliased
+            , HLIR.boundType = aliased
             }
         )
 

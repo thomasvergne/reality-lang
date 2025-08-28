@@ -67,7 +67,7 @@ resolveModuleSingular
 resolveModuleSingular
     ( HLIR.MkTopTypeAlias
             { HLIR.name = HLIR.MkAnnotation name generics
-            , HLIR.typeValue = typeValue
+            , HLIR.boundType = typeValue
             }
         )
     paths = do
@@ -75,7 +75,7 @@ resolveModuleSingular
         pure
             [ HLIR.MkTopTypeAlias
                 { HLIR.name = HLIR.MkAnnotation newName generics
-                , HLIR.typeValue = typeValue
+                , HLIR.boundType = typeValue
                 }
             ]
 resolveModuleSingular
