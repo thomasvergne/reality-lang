@@ -38,7 +38,7 @@ handle (Left (err, pos@(p1, _))) _ = liftIO $ do
                 stackMsg
           where
             stackMsg = "Import stack:\n - " <> intercalate "\n - " (map normalise stack)
-        ModuleNotFound path _ ->
+        ModuleNotFound path ->
             printErrorFromString
                 Nothing
                 ( "Module " <> show (normalise path) <> " not found"
@@ -73,33 +73,6 @@ handle (Left (err, pos@(p1, _))) _ = liftIO $ do
                 , pos
                 )
                 ("Expected type " <> toString (toText expected))
-        ActorNotFound name ->
-            printErrorFromString
-                Nothing
-                ( "Actor " <> show name <> " not found"
-                , Just
-                    "check for typo issue with the event name, or missing types in actor header"
-                , pos
-                )
-                "Resolution"
-        NotAnActor ty ->
-            printErrorFromString
-                Nothing
-                ("Expected an actor, but received a " <> show (toText ty), Nothing, pos)
-                "Typechecking"
-        EventNotFound name ->
-            printErrorFromString
-                Nothing
-                ( "Event " <> show name <> " not found"
-                , Just "check for typo issue with the event name"
-                , pos
-                )
-                "Resolution"
-        ExpectedAnActor ty ->
-            printErrorFromString
-                (Just "May you have forgotten to define an interface for your actor?")
-                ("Expected an actor, but got " <> show (toText ty), Nothing, pos)
-                "Typechecking"
         InvalidArgumentQuantity n k ->
             printErrorFromString
                 Nothing
@@ -113,56 +86,6 @@ handle (Left (err, pos@(p1, _))) _ = liftIO $ do
                 Nothing
                 ( "Environment variable " <> show name <> " not found"
                 , Just "check for typo issue with the variable name"
-                , pos
-                )
-                "Resolution"
-        InvalidConstructor name ->
-            printErrorFromString
-                Nothing
-                ( "Invalid constructor " <> show name
-                , Just "check for typo issue with the constructor name"
-                , pos
-                )
-                "Resolution"
-        EmptyMatch ->
-            printErrorFromString
-                Nothing
-                ( "Empty match statement"
-                , Just "check for missing cases in the match statement"
-                , pos
-                )
-                "Resolution"
-        InvalidPatternUnion env1 env2 ->
-            printErrorFromString
-                Nothing
-                ( "Invalid pattern union between " <> show env1 <> " and " <> show env2
-                , Nothing
-                , pos
-                )
-                "Resolution"
-        InvalidHeader ty ->
-            printErrorFromString
-                Nothing
-                ( "Invalid header " <> show (toText ty)
-                , Just "try adding explicit annotations"
-                , pos
-                )
-                "Resolution"
-        InvalidUpdate ->
-            printErrorFromString
-                Nothing
-                ("Expected mutable type", Nothing, pos)
-                "Resolution"
-        UnexpectedRowType ty ->
-            printErrorFromString
-                Nothing
-                ("Unexpected row type " <> show (toText ty), Nothing, pos)
-                "Resolution"
-        CannotInsertLabel label' ->
-            printErrorFromString
-                Nothing
-                ( "Cannot insert label " <> show label'
-                , Just "check for missing field in the record"
                 , pos
                 )
                 "Resolution"
@@ -182,23 +105,12 @@ annotateErrorBundle bundle =
 data BonzaiError
     = ParseError P.ParseError
     | CyclicModuleDependency FilePath ImportStack
-    | ModuleNotFound FilePath ImportStack
+    | ModuleNotFound FilePath
     | VariableNotFound Text
     | CompilerError Text
     | UnificationFail HLIR.Type HLIR.Type
-    | ActorNotFound HLIR.Type
-    | NotAnActor HLIR.Type
-    | EventNotFound Text
-    | ExpectedAnActor HLIR.Type
     | InvalidArgumentQuantity Int Int
     | EnvironmentVariableNotFound Text
-    | InvalidConstructor Text
-    | EmptyMatch
-    | InvalidPatternUnion (Set Text) (Set Text)
-    | InvalidHeader HLIR.Type
-    | InvalidUpdate
-    | UnexpectedRowType HLIR.Type
-    | CannotInsertLabel Text
     deriving (Eq, Generic)
 
 instance Show BonzaiError where
@@ -209,27 +121,15 @@ instance Show BonzaiError where
             <> show (normalise path)
             <> "\nImport stack:\n - "
             <> intercalate "\n - " (map normalise stack)
-    show (ModuleNotFound path stack) =
+    show (ModuleNotFound path) =
         "Module "
             <> show (normalise path)
-            <> " not found\nImport stack:\n - "
-            <> intercalate "\n - " (map normalise stack)
+            <> " not found"
     show (VariableNotFound name) = "Variable " <> show name <> " not found"
     show (CompilerError msg) = "BONZAI INTERNAL ERROR: " <> show msg
     show (UnificationFail t1 t2) = "Expected " <> show (toText t1) <> ", but got " <> show (toText t2)
-    show (ActorNotFound name) = "Actor " <> show name <> " not found"
-    show (NotAnActor ty) = "Expected an actor, but received a " <> show (toText ty)
-    show (EventNotFound name) = "Event " <> show name <> " not found"
-    show (ExpectedAnActor ty) = "Expected an actor, but got " <> show (toText ty)
     show (InvalidArgumentQuantity n k) = "Invalid number of arguments, expected " <> show n <> ", received " <> show k
     show (EnvironmentVariableNotFound name) = "Environment variable " <> show name <> " not found"
-    show (InvalidConstructor name) = "Invalid constructor " <> show name
-    show EmptyMatch = "Empty match statement"
-    show (InvalidPatternUnion env1 env2) = "Invalid pattern union between " <> show env1 <> " and " <> show env2
-    show (InvalidHeader ty) = "Invalid header " <> show (toText ty)
-    show InvalidUpdate = "Invalid update"
-    show (UnexpectedRowType ty) = "Unexpected row type " <> show (toText ty)
-    show (CannotInsertLabel label') = "Cannot insert label " <> show label'
 
 showError :: P.ParseError -> String
 showError = P.errorBundlePretty
