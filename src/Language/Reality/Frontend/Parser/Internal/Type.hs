@@ -16,9 +16,18 @@ parseType =
           do
             ((start, _), _) <- Lex.reserved "fn"
             tys <- snd <$> Lex.parens (P.sepBy (snd <$> parseType) Lex.comma)
-            ((_, end), ret) <- Lex.symbol ":" *> parseType
+            ((_, end), ret) <- Lex.symbol "->" *> parseType
 
             pure ((start, end), tys HLIR.:->: ret)
+        , -- Pointer type constructor
+          -- Defined as the following:
+          --
+          -- "*" type
+          do
+            ((start, _), _) <- Lex.symbol "*"
+            ((_, end), ty) <- parseType
+
+            pure ((start, end), HLIR.MkTyPointer ty)
         , -- Tuple type constructor
           -- Defined as the following:
           --
