@@ -55,6 +55,8 @@ library
     Control.Color
     Control.Monad.Parser
     Control.Monad.Result
+    Language.Reality.Frontend.Import.Resolver
+    Language.Reality.Frontend.Module.Resolver
     Language.Reality.Frontend.Parser
     Language.Reality.Frontend.Parser.Expression
     Language.Reality.Frontend.Parser.Internal.Literal
