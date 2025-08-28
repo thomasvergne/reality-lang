@@ -129,10 +129,18 @@ parseExprBlock = do
     buildBlockFromList :: [HLIR.HLIR "expression"] -> HLIR.HLIR "expression"
     buildBlockFromList [] = HLIR.MkExprVariable (HLIR.MkAnnotation "unit" Nothing) []
     buildBlockFromList [x] = x
+    buildBlockFromList (HLIR.MkExprLetIn ann v b : xs)
+        | isUnit b = HLIR.MkExprLetIn ann v (buildBlockFromList xs)
+        | otherwise = HLIR.MkExprLetIn ann v (buildBlockFromList (b : xs))
     buildBlockFromList (HLIR.MkExprLocated p e : xs) =
         HLIR.MkExprLocated p (buildBlockFromList (e : xs))
     buildBlockFromList (x : xs) =
         HLIR.MkExprLetIn (HLIR.MkAnnotation "_" Nothing) x (buildBlockFromList xs)
+
+    isUnit :: HLIR.HLIR "expression" -> Bool
+    isUnit (HLIR.MkExprVariable (HLIR.MkAnnotation "unit" _) _) = True
+    isUnit (HLIR.MkExprLocated _ e) = isUnit e
+    isUnit _ = False
 
 -- | PARSE LAMBDA EXPRESSION
 -- | Parse a lambda expression. A lambda expression is an expression that consists
