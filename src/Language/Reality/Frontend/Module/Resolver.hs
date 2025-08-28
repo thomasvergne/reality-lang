@@ -46,46 +46,52 @@ resolveModuleSingular (HLIR.MkTopModuleDeclaration name body) paths =
 resolveModuleSingular (HLIR.MkTopConstantDeclaration (HLIR.MkAnnotation name ty) expr) paths = do
     let newName = createName paths name
     pure [HLIR.MkTopConstantDeclaration (HLIR.MkAnnotation newName ty) expr]
-resolveModuleSingular ( HLIR.MkTopFunctionDeclaration
-                            { HLIR.name = (HLIR.MkAnnotation name generics)
-                            , HLIR.parameters = params
-                            , HLIR.returnType = ret
-                            , HLIR.body = body
-                            }
-                        ) paths = do
-    let newName = createName paths name
-    pure
-        [ HLIR.MkTopFunctionDeclaration
-            { HLIR.name = HLIR.MkAnnotation newName generics
+resolveModuleSingular
+    ( HLIR.MkTopFunctionDeclaration
+            { HLIR.name = (HLIR.MkAnnotation name generics)
             , HLIR.parameters = params
             , HLIR.returnType = ret
             , HLIR.body = body
             }
-        ]
-resolveModuleSingular ( HLIR.MkTopTypeAlias
-                            { HLIR.name = HLIR.MkAnnotation name generics
-                            , HLIR.typeValue = typeValue
-                            }
-                        ) paths = do
-    let newName = createName paths name
-    pure
-        [ HLIR.MkTopTypeAlias
-            { HLIR.name = HLIR.MkAnnotation newName generics
+        )
+    paths = do
+        let newName = createName paths name
+        pure
+            [ HLIR.MkTopFunctionDeclaration
+                { HLIR.name = HLIR.MkAnnotation newName generics
+                , HLIR.parameters = params
+                , HLIR.returnType = ret
+                , HLIR.body = body
+                }
+            ]
+resolveModuleSingular
+    ( HLIR.MkTopTypeAlias
+            { HLIR.name = HLIR.MkAnnotation name generics
             , HLIR.typeValue = typeValue
             }
-        ]
-resolveModuleSingular ( HLIR.MkTopStructureDeclaration
-                            { HLIR.header = HLIR.MkAnnotation name generics
-                            , HLIR.fields = fields
-                            }
-                        ) paths = do
-    let newName = createName paths name
-    pure
-        [ HLIR.MkTopStructureDeclaration
-            { HLIR.header = HLIR.MkAnnotation newName generics
+        )
+    paths = do
+        let newName = createName paths name
+        pure
+            [ HLIR.MkTopTypeAlias
+                { HLIR.name = HLIR.MkAnnotation newName generics
+                , HLIR.typeValue = typeValue
+                }
+            ]
+resolveModuleSingular
+    ( HLIR.MkTopStructureDeclaration
+            { HLIR.header = HLIR.MkAnnotation name generics
             , HLIR.fields = fields
             }
-        ]
+        )
+    paths = do
+        let newName = createName paths name
+        pure
+            [ HLIR.MkTopStructureDeclaration
+                { HLIR.header = HLIR.MkAnnotation newName generics
+                , HLIR.fields = fields
+                }
+            ]
 resolveModuleSingular (HLIR.MkTopPublic node) paths = do
     resolved <- resolveModuleSingular node paths
     pure (map HLIR.MkTopPublic resolved)
@@ -95,7 +101,7 @@ resolveModuleSingular node _ = pure [node]
 -- | For example, if the paths are ["MyModule", "SubModule"] and the name is "MyType",
 -- | the resulting name will be "MyModule::SubModule::MyType".
 createName :: Paths -> Text -> Text
-createName paths name =  Text.intercalate "::" (paths ++ [name])
+createName paths name = Text.intercalate "::" (paths ++ [name])
 
 -- | Type alias for module paths
 -- | Paths represents the hierarchical path of modules,
