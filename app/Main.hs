@@ -2,9 +2,10 @@ module Main where
 
 import Control.Color
 import Control.Monad.Result
+import Language.Reality.Frontend.Import.Resolver qualified as IR
+import Language.Reality.Frontend.Module.Resolver qualified as MR
 import Language.Reality.Frontend.Parser hiding (parseError)
 import Language.Reality.Frontend.Parser.Toplevel qualified as T
-import Language.Reality.Frontend.Import.Resolver qualified as IR
 import System.Directory
 import System.FilePath
 
@@ -21,7 +22,9 @@ main = do
             irResult <- runExceptT $ IR.runImportResolver cwd ast
 
             handle irResult $ \ir -> do
-                mapM_ printText ir
+                mrResult <- runExceptT $ MR.runModuleResolver ir
 
+                handle mrResult $ \mr -> do
+                    mapM_ printText mr
         Left err -> do
             parseError err file (Just fileContent)
