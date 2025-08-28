@@ -1,0 +1,10 @@
+cradle:
+  cabal:
+    - path: "./src"
+      component: "lib:reality"
+
+    - path: "./app/Main.hs"
+      component: "reality:exe:reality"
+
+    - path: "./test"
+      component: "reality:test:reality-test"
