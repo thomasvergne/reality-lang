@@ -152,7 +152,7 @@ parseExprLambda = do
     returnType <- P.optional $ Lex.symbol "->" *> (snd <$> Typ.parseType)
 
     ((_, end), body) <- case returnType of
-        Just _  -> parseExprBlock
+        Just _ -> parseExprBlock
         Nothing -> parseExprFull
 
     pure ((start, end), HLIR.MkExprLambda params returnType body)
