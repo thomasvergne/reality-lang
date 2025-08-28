@@ -8,7 +8,7 @@ import Data.Text qualified as T
 -- | quantified types to names in a type signature.
 data Annotation a = MkAnnotation
     { name :: Text
-    , value :: a
+    , typeValue :: a
     }
     deriving (Ord, Show, Generic)
 

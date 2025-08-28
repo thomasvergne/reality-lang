@@ -61,8 +61,8 @@ data TyVar
 -- |
 -- | It may not contains free variables, in other words, all variables mustn't
 -- | escape the scope of the quantifiers.
-data Scheme = Forall [QuVar] Type
-    deriving (Eq, Show)
+data Scheme t = Forall [QuVar] t
+    deriving (Eq, Ord, Show)
 
 -- | EQUALITY INSTANCE FOR TYPE
 -- | Equality instance is not trivially derivable for the Type type because it contains
@@ -101,10 +101,10 @@ pattern args :->: retTy = MkTyFun args retTy
 -- | basic types such as integers, floats, characters, strings, booleans, and
 -- | unit.
 pattern MkTyInt, MkTyFloat, MkTyChar, MkTyString, MkTyBool, MkTyUnit :: Type
-pattern MkTyInt = MkTyId "int"
-pattern MkTyFloat = MkTyId "float"
+pattern MkTyInt = MkTyId "i32"
+pattern MkTyFloat = MkTyId "f32"
 pattern MkTyChar = MkTyId "char"
-pattern MkTyString = MkTyId "string"
+pattern MkTyString = MkTyPointer (MkTyId "char")
 pattern MkTyBool = MkTyId "bool"
 pattern MkTyUnit = MkTyId "unit"
 
@@ -165,7 +165,7 @@ instance ToText (Maybe Type) where
     toText (Just a) = toText a
     toText Nothing = "infer"
 
-instance ToText Scheme where
+instance ToText t => ToText (Scheme t) where
     toText (Forall a b) = T.concat ["forall ", T.intercalate ", " a, ". ", toText b]
 
 instance ToText (Identity Type) where

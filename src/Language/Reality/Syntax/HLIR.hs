@@ -80,7 +80,7 @@ data Toplevel f t
     | MkTopImport [Text]
     | MkTopTypeAlias
         { name :: Ann.Annotation [Text]
-        , typeValue :: t
+        , boundType :: t
         }
     | MkTopPublic (Toplevel f t)
     | MkTopModuleDeclaration
@@ -188,7 +188,7 @@ instance (ToText (f t), ToText t) => ToText (Toplevel f t) where
             [ "fn "
             , name.name
             , "["
-            , T.intercalate ", " name.value
+            , T.intercalate ", " name.typeValue
             , "]"
             , "("
             , T.intercalate ", " (map toText params)
@@ -205,7 +205,7 @@ instance (ToText (f t), ToText t) => ToText (Toplevel f t) where
             [ "type "
             , name.name
             , "["
-            , T.intercalate ", " name.value
+            , T.intercalate ", " name.typeValue
             , "]"
             , " = "
             , toText typeValue
@@ -226,7 +226,7 @@ instance (ToText (f t), ToText t) => ToText (Toplevel f t) where
                 [ "struct "
                 , header.name
                 , "["
-                , T.intercalate ", " header.value
+                , T.intercalate ", " header.typeValue
                 , "]"
                 , " { "
                 , T.intercalate ", " fieldTexts
@@ -237,7 +237,7 @@ instance (ToText (f t), ToText t) => ToText (Toplevel f t) where
             [ "extern fn "
             , name.name
             , "["
-            , T.intercalate ", " name.value
+            , T.intercalate ", " name.typeValue
             , "]"
             , "("
             , T.intercalate ", " (map toText params)
