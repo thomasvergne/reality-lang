@@ -71,8 +71,40 @@ removeAliases (HLIR.MkTyAnonymousStructure fields) = do
 removeAliases (HLIR.MkTyApp base args) =
     HLIR.MkTyApp <$> removeAliases base <*> mapM removeAliases args
 
+-- | Should the unification mutate the type variables
+-- | - If True, the type variables will be mutated to point to the unified type.
+-- | - If False, the type variables will not be mutated, and only a substitution
+-- |   will be returned.
 type ShouldMutate = Bool
 
+-- | APPLY SUBTYPE RELATION
+-- | Apply the subtype relation between two types.
+-- | This function takes two types, and returns a substitution that makes the first
+-- | type a subtype of the second type.
+-- | If the types are not compatible, it throws a TypeMismatch error.
+-- | The ShouldMutate parameter indicates whether the type variables should be mutated
+-- | to point to the unified type.
+-- |
+-- | The rules for subtyping are as follows:
+-- | - Function types are contravariant in their arguments and covariant in their return type :
+-- |   A1 -> R1 <: A2 -> R2 if A2 <: A1 and R1 <: R2
+-- |
+-- | - Type variables can be unified with any type, as long as they do not create
+-- |   a cyclic dependency.
+-- |
+-- | - Type applications are covariant in their arguments:
+-- |   F[A1, A2, ..., An] <: F[B1, B2, ..., Bn] if Ai <: Bi for all i
+-- |
+-- | - Named types are equal if they have the same name, or if they are both integer
+-- |   types with the same or compatible sizes (e.g., i32 <: i64).
+-- |   Similarly for unsigned integer types (u8, u16, u32, u64, u128)
+-- |   and floating-point types (f16, f32, f64, f128).
+-- |   An integer type can be a subtype of an unsigned integer type if its size
+-- |   is strictly less (e.g., i32 <: u64).
+-- |
+-- |   It should normally check by bound checking but for simplicity we just check sizes here.
+-- |
+-- | - All other types must be exactly equal to be considered subtypes.
 applySubtypeRelation ::
     (MonadIO m, M.MonadError M.Error m) =>
     ShouldMutate ->
@@ -141,6 +173,12 @@ applySubtypeRelation _ (HLIR.MkTyId name1) (HLIR.MkTyId name2)
 applySubtypeRelation _ t1 t2 | t1 /= t2 = M.throw (M.UnificationFail t1 t2)
 applySubtypeRelation _ _ _ = pure Map.empty
 
+-- | OCCURS CHECK
+-- | Check if a type variable occurs in a type.
+-- | This is used to prevent cyclic dependencies when unifying types.
+-- | This function takes a type variable name and a type, and throws a CyclicTypeVariable
+-- | error if the type variable occurs in the type.
+-- | Otherwise, it does nothing.
 occursCheck :: (MonadIO m, M.MonadError M.Error m) => Text -> HLIR.Type -> m ()
 occursCheck name t@(HLIR.MkTyVar ref) = do
     ty <- readIORef ref
@@ -154,6 +192,12 @@ occursCheck name (HLIR.MkTyApp base args) = do
     mapM_ (occursCheck name) args
 occursCheck _ _ = pure ()
 
+-- | GET INTEGER PART
+-- | Get the size of an integer type.
+-- | This is used to check if an integer type can be a subtype of another integer type.
+-- | This function takes a type, and returns the size of the integer type if it is
+-- | an integer type, or Nothing otherwise.
+-- | It supports the following integer types: i8, i16, i32, i64, i128.
 getIntegerPart :: HLIR.Type -> Maybe Int
 getIntegerPart (HLIR.MkTyId "i8") = Just 8
 getIntegerPart (HLIR.MkTyId "i16") = Just 16
@@ -162,6 +206,13 @@ getIntegerPart (HLIR.MkTyId "i64") = Just 64
 getIntegerPart (HLIR.MkTyId "i128") = Just 128
 getIntegerPart _ = Nothing
 
+-- | GET UNSIGNED INTEGER PART
+-- | Get the size of an unsigned integer type.
+-- | This is used to check if an unsigned integer type can be a subtype of another
+-- | unsigned integer type.
+-- | This function takes a type, and returns the size of the unsigned integer type
+-- | if it is an unsigned integer type, or Nothing otherwise.
+-- | It supports the following unsigned integer types: u8, u16, u32, u64, u128.
 getUnsignedIntegerPart :: HLIR.Type -> Maybe Int
 getUnsignedIntegerPart (HLIR.MkTyId "u8") = Just 8
 getUnsignedIntegerPart (HLIR.MkTyId "u16") = Just 16
@@ -170,6 +221,13 @@ getUnsignedIntegerPart (HLIR.MkTyId "u64") = Just 64
 getUnsignedIntegerPart (HLIR.MkTyId "u128") = Just 128
 getUnsignedIntegerPart _ = Nothing
 
+-- | GET FLOAT PART
+-- | Get the size of a floating-point type.
+-- | This is used to check if a floating-point type can be a subtype of another
+-- | floating-point type.
+-- | This function takes a type, and returns the size of the floating-point type
+-- | if it is a floating-point type, or Nothing otherwise.
+-- | It supports the following floating-point types: f16, f32, f64, f128.
 getFloatPart :: HLIR.Type -> Maybe Int
 getFloatPart (HLIR.MkTyId "f16") = Just 16
 getFloatPart (HLIR.MkTyId "f32") = Just 32

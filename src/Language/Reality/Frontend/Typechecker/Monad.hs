@@ -5,6 +5,18 @@ import Data.Text qualified as Text
 import GHC.IO qualified as IO
 import Language.Reality.Syntax.HLIR qualified as HLIR
 
+-- | The state of the type checker monad.
+-- | This state includes:
+-- |
+-- | - A counter for generating fresh type variables.
+-- | - The current type environment.
+-- | - The current type aliases.
+-- | - The current structures.
+-- | - The current implementations.
+-- | - The current properties.
+-- |
+-- | This state is used to keep track of the type information during type checking.
+-- | It is stored in an IORef to allow for mutable state in the type checker monad.
 data CheckerState = CheckerState
     { counter :: IORef Int
     , environment :: Map Text (HLIR.Scheme HLIR.Type)
@@ -15,9 +27,25 @@ data CheckerState = CheckerState
     }
     deriving (Eq, Ord, Generic)
 
+-- | SUBSTITUTION TYPE
+-- | A substitution is a mapping from type variables to types. It is used to
+-- | represent the result of unification or type inference.
 type Substitution = Map Text HLIR.Type
+
+-- | CONSTRAINTS TYPE
+-- | A constraint is a tuple of a variable name, a type, and a position.
+-- | It is used to represent a type constraint that needs to be satisfied.
+-- | For instance a constraint can represent that a variable must have a certain type.
+-- | This is mainly used during type inference to resolve implementation constraints.
 type Constraints = [(Text, HLIR.Type, HLIR.Position)]
 
+-- | WITH ENVIRONMENT
+-- | Temporarily extend the type environment with a new mapping.
+-- | This is used to typecheck a function body with the function's parameters
+-- | in scope.
+-- | The environment is restored to its previous state after the action is completed.
+-- | This function takes a mapping from variable names to type schemes, and an action
+-- | to perform with the extended environment.
 withEnvironment :: (MonadIO m) => Map Text (HLIR.Scheme HLIR.Type) -> m a -> m a
 withEnvironment env action = do
     ref <- liftIO $ readIORef defaultCheckerState
@@ -41,6 +69,11 @@ defaultCheckerState = IO.unsafePerformIO $ do
             , properties = Map.empty
             }
 
+-- | NEW SYMBOL
+-- | Generate a new unique symbol with the given prefix.
+-- | This is used to generate fresh type variables during type inference.
+-- | The generated symbol is guaranteed to be unique within the current type checker
+-- | state.
 newSymbol :: (MonadIO m) => Text -> m Text
 newSymbol prefix = do
     ref <- liftIO $ readIORef defaultCheckerState
@@ -51,12 +84,22 @@ newSymbol prefix = do
 
     pure $ prefix <> Text.pack (show i)
 
+-- | NEW TYPE
+-- | Generate a new fresh type variable.
+-- | The generated type variable is guaranteed to be unique within the current type
+-- | checker state.
+-- | This function uses `newSymbol` to generate a unique name for the type variable,
+-- | and then creates a new `IORef` to hold the type variable's state.
 newType :: (MonadIO m) => m HLIR.Type
 newType = do
     sym <- newSymbol "t"
     ioref <- newIORef (HLIR.Unbound sym 0)
     pure $ HLIR.MkTyVar ioref
 
+-- | RESET STATE
+-- | Reset the type checker state to its initial state.
+-- | This is used to clear the type checker state between different type checking
+-- | runs, if needed.
 resetState :: (MonadIO m) => m ()
 resetState = do
     liftIO
@@ -71,6 +114,10 @@ resetState = do
                 , properties = Map.empty
                 }
 
+-- | INSTANTIATE AND SUB
+-- | Instantiate a type scheme by replacing its quantified variables with fresh type
+-- | variables.
+-- | It also returns the substitution used for the instantiation.
 instantiateAndSub ::
     (MonadIO m) => HLIR.Scheme HLIR.Type -> m (HLIR.Type, Map Text HLIR.Type)
 instantiateAndSub (HLIR.Forall qvars schemeTy) = do
@@ -81,6 +128,10 @@ instantiateAndSub (HLIR.Forall qvars schemeTy) = do
 
     pure (ty, s)
 
+-- | INSTANTIATE MAP AND SUB
+-- | Instantiate a type scheme that contains a map of types by replacing its quantified
+-- | variables with fresh type variables.
+-- | It also returns the substitution used for the instantiation.
 instantiateMapAndSub ::
     (MonadIO m) =>
     HLIR.Scheme (Map Text HLIR.Type) -> m (Map Text HLIR.Type, Map Text HLIR.Type)
@@ -91,6 +142,9 @@ instantiateMapAndSub (HLIR.Forall qvars schemeTy) = do
 
     pure (ty, s)
 
+-- | INSTANTIATE WITH SUB
+-- | Instantiate a type scheme by replacing its quantified variables with the given
+-- | types.
 instantiateWithSub ::
     (MonadIO m) => HLIR.Scheme HLIR.Type -> [HLIR.Type] -> m HLIR.Type
 instantiateWithSub (HLIR.Forall qvars schemeTy) types = do
@@ -100,13 +154,24 @@ instantiateWithSub (HLIR.Forall qvars schemeTy) types = do
     let s' = Map.fromList (subst ++ zip rest newVars)
     applySubstitution s' schemeTy
 
+-- | INSTANTIATE
+-- | Instantiate a type scheme by replacing its quantified variables with fresh type
+-- | variables.
 instantiate :: (MonadIO m) => HLIR.Scheme HLIR.Type -> m HLIR.Type
 instantiate (HLIR.Forall qvars schemeTy) = fst <$> instantiateAndSub (HLIR.Forall qvars schemeTy)
 
+-- | INSTANTIATE MAP
+-- | Instantiate a type scheme that contains a map of types by replacing its quantified
+-- | variables with fresh type variables.
 instantiateMap ::
     (MonadIO m) => HLIR.Scheme (Map Text HLIR.Type) -> m (Map Text HLIR.Type)
 instantiateMap (HLIR.Forall qvars schemeTy) = fst <$> instantiateMapAndSub (HLIR.Forall qvars schemeTy)
 
+-- | APPLY SUBSTITUTION
+-- | Apply a substitution to a type, replacing all occurrences of the type variables
+-- | in the substitution with their corresponding types.
+-- | This function recursively traverses the type and applies the substitution to
+-- | all type variables and type applications.
 applySubstitution ::
     (MonadIO m) => Map Text HLIR.Type -> HLIR.Type -> m HLIR.Type
 applySubstitution s (HLIR.MkTyVar tvr) = do

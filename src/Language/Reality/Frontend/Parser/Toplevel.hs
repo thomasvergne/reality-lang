@@ -9,6 +9,13 @@ import Language.Reality.Frontend.Parser.Lexer qualified as Lex
 import Language.Reality.Syntax.HLIR qualified as HLIR
 import Text.Megaparsec.Char qualified as P
 
+-- | PARSE CONSTANT DECLARATION NODE
+-- | A constant declaration node is a top-level construct that defines a
+-- | constant value. Constants are defined using the `const` keyword.
+-- | Constants are similar to variables, but they cannot be reassigned.
+-- | Constants are defined as follows:
+-- |
+-- | - const <name>: <type> = <expression>
 parseTopConstantDeclaration ::
     (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "toplevel")
 parseTopConstantDeclaration = do
@@ -18,6 +25,12 @@ parseTopConstantDeclaration = do
 
     pure ((start, end), HLIR.MkTopConstantDeclaration idt expr)
 
+-- | PARSE FUNCTION DECLARATION NODE
+-- | A function declaration node is a top-level construct that defines a
+-- | function. Functions are defined using the `fn` keyword.
+-- | Functions are defined as follows:
+-- |
+-- | - fn <name>[<generic>*](<param>*): <return type> { <body> }
 parseTopFunctionDeclaration ::
     (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "toplevel")
 parseTopFunctionDeclaration = do
@@ -45,6 +58,13 @@ parseTopFunctionDeclaration = do
             }
         )
 
+-- | PARSE TYPE ALIAS NODE
+-- | A type alias node is a top-level construct that defines a type
+-- | alias. Type aliases are defined using the `type` keyword.
+-- | Type aliases are similar to typedefs in C/C++ or type aliases in
+-- | TypeScript. They are defined as follows:
+-- |
+-- | - type <name>[<generic>*] = <type>
 parseTopTypeAlias ::
     (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "toplevel")
 parseTopTypeAlias = do
@@ -66,6 +86,14 @@ parseTopTypeAlias = do
             }
         )
 
+-- | PARSE IMPORT NODE
+-- | An import node is a top-level construct that defines an import
+-- | statement. Import statements are defined using the `import` keyword.
+-- | Import statements are similar to import statements in Rust.
+-- | They are defined as follows:
+-- |
+-- | - import <module>::<submodule>::...::<name>
+-- | - import *::<submodule>::...::<name>
 parseTopImport ::
     (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "toplevel")
 parseTopImport = do
@@ -78,6 +106,13 @@ parseTopImport = do
 
     pure ((start, lastPosition), HLIR.MkTopImport moduleParts)
 
+-- | PARSE PUBLIC NODE
+-- | A public node is a top-level construct that defines a public
+-- | declaration. Public declarations are defined using the `pub` keyword.
+-- | Public declarations are similar to public declarations in Rust.
+-- | They are defined as follows:
+-- |
+-- | - pub <declaration>
 parseTopPublic ::
     (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "toplevel")
 parseTopPublic = do
@@ -85,6 +120,12 @@ parseTopPublic = do
     (pos, node) <- parseTopFull
     pure ((start, snd pos), HLIR.MkTopPublic node)
 
+-- | PARSE MODULE DECLARATION NODE
+-- | A module declaration node is a top-level construct that defines a
+-- | module. Modules are defined using the `mod` keyword.
+-- | Modules are similar to modules in Rust. They are defined as follows:
+-- |
+-- | - mod <name> { <declaration>* }
 parseTopModuleDeclaration ::
     (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "toplevel")
 parseTopModuleDeclaration = do
@@ -94,6 +135,12 @@ parseTopModuleDeclaration = do
         Lex.braces (P.many (snd <$> parseTopFull <* P.optional Lex.semi))
     pure ((start, end), HLIR.MkTopModuleDeclaration idt nodes)
 
+-- | PARSE STRUCTURE DECLARATION NODE
+-- | A structure declaration node is a top-level construct that defines a
+-- | structure. Structures are defined using the `struct` keyword.
+-- | Structures are similar to structs in Rust. They are defined as follows:
+-- |
+-- | - struct <name>[<generic>*] { <field>: <type>, ... }
 parseTopStructureDeclaration ::
     (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "toplevel")
 parseTopStructureDeclaration = do
@@ -120,6 +167,14 @@ parseTopStructureDeclaration = do
         ty <- snd <$> Typ.parseType
         pure (name, ty)
 
+-- | PARSE EXTERNAL FUNCTION NODE
+-- | An external function node is a top-level construct that defines an
+-- | external function. External functions are defined using the `extern`
+-- | keyword.
+-- | External functions are similar to function declarations, but they do
+-- | not have a body. They are defined as follows:
+-- |
+-- | - extern fn <name>[<generic>*](<param>*): <return type>
 parseTopExternalFunction ::
     (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "toplevel")
 parseTopExternalFunction = do

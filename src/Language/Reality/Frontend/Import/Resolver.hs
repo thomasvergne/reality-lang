@@ -1,4 +1,6 @@
-module Language.Reality.Frontend.Import.Resolver where
+module Language.Reality.Frontend.Import.Resolver (
+    runImportResolver,
+) where
 
 import Control.Monad.Except qualified as M
 import Control.Monad.Result qualified as M
@@ -65,6 +67,12 @@ resolveSingularNode (HLIR.MkTopLocated p n) = do
     void HLIR.popPosition
 
     pure $ map (HLIR.MkTopLocated p) nodes
+resolveSingularNode (HLIR.MkTopModuleDeclaration name body) = do
+    resolvedBody <- resolveImports body
+    pure [HLIR.MkTopModuleDeclaration name resolvedBody]
+resolveSingularNode (HLIR.MkTopPublic n) = do
+    resolved <- resolveSingularNode n
+    pure (map HLIR.MkTopPublic resolved)
 resolveSingularNode n = pure [n]
 
 -- | Visit a module to resolve its imports.
@@ -128,6 +136,21 @@ visitModule absPath pkgName flatten = do
 -- | Flatten one leve of modules
 -- | This function takes a list of toplevel nodes, and returns a list of toplevel
 -- | nodes with all modules flattened one level.
+-- | For instance, the following structure:
+-- |
+-- | mod A {
+-- |    mod B {
+-- |        const x = 1;
+-- |    }
+-- |    const y = 2;
+-- | }
+-- |
+-- | Maybe be converted to:
+-- |
+-- | mod B {
+-- |    const x = 1;
+-- | }
+-- | const y = 2;
 flattenOneLevel ::
     (MonadIO m, M.MonadError M.Error m) =>
     [HLIR.HLIR "toplevel"] ->
@@ -149,17 +172,46 @@ flattenOneLevel [] = pure []
 -- | These types are used to keep track of the state of the module resolution
 -- | process.
 -- | They are not exposed outside of this module.
+
+-- | An absolute path is a file path that is absolute, i.e. it starts from the root
+-- | of the file system. We use this to uniquely identify modules.
 type AbsolutePath = FilePath
 
+-- | A package name is a string that uniquely identifies a package. We use this to
+-- | keep track of which package a module belongs to.
+-- | For instance, the package name for the module `Data.List` is `Data::List`.
 type PackageName = Text
+
+-- | A flatten module is a boolean that indicates whether to flatten the module or not.
+-- | If true, the module will be flattened one level, i.e. all modules within the module
+-- | will be lifted to the top level.
 type FlattenModule = Bool
 
+-- | MODULE STATE
+-- | The module state is used to keep track of the state of each module during the
+-- | resolution process. This is used to detect cyclic dependencies and to avoid
+-- | reprocessing modules that have already been processed.
+-- | The module state is stored in an IORef, which allows us to modify it during the
+-- | resolution process.
 data ModuleVisitState
     = Unvisited
     | Visiting
     | Visited
     deriving (Eq, Show)
 
+-- | A module is a file that contains a set of toplevel nodes. We keep track of the
+-- | module's path, package name, visit state, and toplevel nodes.
+-- | - The module's path is used to uniquely identify the module, and the package name
+-- |   is used to keep track of which package the module belongs to.
+-- |
+-- | - The visit state is used to detect cyclic dependencies, and the toplevel nodes are
+-- |   the actual content of the module.
+-- |
+-- | - The module state is stored in an IORef, which allows us to modify it during the
+-- |   resolution process.
+-- |
+-- | - The toplevel nodes are stored as a list of HLIR toplevel nodes, which allows us
+-- |   to easily manipulate them during the resolution process.
 data Module = Module
     { modPath :: AbsolutePath
     , modPackage :: PackageName
@@ -168,6 +220,11 @@ data Module = Module
     }
     deriving (Eq)
 
+-- | The module state is a map from module paths to modules, along with the current
+-- | working directory. This allows us to easily look up modules by their path, and
+-- | to keep track of the current working directory during the resolution process.
+-- | The module state is stored in an IORef, which allows us to modify it during the
+-- | resolution process.
 data ModuleState = ModuleState
     { modules :: Map AbsolutePath Module
     , cwd :: AbsolutePath
@@ -177,6 +234,12 @@ data ModuleState = ModuleState
 defaultModuleState :: IORef ModuleState
 defaultModuleState = IO.unsafePerformIO . newIORef $ ModuleState mempty "."
 
+-- | UTILITY FUNCTIONS
+-- | These functions are used to manipulate the module state.
+-- | They are not exposed outside of this module.
+-- | They are used internally by the import resolver.
+-- | They are used to add new modules, update module states, and update module
+-- | toplevels.
 addNewModule :: (MonadIO m) => Module -> m ()
 addNewModule newModule = do
     modifyIORef defaultModuleState $ \s ->
