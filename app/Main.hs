@@ -2,6 +2,7 @@ module Main where
 
 import Control.Color
 import Control.Monad.Result
+import Language.Reality.Backend.Closure.Converter qualified as CC
 import Language.Reality.Backend.Specialization.Resolver qualified as SR
 import Language.Reality.Frontend.Import.Resolver qualified as IR
 import Language.Reality.Frontend.Module.Resolver qualified as MR
@@ -31,8 +32,9 @@ main = do
 
                     handle tcResult $ \tlir -> do
                         srResult <- runExceptT $ SR.runSpecializationResolver tlir
-
                         handle srResult $ \slir -> do
-                            mapM_ printText slir
+                            ccAst <- CC.convertProgram slir
+
+                            mapM_ printText ccAst
         Left err -> do
             parseError err file (Just fileContent)
