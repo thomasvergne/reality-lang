@@ -47,6 +47,8 @@ resolveSpecializationSingular (HLIR.MkTopConstantDeclaration ann expr) = do
     (typedExpr, newDefs) <- resolveSpecializationInExpr expr
     pure (Just $ HLIR.MkTopConstantDeclaration ann typedExpr, newDefs)
 resolveSpecializationSingular node@(HLIR.MkTopFunctionDeclaration ann params ret body)
+    -- If no generics are found, we can directly resolve the function body
+    -- and return the typed function declaration.
     | null ann.typeValue = do
         (specParams, newDefs) <-
             mapAndUnzipM
@@ -65,6 +67,9 @@ resolveSpecializationSingular node@(HLIR.MkTopFunctionDeclaration ann params ret
             ( Just $ HLIR.MkTopFunctionDeclaration ann specParams specRet typedBody
             , allNewDefs
             )
+
+    -- Otherwise, we register the function in the specialization state
+    -- to be used later when resolving specialized calls.
     | otherwise = do
         let paramTypes = map (.typeValue) params
             funcType = paramTypes HLIR.:->: ret
@@ -203,6 +208,8 @@ resolveSpecializationInExpr (HLIR.MkExprSizeOf t) = do
 -- | Apply a substitution to all types in an expression.
 -- | This function takes a substitution map and an expression, and returns
 -- | an expression with the substitution applied to all types.
+-- | The expected behavior is that all types in the expression are replaced
+-- | according to the substitution map.
 applySubstInExpr ::
     (MonadIO m) =>
     Map Text HLIR.Type -> HLIR.TLIR "expression" -> m (HLIR.TLIR "expression")
@@ -271,11 +278,19 @@ resolveSpecializationForIdentifier ::
 resolveSpecializationForIdentifier (HLIR.MkAnnotation name (Identity ty)) = do
     specState <- liftIO $ readIORef defaultSpecializer
 
+    -- Fetching the variable scheme if it exists, and also the toplevel
+    -- declaration associated with it.
     case Map.lookup name (variables specState) of
         Just (scheme@(HLIR.Forall qvars _), toplevel) -> do
+            -- Instantiating the scheme to get a concrete type and a substitution
+            -- that maps the quantified variables to concrete types.
             (schemeType, subst) <- M.instantiateAndSub scheme
             void $ ty `M.isSubtypeOf` schemeType
 
+            -- Checking if the toplevel is a function declaration.
+            -- If it is not, there must be an error somewhere else, because
+            -- only functions can be specialized as they're the only nodes
+            -- to capture generics.
             case toplevel of
                 HLIR.MkTopFunctionDeclaration
                     { parameters
@@ -283,14 +298,31 @@ resolveSpecializationForIdentifier (HLIR.MkAnnotation name (Identity ty)) = do
                     , body
                     , name = _
                     } -> do
+                        -- Re-ordering the resolved types according to the scheme quantified
+                        -- variables to create a consistent name
+                        -- (e.g., f_a_b and f_b_a should not refer to the same specialization)
+                        -- This is important to avoid duplicating work and creating
+                        -- wrong specializations.
                         let orderedVars = flip map qvars $ \var -> Map.findWithDefault (HLIR.MkTyQuantified var) var subst
-                        let newName = name <> "_" <> Text.intercalate "_" (map toText orderedVars)
+                            newName = name <> "_" <> Text.intercalate "_" (map toText orderedVars)
 
+                        -- Checking if we already created this specialization
+                        -- to avoid duplicating work.
                         if Set.member newName specState.rememberedVariables
                             then do
                                 let newAnn = HLIR.MkAnnotation newName (Identity ty)
                                 pure (newAnn, [])
                             else do
+                                -- Marking this specialization as created
+                                modifyIORef' defaultSpecializer $ \s ->
+                                    s{rememberedVariables = Set.insert newName s.rememberedVariables}
+
+                                -- Applying the substitution to the parameters, return type, and body
+                                -- of the function.
+                                -- This creates the specialized version of the function.
+                                -- Note that we also need to recursively resolve specializations
+                                -- in the body, as it may contain calls to other specialized functions.
+                                -- This ensures that the entire function is correctly specialized.
                                 specParameters <- Trav.for parameters $ \(HLIR.MkAnnotation paramName paramType) -> do
                                     newParamType <- M.applySubstitution subst paramType
                                     pure (HLIR.MkAnnotation paramName newParamType)
@@ -300,6 +332,8 @@ resolveSpecializationForIdentifier (HLIR.MkAnnotation name (Identity ty)) = do
                                 newBody <- applySubstInExpr subst body
                                 (specBody, newDefs) <- resolveSpecializationInExpr newBody
 
+                                -- Creating the new specialized function declaration
+                                -- with the new name and specialized types.
                                 let newFunction =
                                         HLIR.MkTopFunctionDeclaration
                                             { HLIR.name = HLIR.MkAnnotation newName []
@@ -308,8 +342,12 @@ resolveSpecializationForIdentifier (HLIR.MkAnnotation name (Identity ty)) = do
                                             , HLIR.body = specBody
                                             }
 
+                                -- Combining all new definitions obtained during the resolution
+                                -- including the new specialized function.
                                 let allNewDefs = newDefs ++ [newFunction]
 
+                                -- Building the new annotation type for the specialized function.
+                                -- This is important for further type checking and resolution.
                                 let funcType = map (.typeValue) specParameters HLIR.:->: specReturnType
 
                                 pure (HLIR.MkAnnotation newName (Identity funcType), allNewDefs)
@@ -324,10 +362,22 @@ resolveSpecializationForImplementation ::
 resolveSpecializationForImplementation name ty = do
     specState <- liftIO $ readIORef defaultSpecializer
 
+    -- Look for an implementation that matches the name and type
+    -- Algorithm:
+    -- 1. For each implementation with the same name
+    -- 2. Instantiate its scheme to get a concrete type and a substitution
+    -- 3. Check if the concrete type is a subtype of the given type
+    -- 4. If it is, return the implementation, substitution, and scheme
+    -- 5. If none match, return Nothing
     result1 <-
         findImplementationMatching (Map.toList specState.implementations) name ty
+
+    -- Also look for a property with the same name
+    -- This is used to create the correct name according to the
+    -- property type variables.
     let result2 = Map.lookup name specState.properties
 
+    -- Combining both results to get the final result
     let result = case (result1, result2) of
             (Just (node, subst, scheme), Just propScheme) ->
                 Just (node, subst, scheme, propScheme)
@@ -335,12 +385,18 @@ resolveSpecializationForImplementation name ty = do
 
     case result of
         Just (node, implSubst, _, propScheme@(HLIR.Forall qvars _)) -> do
+            -- Creating the final substitution by instantiating the property scheme
+            -- and ensuring that the implementation type is a subtype of the property type
             (propTy, subst) <- M.instantiateAndSub propScheme
             void $ ty `M.isSubtypeOf` propTy
 
+            -- Re-ordering the resolved types according to the property scheme quantified
+            -- variables to create a consistent name
             let orderedVars = flip map qvars $ \var -> Map.findWithDefault (HLIR.MkTyQuantified var) var subst
                 newName = name <> "_" <> Text.intercalate "_" (map toText orderedVars)
 
+            -- Checking if the node is a function declaration, otherwise there must
+            -- be an error somewhere else. We just handle it gracefully here.
             case node of
                 HLIR.MkTopFunctionDeclaration
                     { parameters
@@ -348,17 +404,36 @@ resolveSpecializationForImplementation name ty = do
                     , body
                     , name = _
                     } -> do
+                        -- Checking if we already created this specialization
+                        -- to avoid duplicating work.
                         if Set.member newName specState.rememberedImplementations
                             then pure (HLIR.MkAnnotation newName (Identity ty), [])
                             else do
+                                -- Marking this specialization as created
+                                -- to avoid duplicating work in the future.
+                                modifyIORef' defaultSpecializer $ \s ->
+                                    s{rememberedImplementations = Set.insert newName s.rememberedImplementations}
+
+                                -- Applying the implementation substitution to the parameters,
+                                -- return type, and body of the function.
                                 specParameters <- Trav.for parameters $ \(HLIR.MkAnnotation paramName paramType) -> do
                                     newParamType <- M.applySubstitution implSubst paramType
                                     pure (HLIR.MkAnnotation paramName newParamType)
                                 specReturnType <- M.applySubstitution implSubst returnType
 
                                 newBody <- applySubstInExpr implSubst body
+
+                                -- Recursively resolving specializations in the body
+                                -- in case there are nested specializations.
+                                -- This also ensures that any new toplevel definitions
+                                -- created during the resolution are collected.
+                                -- This is important to maintain the integrity of the program.
                                 (specBody, newDefs) <- resolveSpecializationInExpr newBody
 
+                                -- Creating the new specialized function declaration
+                                -- with the new name and specialized types.
+                                -- Note that implementations become regular functions,
+                                -- ensuring better performance and inlining opportunities.
                                 let newImpl =
                                         HLIR.MkTopFunctionDeclaration
                                             { HLIR.name = HLIR.MkAnnotation newName []
@@ -367,14 +442,30 @@ resolveSpecializationForImplementation name ty = do
                                             , HLIR.body = specBody
                                             }
 
+                                -- Combining all new definitions obtained during the resolution
+                                -- including the new specialized function.
                                 let allNewDefs = newDefs ++ [newImpl]
 
+                                -- Building the new annotation type for the specialized function.
+                                -- This is important for further type checking and resolution.
                                 let funcType = map (.typeValue) specParameters HLIR.:->: specReturnType
 
                                 pure (HLIR.MkAnnotation newName (Identity funcType), allNewDefs)
                 _ -> M.throw (M.ImplementationNotFound name ty)
         Nothing -> pure (HLIR.MkAnnotation name (Identity ty), [])
   where
+    -- The actual implementation matching algorithm
+    -- as described above.
+    -- It recursively checks each implementation
+    -- until it finds a match or exhausts the list.
+    -- If a match is found, it returns the implementation,
+    -- the substitution, and the scheme.
+    -- If none match, it returns Nothing.
+    --
+    -- This function is crucial for resolving
+    -- specialized function calls correctly.
+    -- It ensures that the most appropriate implementation
+    -- is selected based on the provided type.
     findImplementationMatching ::
         (MonadIO m, M.MonadError M.Error m) =>
         [((Text, HLIR.Scheme HLIR.Type), HLIR.TLIR "toplevel")] ->
@@ -384,12 +475,22 @@ resolveSpecializationForImplementation name ty = do
     findImplementationMatching [] _ _ = pure Nothing
     findImplementationMatching (((implName, implScheme), toplevel) : xs) varName ty'
         | implName == varName = do
+            -- Instantiating the implementation scheme to get a concrete type
+            -- and a substitution map.
+            -- Then performing alias removal to simplify the type.
             (implTy, sub) <- M.instantiateAndSub implScheme
             aliasedImplTy <- M.performAliasRemoval implTy
+
+            -- Checking if the aliased implementation type is a subtype of the given type
+            -- without performing any unification.
+            -- This is done to ensure that the implementation can be used
+            -- for the specialized function call.
             result <- runExceptT $ M.applySubtypeRelation False aliasedImplTy ty'
 
             case result of
                 Right _ -> do
+                    -- If it is a subtype, we have found a matching implementation.
+                    -- We can fully apply subtype relation to get the final substitution.
                     void $ aliasedImplTy `M.isSubtypeOf` ty'
                     pure $ Just (toplevel, sub, implScheme)
                 Left _ -> findImplementationMatching xs name ty'
