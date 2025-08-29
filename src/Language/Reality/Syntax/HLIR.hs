@@ -64,6 +64,13 @@ data Expression f t
         { annotation :: t
         , fields :: Map Text (Expression f t)
         }
+    | MkExprDereference (Expression f t)
+    | MkExprReference (Expression f t)
+    | MkExprUpdate
+        { update :: Expression f t
+        , value :: Expression f t
+        }
+    | MkExprSizeOf t
     deriving (Eq, Ord, Generic)
 
 data Toplevel f t
@@ -191,6 +198,11 @@ instance (ToText (f t), ToText t) => ToText (Expression f t) where
     toText (MkExprStructureCreation ann fields) =
         let fieldTexts = map (\(name, expr) -> name <> ": " <> toText expr) (Map.toList fields)
          in T.concat ["{ ", T.intercalate ", " fieldTexts, " } :: ", toText ann]
+    toText (MkExprDereference e) = T.concat ["*", toText e]
+    toText (MkExprReference e) = T.concat ["&", toText e]
+    toText (MkExprUpdate update value) =
+        T.concat [toText update, " = ", toText value]
+    toText (MkExprSizeOf t) = T.concat ["sizeof(", toText t, ")"]
 
 instance (ToText (f t), ToText t) => ToText (Toplevel f t) where
     toText (MkTopConstantDeclaration binding value) =
