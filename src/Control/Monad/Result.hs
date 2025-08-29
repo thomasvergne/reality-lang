@@ -330,3 +330,8 @@ ppWarning t = putStrLn $ colorBold Yellow "[warning]: " <> toString t
 
 ppBuild :: (ToString a) => a -> IO ()
 ppBuild t = putStrLn $ colorBold Cyan "[build]: " <> toString t
+
+(|>) :: (MonadError err m, MonadIO m) => (a -> m b) -> (b -> m c) -> a -> m c
+(|>) f g x = f x >>= g
+
+infixl 1 |>

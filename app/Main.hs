@@ -22,19 +22,16 @@ main = do
 
     case result of
         Right ast -> do
-            irResult <- runExceptT $ IR.runImportResolver cwd ast
+            let pipeline =
+                    IR.runImportResolver cwd
+                        |> MR.runModuleResolver
+                        |> TC.runTypechecker
+                        |> SR.runSpecializationResolver
+                        |> CC.convertProgram
 
-            handle irResult $ \ir -> do
-                mrResult <- runExceptT $ MR.runModuleResolver ir
+            pipelineResult <- runExceptT $ pipeline ast
 
-                handle mrResult $ \mr -> do
-                    tcResult <- runExceptT $ TC.runTypechecker mr
-
-                    handle tcResult $ \tlir -> do
-                        srResult <- runExceptT $ SR.runSpecializationResolver tlir
-                        handle srResult $ \slir -> do
-                            ccAst <- CC.convertProgram slir
-
-                            mapM_ printText ccAst
+            handle pipelineResult $ \tlir -> do
+                mapM_ printText tlir
         Left err -> do
             parseError err file (Just fileContent)
