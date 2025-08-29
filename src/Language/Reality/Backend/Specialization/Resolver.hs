@@ -186,6 +186,19 @@ resolveSpecializationInExpr (HLIR.MkExprStructureCreation ann fields) = do
         allNewDefs = newDefs ++ allNewDefs2
 
     pure (HLIR.MkExprStructureCreation specAnn fieldMap, allNewDefs)
+resolveSpecializationInExpr (HLIR.MkExprDereference e) = do
+    (typedE, newDefs) <- resolveSpecializationInExpr e
+    pure (HLIR.MkExprDereference typedE, newDefs)
+resolveSpecializationInExpr (HLIR.MkExprReference e) = do
+    (typedE, newDefs) <- resolveSpecializationInExpr e
+    pure (HLIR.MkExprReference typedE, newDefs)
+resolveSpecializationInExpr (HLIR.MkExprUpdate update value) = do
+    (typedUpdate, newDefs1) <- resolveSpecializationInExpr update
+    (typedValue, newDefs2) <- resolveSpecializationInExpr value
+    pure (HLIR.MkExprUpdate typedUpdate typedValue, newDefs1 ++ newDefs2)
+resolveSpecializationInExpr (HLIR.MkExprSizeOf t) = do
+    (specTy, newDefs) <- resolveSpecializationInType t
+    pure (HLIR.MkExprSizeOf specTy, newDefs)
 
 -- | Apply a substitution to all types in an expression.
 -- | This function takes a substitution map and an expression, and returns
@@ -233,6 +246,19 @@ applySubstInExpr subst (HLIR.MkExprStructureCreation ann fields) = do
     newAnn <- M.applySubstitution subst ann
     newFields <- mapM (applySubstInExpr subst) fields
     pure (HLIR.MkExprStructureCreation newAnn newFields)
+applySubstInExpr subst (HLIR.MkExprDereference e) = do
+    newE <- applySubstInExpr subst e
+    pure (HLIR.MkExprDereference newE)
+applySubstInExpr subst (HLIR.MkExprReference e) = do
+    newE <- applySubstInExpr subst e
+    pure (HLIR.MkExprReference newE)
+applySubstInExpr subst (HLIR.MkExprUpdate update value) = do
+    newUpdate <- applySubstInExpr subst update
+    newValue <- applySubstInExpr subst value
+    pure (HLIR.MkExprUpdate newUpdate newValue)
+applySubstInExpr subst (HLIR.MkExprSizeOf t) = do
+    newT <- M.applySubstitution subst t
+    pure (HLIR.MkExprSizeOf newT)
 
 -- | Resolve specialization for identifiers.
 -- | This function takes an identifier and a associated type
@@ -286,7 +312,7 @@ resolveSpecializationForIdentifier (HLIR.MkAnnotation name (Identity ty)) = do
 
                                 let funcType = map (.typeValue) specParameters HLIR.:->: specReturnType
 
-                                pure (HLIR.MkAnnotation name (Identity funcType), allNewDefs)
+                                pure (HLIR.MkAnnotation newName (Identity funcType), allNewDefs)
                 _ -> M.throw (M.VariableNotFound name)
         Nothing -> resolveSpecializationForImplementation name ty
 
@@ -312,12 +338,8 @@ resolveSpecializationForImplementation name ty = do
             (propTy, subst) <- M.instantiateAndSub propScheme
             void $ ty `M.isSubtypeOf` propTy
 
-            print subst
-
             let orderedVars = flip map qvars $ \var -> Map.findWithDefault (HLIR.MkTyQuantified var) var subst
                 newName = name <> "_" <> Text.intercalate "_" (map toText orderedVars)
-
-            print (subst, newName)
 
             case node of
                 HLIR.MkTopFunctionDeclaration
