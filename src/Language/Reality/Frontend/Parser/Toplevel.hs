@@ -145,6 +145,81 @@ parseTopExternalFunction = do
             }
         )
 
+-- | PARSE PROPERTY NODE
+-- | A property node is a top-level construct that defines a property.
+-- | A property is a function that is used to get or set a value of a
+-- | specific type. Properties are defined using the `property` keyword.
+-- | Properties are similar to functions, but they have a different syntax
+-- | and semantics.
+-- | Properties are defined as follows:
+-- | - property <name>[<generic>*](<param>*): <return type>
+parseTopProperty ::
+    (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "toplevel")
+parseTopProperty = do
+    ((start, _), _) <- Lex.reserved "property"
+    (_, idt) <- Lex.identifier
+    generics <-
+        P.option mempty
+            $ snd <$> Lex.brackets (P.sepBy1 (snd <$> Lex.identifier) Lex.comma)
+
+    (_, params) <-
+        Lex.parens (P.sepBy (P.parseAnnotation' (snd <$> Typ.parseType)) Lex.comma)
+
+    ((_, end), ret) <- Lex.symbol "->" *> Typ.parseType
+
+    pure
+        ( (start, end)
+        , HLIR.MkTopProperty
+            { HLIR.header = HLIR.MkAnnotation idt generics
+            , HLIR.parameters = params
+            , HLIR.returnType = ret
+            }
+        )
+
+-- | PARSE IMPLEMENTATION NODE
+-- | An implementation node is a top-level construct that defines an
+-- | implementation of a property for a specific type.
+-- | Implementations are defined using the `impl` keyword.
+-- | Implementations are similar to functions, but they have a different
+-- | syntax and semantics.
+-- | Implementations are defined as follows:
+-- | - impl fn (<for>: <type>) <name>[<generic>*](<param>*): <return type> { <body> }
+parseTopImplementation ::
+    (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "toplevel")
+parseTopImplementation = do
+    ((start, _), _) <- Lex.reserved "impl"
+    void $ Lex.reserved "fn"
+
+    (_, forType) <- Lex.parens $ do
+        (_, idt) <- Lex.identifier
+        void Lex.colon
+        ty <- snd <$> Typ.parseType
+        pure (HLIR.MkAnnotation idt ty)
+
+    (_, idt) <- Lex.identifier
+    generics <-
+        P.option mempty
+            $ snd <$> Lex.brackets (P.sepBy1 (snd <$> Lex.identifier) Lex.comma)
+
+    (_, params) <-
+        Lex.parens (P.sepBy (P.parseAnnotation' (snd <$> Typ.parseType)) Lex.comma)
+
+    void $ Lex.symbol "->"
+    returnType <- snd <$> Typ.parseType
+
+    ((_, end), body) <- P.parseExprBlock
+
+    pure
+        ( (start, end)
+        , HLIR.MkTopImplementation
+            { HLIR.forType = forType
+            , HLIR.header = HLIR.MkAnnotation idt generics
+            , HLIR.parameters = params
+            , HLIR.returnType = returnType
+            , HLIR.body = body
+            }
+        )
+
 -- | TOP LEVEL PARSING
 -- | A top-level parser is a parser that parses top-level constructs in a
 -- | programming language. Top-level constructs are constructs that are not
@@ -173,6 +248,8 @@ parseTopFull =
             , parseTopModuleDeclaration
             , parseTopStructureDeclaration
             , parseTopExternalFunction
+            , parseTopProperty
+            , parseTopImplementation
             ]
 
 -- | Parse a complete Bonzai source file.

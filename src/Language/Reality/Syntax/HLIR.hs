@@ -100,6 +100,18 @@ data Toplevel f t
         , parameters :: [Ann.Annotation t]
         , returnType :: t
         }
+    | MkTopProperty
+        { header :: Ann.Annotation [Text]
+        , parameters :: [Ann.Annotation t]
+        , returnType :: t
+        }
+    | MkTopImplementation
+        { forType :: Ann.Annotation t
+        , header :: Ann.Annotation [Text]
+        , parameters :: [Ann.Annotation t]
+        , returnType :: t
+        , body :: Expression f t
+        }
     deriving (Eq, Ord, Generic)
 
 -- | BINARY EXPRESSION PATTERN
@@ -243,4 +255,32 @@ instance (ToText (f t), ToText t) => ToText (Toplevel f t) where
             , T.intercalate ", " (map toText params)
             , ") -> "
             , toText ret
+            ]
+    toText (MkTopProperty header params ret) =
+        T.concat
+            [ "property "
+            , header.name
+            , "["
+            , T.intercalate ", " header.typeValue
+            , "]"
+            , "("
+            , T.intercalate ", " (map toText params)
+            , ") -> "
+            , toText ret
+            ]
+    toText (MkTopImplementation forType header params returnType body) =
+        T.concat
+            [ "impl fn "
+            , header.name
+            , "["
+            , T.intercalate ", " header.typeValue
+            , "] for "
+            , toText forType
+            , "("
+            , T.intercalate ", " (map toText params)
+            , ") -> "
+            , toText returnType
+            , " { "
+            , toText body
+            , " }"
             ]
