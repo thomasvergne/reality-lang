@@ -165,7 +165,7 @@ instance ToText (Maybe Type) where
     toText (Just a) = toText a
     toText Nothing = "infer"
 
-instance ToText t => ToText (Scheme t) where
+instance (ToText t) => ToText (Scheme t) where
     toText (Forall a b) = T.concat ["forall ", T.intercalate ", " a, ". ", toText b]
 
 instance ToText (Identity Type) where

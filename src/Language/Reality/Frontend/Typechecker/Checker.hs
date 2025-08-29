@@ -1,11 +1,11 @@
 module Language.Reality.Frontend.Typechecker.Checker where
 
-import Language.Reality.Frontend.Typechecker.Monad qualified as M
-import Control.Monad.Result qualified as M
-import Language.Reality.Syntax.HLIR qualified as HLIR
 import Control.Monad.Except qualified as M
-import Language.Reality.Frontend.Typechecker.Unification qualified as M
+import Control.Monad.Result qualified as M
 import Data.Map qualified as Map
+import Language.Reality.Frontend.Typechecker.Monad qualified as M
+import Language.Reality.Frontend.Typechecker.Unification qualified as M
+import Language.Reality.Syntax.HLIR qualified as HLIR
 
 -- | TYPECHECKER
 -- | Typecheck a program.
@@ -30,19 +30,24 @@ checkToplevelSingular (HLIR.MkTopConstantDeclaration ann expr) = do
     typedExpr <- checkE expectedType expr
 
     modifyIORef' M.defaultCheckerState $ \s ->
-        s { M.environment = Map.insert ann.name (HLIR.Forall [] expectedType) s.environment }
+        s
+            { M.environment = Map.insert ann.name (HLIR.Forall [] expectedType) s.environment
+            }
 
     pure (HLIR.MkTopConstantDeclaration ann typedExpr)
 checkToplevelSingular (HLIR.MkTopFunctionDeclaration ann params ret body) = do
     paramTypes <- mapM (M.performAliasRemoval . (.typeValue)) params
     retType <- M.performAliasRemoval ret
 
-    let newParams = zipWith (\p ty -> p { HLIR.typeValue = ty }) params paramTypes
+    let newParams = zipWith (\p ty -> p{HLIR.typeValue = ty}) params paramTypes
 
     let funcType = paramTypes HLIR.:->: retType
 
     modifyIORef' M.defaultCheckerState $ \s ->
-        s { M.environment = Map.insert ann.name (HLIR.Forall ann.typeValue funcType) s.environment }
+        s
+            { M.environment =
+                Map.insert ann.name (HLIR.Forall ann.typeValue funcType) s.environment
+            }
 
     oldEnv <- readIORef M.defaultCheckerState <&> M.environment
 
@@ -68,7 +73,10 @@ checkToplevelSingular (HLIR.MkTopFunctionDeclaration ann params ret body) = do
 checkToplevelSingular (HLIR.MkTopTypeAlias ann aliased) = do
     realiasedType <- M.performAliasRemoval aliased
     modifyIORef' M.defaultCheckerState $ \s ->
-        s { M.typeAliases = Map.insert ann.name (HLIR.Forall ann.typeValue realiasedType) s.typeAliases }
+        s
+            { M.typeAliases =
+                Map.insert ann.name (HLIR.Forall ann.typeValue realiasedType) s.typeAliases
+            }
     pure (HLIR.MkTopTypeAlias ann aliased)
 checkToplevelSingular (HLIR.MkTopLocated p n) = do
     HLIR.pushPosition p
@@ -78,12 +86,15 @@ checkToplevelSingular (HLIR.MkTopLocated p n) = do
 checkToplevelSingular (HLIR.MkTopPublic node) = do
     typedNode <- checkToplevelSingular node
     pure (HLIR.MkTopPublic typedNode)
-checkToplevelSingular (HLIR.MkTopModuleDeclaration {}) = M.throw (M.CompilerError "Modules are not supported in the typechecker.")
+checkToplevelSingular (HLIR.MkTopModuleDeclaration{}) = M.throw (M.CompilerError "Modules are not supported in the typechecker.")
 checkToplevelSingular (HLIR.MkTopStructureDeclaration ann fields) = do
     fieldTypes <- traverse M.performAliasRemoval fields
 
     modifyIORef' M.defaultCheckerState $ \s ->
-        s { M.structures = Map.insert ann.name (HLIR.Forall ann.typeValue fieldTypes) s.structures }
+        s
+            { M.structures =
+                Map.insert ann.name (HLIR.Forall ann.typeValue fieldTypes) s.structures
+            }
 
     pure (HLIR.MkTopStructureDeclaration ann fields)
 checkToplevelSingular (HLIR.MkTopExternalFunction ann params ret) = do
@@ -91,10 +102,13 @@ checkToplevelSingular (HLIR.MkTopExternalFunction ann params ret) = do
     retType <- M.performAliasRemoval ret
 
     let funcType = paramTypes HLIR.:->: retType
-        newParams = zipWith (\p ty -> p { HLIR.typeValue = ty }) params paramTypes
+        newParams = zipWith (\p ty -> p{HLIR.typeValue = ty}) params paramTypes
 
     modifyIORef' M.defaultCheckerState $ \s ->
-        s { M.environment = Map.insert ann.name (HLIR.Forall ann.typeValue funcType) s.environment }
+        s
+            { M.environment =
+                Map.insert ann.name (HLIR.Forall ann.typeValue funcType) s.environment
+            }
 
     pure (HLIR.MkTopExternalFunction ann newParams retType)
 checkToplevelSingular (HLIR.MkTopImport _) = M.throw (M.CompilerError "Imports are not supported in the typechecker.")
@@ -123,7 +137,7 @@ synthesizeE (HLIR.MkExprVariable ann types) = do
     case Map.lookup ann.name variables of
         Just scheme -> do
             ty <- M.instantiateWithSub scheme types >>= M.performAliasRemoval
-            pure (ty, HLIR.MkExprVariable ann { HLIR.typeValue = Identity ty } types)
+            pure (ty, HLIR.MkExprVariable ann{HLIR.typeValue = Identity ty} types)
         Nothing -> M.throw (M.VariableNotFound ann.name)
 synthesizeE (HLIR.MkExprCondition cond thenB elseB) = do
     condExpr <- checkE HLIR.MkTyBool cond
@@ -138,20 +152,29 @@ synthesizeE (HLIR.MkExprLetIn binding value inExpr) = do
     oldEnv <- readIORef M.defaultCheckerState <&> M.environment
 
     modifyIORef' M.defaultCheckerState $ \s ->
-        s { M.environment = Map.insert binding.name (HLIR.Forall [] expectedType) s.environment }
+        s
+            { M.environment =
+                Map.insert binding.name (HLIR.Forall [] expectedType) s.environment
+            }
 
     valueExpr <- checkE expectedType value
 
     (inTy, typedInExpr) <- synthesizeE inExpr
 
     modifyIORef' M.defaultCheckerState $ \s ->
-        s { M.environment = oldEnv }
+        s{M.environment = oldEnv}
 
-    pure (inTy, HLIR.MkExprLetIn binding { HLIR.typeValue = Identity expectedType } valueExpr typedInExpr)
+    pure
+        ( inTy
+        , HLIR.MkExprLetIn
+            binding{HLIR.typeValue = Identity expectedType}
+            valueExpr
+            typedInExpr
+        )
 synthesizeE (HLIR.MkExprLambda params ret body) = do
     paramTypes <- mapM (maybe M.newType M.performAliasRemoval . (.typeValue)) params
 
-    let paramAnnotations = zipWith (\p ty -> p { HLIR.typeValue = Identity ty }) params paramTypes
+    let paramAnnotations = zipWith (\p ty -> p{HLIR.typeValue = Identity ty}) params paramTypes
 
     oldEnv <- readIORef M.defaultCheckerState <&> M.environment
 
@@ -204,7 +227,10 @@ synthesizeE (HLIR.MkExprStructureCreation ty fields) = do
 
     let (fieldNames, fieldExprs) = unzip checkedFields
 
-    pure ( ty, HLIR.MkExprStructureCreation ty (Map.fromList (zip fieldNames fieldExprs)) )
+    pure
+        ( ty
+        , HLIR.MkExprStructureCreation ty (Map.fromList (zip fieldNames fieldExprs))
+        )
 synthesizeE (HLIR.MkExprStructureAccess struct field) = do
     (structTy, structExpr) <- synthesizeE struct
 
@@ -234,7 +260,9 @@ getHeader (HLIR.MkTyApp (HLIR.MkTyId name) _) = Just name
 getHeader (HLIR.MkTyId name) = Just name
 getHeader _ = Nothing
 
-findStructureMaybeById :: (MonadIO m, M.MonadError M.Error m) => Maybe Text -> m (HLIR.Scheme (Map Text HLIR.Type))
+findStructureMaybeById ::
+    (MonadIO m, M.MonadError M.Error m) =>
+    Maybe Text -> m (HLIR.Scheme (Map Text HLIR.Type))
 findStructureMaybeById name = do
     structTypes <- readIORef M.defaultCheckerState <&> M.structures
 

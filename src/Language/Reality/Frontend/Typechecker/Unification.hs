@@ -1,10 +1,10 @@
 module Language.Reality.Frontend.Typechecker.Unification where
 
-import Language.Reality.Syntax.HLIR qualified as HLIR
-import Language.Reality.Frontend.Typechecker.Monad qualified as M
 import Control.Monad.Except qualified as M
 import Control.Monad.Result qualified as M
 import Data.Map qualified as Map
+import Language.Reality.Frontend.Typechecker.Monad qualified as M
+import Language.Reality.Syntax.HLIR qualified as HLIR
 
 -- | SUBTYPING RELATION
 -- | Check if a type is a subtype of another type.
@@ -29,7 +29,8 @@ isSubtypeOf t1 t2 = do
 -- | This is used to prepare a type for unification or subtype checking.
 -- | This function takes a type, and returns a simplified type with no aliases.
 -- | If the type contains aliases that cannot be resolved, it throws an error.
-performAliasRemoval :: (MonadIO m, M.MonadError M.Error m) => HLIR.Type -> m HLIR.Type
+performAliasRemoval ::
+    (MonadIO m, M.MonadError M.Error m) => HLIR.Type -> m HLIR.Type
 performAliasRemoval ty = do
     simplTy <- HLIR.simplify ty
     removeAliases simplTy
@@ -40,8 +41,8 @@ removeAliases (HLIR.MkTyApp (HLIR.MkTyId base) args) = do
 
     case Map.lookup base typeAliases of
         Just (HLIR.Forall qvars aliasedType) -> do
-            when (length qvars /= length args) $
-                M.throw (M.InvalidArgumentQuantity (length qvars) (length args))
+            when (length qvars /= length args)
+                $ M.throw (M.InvalidArgumentQuantity (length qvars) (length args))
 
             let s = Map.fromList (zip qvars args)
 
@@ -60,7 +61,7 @@ removeAliases (HLIR.MkTyVar ref) = do
     ty <- liftIO $ readIORef ref
     case ty of
         HLIR.Link ty' -> removeAliases ty'
-        HLIR.Unbound {} -> pure (HLIR.MkTyVar ref)
+        HLIR.Unbound{} -> pure (HLIR.MkTyVar ref)
 removeAliases (HLIR.MkTyQuantified name) = pure (HLIR.MkTyQuantified name)
 removeAliases (HLIR.MkTyAnonymousStructure fields) = do
     newFields <- traverse removeAliases fields
@@ -79,8 +80,8 @@ applySubtypeRelation (argsF1 HLIR.:->: retF1) (argsF2 HLIR.:->: retF2)
         subRet <- retF1 `isSubtypeOf` retF2
 
         pure (subsArgs <> subRet)
-
-    | otherwise = M.throw (M.InvalidArgumentQuantity (length argsF1) (length argsF2))
+    | otherwise =
+        M.throw (M.InvalidArgumentQuantity (length argsF1) (length argsF2))
 applySubtypeRelation (HLIR.MkTyVar ref1) t2 = do
     ty1 <- readIORef ref1
 
@@ -139,8 +140,8 @@ occursCheck name t@(HLIR.MkTyVar ref) = do
     case ty of
         HLIR.Link ty' -> occursCheck name ty'
         HLIR.Unbound name' _ ->
-            when (name == name') $
-                M.throw (M.CyclicTypeVariable name t)
+            when (name == name')
+                $ M.throw (M.CyclicTypeVariable name t)
 occursCheck name (HLIR.MkTyApp base args) = do
     occursCheck name base
     mapM_ (occursCheck name) args

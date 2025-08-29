@@ -89,7 +89,6 @@ handle (Left (err, pos@(p1, _))) _ = liftIO $ do
                 , pos
                 )
                 "Resolution"
-
         FieldNotFound field ->
             printErrorFromString
                 Nothing
@@ -189,8 +188,10 @@ instance Show BonzaiError where
     show (UnboundTypeVariable name) = "Unbound type variable " <> show name
     show (StructureNotFound ty) = "Structure " <> show (toText ty)
     show (CyclicTypeVariable name ty) = "Cyclic type variable " <> show name <> " in type " <> show (toText ty)
-    show (ExpectedFunction ty) = "Expected a function type, but got " <> show
-        (toText ty)
+    show (ExpectedFunction ty) =
+        "Expected a function type, but got "
+            <> show
+                (toText ty)
     show InvalidHeader = "Invalid header type"
 
 showError :: P.ParseError -> String
