@@ -78,6 +78,32 @@ resolveSpecializationSingular node@(HLIR.MkTopFunctionDeclaration ann params ret
 resolveSpecializationSingular (HLIR.MkTopPublic n) = do
     (resolved, newDefs) <- resolveSpecializationSingular n
     pure (HLIR.MkTopPublic <$> resolved, newDefs)
+resolveSpecializationSingular (HLIR.MkTopImplementation forType header parameters returnType body) = do
+    let scheme =
+            HLIR.Forall
+                header.typeValue
+                ((forType.typeValue : map (.typeValue) parameters) HLIR.:->: returnType)
+
+    let newParams = forType : parameters
+
+    modifyIORef' defaultSpecializer $ \s ->
+        s
+            { implementations =
+                Map.insert
+                    (header.name, scheme)
+                    (HLIR.MkTopFunctionDeclaration header newParams returnType body)
+                    s.implementations
+            }
+
+    pure (Nothing, [])
+resolveSpecializationSingular (HLIR.MkTopProperty header parameters returnType) = do
+    let scheme =
+            HLIR.Forall header.typeValue (map (.typeValue) parameters HLIR.:->: returnType)
+
+    modifyIORef' defaultSpecializer $ \s ->
+        s{properties = Map.insert header.name scheme s.properties}
+
+    pure (Just $ HLIR.MkTopProperty header parameters returnType, [])
 resolveSpecializationSingular other = pure (Just other, [])
 
 -- | Resolve specialization in expressions.
@@ -262,7 +288,90 @@ resolveSpecializationForIdentifier (HLIR.MkAnnotation name (Identity ty)) = do
 
                                 pure (HLIR.MkAnnotation name (Identity funcType), allNewDefs)
                 _ -> M.throw (M.VariableNotFound name)
+        Nothing -> resolveSpecializationForImplementation name ty
+
+resolveSpecializationForImplementation ::
+    (MonadIO m, M.MonadError M.Error m) =>
+    Text ->
+    HLIR.Type ->
+    m (HLIR.Annotation (Identity HLIR.Type), [HLIR.TLIR "toplevel"])
+resolveSpecializationForImplementation name ty = do
+    specState <- liftIO $ readIORef defaultSpecializer
+
+    result1 <-
+        findImplementationMatching (Map.toList specState.implementations) name ty
+    let result2 = Map.lookup name specState.properties
+
+    let result = case (result1, result2) of
+            (Just (node, subst, scheme), Just propScheme) ->
+                Just (node, subst, scheme, propScheme)
+            _ -> Nothing
+
+    case result of
+        Just (node, implSubst, _, propScheme@(HLIR.Forall qvars _)) -> do
+            (propTy, subst) <- M.instantiateAndSub propScheme
+            void $ ty `M.isSubtypeOf` propTy
+
+            print subst
+
+            let orderedVars = flip map qvars $ \var -> Map.findWithDefault (HLIR.MkTyQuantified var) var subst
+                newName = name <> "_" <> Text.intercalate "_" (map toText orderedVars)
+
+            print (subst, newName)
+
+            case node of
+                HLIR.MkTopFunctionDeclaration
+                    { parameters
+                    , returnType
+                    , body
+                    , name = _
+                    } -> do
+                        if Set.member newName specState.rememberedImplementations
+                            then pure (HLIR.MkAnnotation newName (Identity ty), [])
+                            else do
+                                specParameters <- Trav.for parameters $ \(HLIR.MkAnnotation paramName paramType) -> do
+                                    newParamType <- M.applySubstitution implSubst paramType
+                                    pure (HLIR.MkAnnotation paramName newParamType)
+                                specReturnType <- M.applySubstitution implSubst returnType
+
+                                newBody <- applySubstInExpr implSubst body
+                                (specBody, newDefs) <- resolveSpecializationInExpr newBody
+
+                                let newImpl =
+                                        HLIR.MkTopFunctionDeclaration
+                                            { HLIR.name = HLIR.MkAnnotation newName []
+                                            , HLIR.parameters = specParameters
+                                            , HLIR.returnType = specReturnType
+                                            , HLIR.body = specBody
+                                            }
+
+                                let allNewDefs = newDefs ++ [newImpl]
+
+                                let funcType = map (.typeValue) specParameters HLIR.:->: specReturnType
+
+                                pure (HLIR.MkAnnotation newName (Identity funcType), allNewDefs)
+                _ -> M.throw (M.ImplementationNotFound name ty)
         Nothing -> pure (HLIR.MkAnnotation name (Identity ty), [])
+  where
+    findImplementationMatching ::
+        (MonadIO m, M.MonadError M.Error m) =>
+        [((Text, HLIR.Scheme HLIR.Type), HLIR.TLIR "toplevel")] ->
+        Text ->
+        HLIR.Type ->
+        m (Maybe (HLIR.TLIR "toplevel", M.Substitution, HLIR.Scheme HLIR.Type))
+    findImplementationMatching [] _ _ = pure Nothing
+    findImplementationMatching (((implName, implScheme), toplevel) : xs) varName ty'
+        | implName == varName = do
+            (implTy, sub) <- M.instantiateAndSub implScheme
+            aliasedImplTy <- M.performAliasRemoval implTy
+            result <- runExceptT $ M.applySubtypeRelation False aliasedImplTy ty'
+
+            case result of
+                Right _ -> do
+                    void $ aliasedImplTy `M.isSubtypeOf` ty'
+                    pure $ Just (toplevel, sub, implScheme)
+                Left _ -> findImplementationMatching xs name ty'
+        | otherwise = findImplementationMatching xs name ty'
 
 -- | Resolve specialization in types.
 -- | This function takes a type, and returns a type with specializations resolved.
@@ -352,13 +461,24 @@ maybeResolveStructure name args = do
 data Specializer = Specializer
     { variables :: Map Text (HLIR.Scheme HLIR.Type, HLIR.TLIR "toplevel")
     , structures :: Map Text (HLIR.Scheme (Map Text HLIR.Type))
+    , implementations :: Map (Text, HLIR.Scheme HLIR.Type) (HLIR.TLIR "toplevel")
+    , properties :: Map Text (HLIR.Scheme HLIR.Type)
     , rememberedVariables :: Set Text
     , rememberedStructures :: Set Text
+    , rememberedImplementations :: Set Text
     }
     deriving (Ord, Eq)
 
 emptySpecializer :: Specializer
-emptySpecializer = Specializer Map.empty Map.empty Set.empty Set.empty
+emptySpecializer =
+    Specializer
+        Map.empty
+        Map.empty
+        Map.empty
+        Map.empty
+        Set.empty
+        Set.empty
+        Set.empty
 
 defaultSpecializer :: IORef Specializer
 defaultSpecializer = IO.unsafePerformIO $ newIORef emptySpecializer
