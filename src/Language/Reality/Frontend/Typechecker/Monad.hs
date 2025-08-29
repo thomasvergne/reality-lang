@@ -90,7 +90,8 @@ instantiateMap ::
     (MonadIO m) => HLIR.Scheme (Map Text HLIR.Type) -> m (Map Text HLIR.Type)
 instantiateMap (HLIR.Forall qvars schemeTy) = fst <$> instantiateMapAndSub (HLIR.Forall qvars schemeTy)
 
-applySubstitution :: (MonadIO m) => Map Text HLIR.Type -> HLIR.Type -> m HLIR.Type
+applySubstitution ::
+    (MonadIO m) => Map Text HLIR.Type -> HLIR.Type -> m HLIR.Type
 applySubstitution s (HLIR.MkTyVar tvr) = do
     tv <- liftIO $ readIORef tvr
     case tv of

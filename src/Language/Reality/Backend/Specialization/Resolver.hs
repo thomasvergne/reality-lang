@@ -161,6 +161,9 @@ resolveSpecializationInExpr (HLIR.MkExprStructureCreation ann fields) = do
 
     pure (HLIR.MkExprStructureCreation specAnn fieldMap, allNewDefs)
 
+-- | Apply a substitution to all types in an expression.
+-- | This function takes a substitution map and an expression, and returns
+-- | an expression with the substitution applied to all types.
 applySubstInExpr ::
     (MonadIO m) =>
     Map Text HLIR.Type -> HLIR.TLIR "expression" -> m (HLIR.TLIR "expression")
