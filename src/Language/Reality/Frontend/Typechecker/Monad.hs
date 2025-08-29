@@ -10,10 +10,23 @@ data CheckerState = CheckerState
     , environment :: Map Text (HLIR.Scheme HLIR.Type)
     , typeAliases :: Map Text (HLIR.Scheme HLIR.Type)
     , structures :: Map Text (HLIR.Scheme (Map Text HLIR.Type))
+    , implementations :: Map (Text, HLIR.Type) (HLIR.Scheme HLIR.Type)
+    , properties :: Map Text (HLIR.Scheme HLIR.Type)
     }
     deriving (Eq, Ord, Generic)
 
 type Substitution = Map Text HLIR.Type
+type Constraints = [(Text, HLIR.Type, HLIR.Position)]
+
+withEnvironment :: (MonadIO m) => Map Text (HLIR.Scheme HLIR.Type) -> m a -> m a
+withEnvironment env action = do
+    ref <- liftIO $ readIORef defaultCheckerState
+    let oldEnv = ref.environment
+    liftIO $ writeIORef defaultCheckerState ref{environment = Map.union env oldEnv}
+    result <- action
+    ref' <- liftIO $ readIORef defaultCheckerState
+    liftIO $ writeIORef defaultCheckerState ref'{environment = oldEnv}
+    pure result
 
 defaultCheckerState :: IORef CheckerState
 defaultCheckerState = IO.unsafePerformIO $ do
@@ -24,6 +37,8 @@ defaultCheckerState = IO.unsafePerformIO $ do
             , environment = Map.empty
             , typeAliases = Map.empty
             , structures = Map.empty
+            , implementations = Map.empty
+            , properties = Map.empty
             }
 
 newSymbol :: (MonadIO m) => Text -> m Text
@@ -52,6 +67,8 @@ resetState = do
                 , environment = Map.empty
                 , typeAliases = Map.empty
                 , structures = Map.empty
+                , implementations = Map.empty
+                , properties = Map.empty
                 }
 
 instantiateAndSub ::

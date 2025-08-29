@@ -23,7 +23,7 @@ isSubtypeOf t1 t2 = do
     aliasedT1 <- performAliasRemoval t1
     aliasedT2 <- performAliasRemoval t2
 
-    applySubtypeRelation aliasedT1 aliasedT2
+    applySubtypeRelation True aliasedT1 aliasedT2
 
 -- | Simplify and remove type aliases from a type.
 -- | This is used to prepare a type for unification or subtype checking.
@@ -69,48 +69,52 @@ removeAliases (HLIR.MkTyAnonymousStructure fields) = do
 removeAliases (HLIR.MkTyApp base args) =
     HLIR.MkTyApp <$> removeAliases base <*> mapM removeAliases args
 
+type ShouldMutate = Bool
+
 applySubtypeRelation ::
     (MonadIO m, M.MonadError M.Error m) =>
+    ShouldMutate ->
     HLIR.Type ->
     HLIR.Type ->
     m M.Substitution
-applySubtypeRelation (argsF1 HLIR.:->: retF1) (argsF2 HLIR.:->: retF2)
+applySubtypeRelation shouldMutate (argsF1 HLIR.:->: retF1) (argsF2 HLIR.:->: retF2)
     | length argsF1 == length argsF2 = do
-        subsArgs <- mconcat <$> zipWithM (flip isSubtypeOf) argsF2 argsF1
-        subRet <- retF1 `isSubtypeOf` retF2
+        subsArgs <-
+            mconcat <$> zipWithM (flip (applySubtypeRelation shouldMutate)) argsF2 argsF1
+        subRet <- applySubtypeRelation shouldMutate retF1 retF2
 
         pure (subsArgs <> subRet)
     | otherwise =
         M.throw (M.InvalidArgumentQuantity (length argsF1) (length argsF2))
-applySubtypeRelation (HLIR.MkTyVar ref1) t2 = do
+applySubtypeRelation shouldMutate (HLIR.MkTyVar ref1) t2 = do
     ty1 <- readIORef ref1
 
     case ty1 of
         HLIR.Unbound name1 _ -> do
             occursCheck name1 t2
 
-            writeIORef ref1 (HLIR.Link t2)
+            when shouldMutate $ writeIORef ref1 (HLIR.Link t2)
 
             pure (Map.singleton name1 t2)
-        HLIR.Link ty1' -> applySubtypeRelation ty1' t2
-applySubtypeRelation t1 (HLIR.MkTyVar ref2) = do
+        HLIR.Link ty1' -> applySubtypeRelation shouldMutate ty1' t2
+applySubtypeRelation shouldMutate t1 (HLIR.MkTyVar ref2) = do
     ty2 <- readIORef ref2
 
     case ty2 of
         HLIR.Unbound name2 _ -> do
             occursCheck name2 t1
 
-            writeIORef ref2 (HLIR.Link t1)
+            when shouldMutate $ writeIORef ref2 (HLIR.Link t1)
 
             pure (Map.singleton name2 t1)
-        HLIR.Link ty2' -> applySubtypeRelation t1 ty2'
-applySubtypeRelation (HLIR.MkTyApp base1 args1) (HLIR.MkTyApp base2 args2)
+        HLIR.Link ty2' -> applySubtypeRelation shouldMutate t1 ty2'
+applySubtypeRelation shouldMutate (HLIR.MkTyApp base1 args1) (HLIR.MkTyApp base2 args2)
     | length args1 == length args2 = do
-        sub <- applySubtypeRelation base1 base2
-        subs <- mconcat <$> zipWithM isSubtypeOf args1 args2
+        sub <- applySubtypeRelation shouldMutate base1 base2
+        subs <- mconcat <$> zipWithM (applySubtypeRelation shouldMutate) args1 args2
         pure (sub <> subs)
     | otherwise = M.throw (M.InvalidArgumentQuantity (length args1) (length args2))
-applySubtypeRelation (HLIR.MkTyId name1) (HLIR.MkTyId name2)
+applySubtypeRelation _ (HLIR.MkTyId name1) (HLIR.MkTyId name2)
     | name1 == name2 = pure Map.empty
     | Just subsize <- getIntegerPart (HLIR.MkTyId name1)
     , Just supSize <- getIntegerPart (HLIR.MkTyId name2)
@@ -132,7 +136,7 @@ applySubtypeRelation (HLIR.MkTyId name1) (HLIR.MkTyId name2)
     , Just supSize <- getIntegerPart (HLIR.MkTyId name2)
     , subsize < supSize =
         pure Map.empty
-applySubtypeRelation t1 t2 = M.throw (M.UnificationFail t1 t2)
+applySubtypeRelation _ t1 t2 = M.throw (M.UnificationFail t1 t2)
 
 occursCheck :: (MonadIO m, M.MonadError M.Error m) => Text -> HLIR.Type -> m ()
 occursCheck name t@(HLIR.MkTyVar ref) = do

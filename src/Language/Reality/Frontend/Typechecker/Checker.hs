@@ -20,6 +20,9 @@ runTypechecker toplevels = do
 
     mapM checkToplevelSingular toplevels
 
+removeThird :: (a, b, c) -> (a, b)
+removeThird (x, y, _) = (x, y)
+
 checkToplevelSingular ::
     (MonadIO m, M.MonadError M.Error m) =>
     HLIR.HLIR "toplevel" ->
@@ -27,7 +30,10 @@ checkToplevelSingular ::
 checkToplevelSingular (HLIR.MkTopConstantDeclaration ann expr) = do
     expectedType <- M.performAliasRemoval ann.typeValue
 
-    typedExpr <- checkE expectedType expr
+    (typedExpr, cs) <- checkE expectedType expr
+
+    unless (null cs)
+        $ M.throw (M.UnsolvedConstraints (map removeThird cs))
 
     modifyIORef' M.defaultCheckerState $ \s ->
         s
@@ -62,7 +68,9 @@ checkToplevelSingular (HLIR.MkTopFunctionDeclaration ann params ret body) = do
                     newParams
             }
 
-    typedBody <- checkE retType body
+    (typedBody, cs) <- checkE retType body
+
+    solveConstraints cs
 
     modifyIORef' M.defaultCheckerState $ \s ->
         s
@@ -112,40 +120,120 @@ checkToplevelSingular (HLIR.MkTopExternalFunction ann params ret) = do
 
     pure (HLIR.MkTopExternalFunction ann newParams retType)
 checkToplevelSingular (HLIR.MkTopImport _) = M.throw (M.CompilerError "Imports are not supported in the typechecker.")
+checkToplevelSingular (HLIR.MkTopProperty header params returnType) = do
+    paramTypes <- mapM (M.performAliasRemoval . (.typeValue)) params
+    retType <- M.performAliasRemoval returnType
+
+    let funcType = paramTypes HLIR.:->: retType
+        newParams = zipWith (\p ty -> p{HLIR.typeValue = ty}) params paramTypes
+
+    modifyIORef' M.defaultCheckerState $ \s ->
+        s
+            { M.properties =
+                Map.insert header.name (HLIR.Forall header.typeValue funcType) s.properties
+            }
+
+    pure (HLIR.MkTopProperty header newParams retType)
+checkToplevelSingular (HLIR.MkTopImplementation forType header params returnType body) = do
+    scheme <- findPropertyByName header.name
+
+    aliasedReturnType <- M.performAliasRemoval returnType
+    aliasedParamTypes <- mapM (M.performAliasRemoval . (.typeValue)) params
+    aliasedForType <- M.performAliasRemoval forType.typeValue
+
+    let funcType = (aliasedForType : aliasedParamTypes) HLIR.:->: aliasedReturnType
+    let implScheme = HLIR.Forall header.typeValue funcType
+
+    -- Checking if the implementation matches the property
+
+    expectedPropType <- M.instantiate scheme >>= M.performAliasRemoval
+    expectedImplType <- M.instantiate implScheme >>= M.performAliasRemoval
+
+    void $ expectedPropType `M.isSubtypeOf` expectedImplType
+
+    -- End of checking
+
+    modifyIORef' M.defaultCheckerState $ \s ->
+        s
+            { M.implementations =
+                Map.insert (header.name, aliasedForType) implScheme s.implementations
+            }
+
+    paramTypes <- mapM (M.performAliasRemoval . (.typeValue)) params
+    let newParams = zipWith (\p ty -> p{HLIR.typeValue = ty}) params paramTypes
+
+    let env =
+            Map.fromList (map ((HLIR.Forall [] <$>) . HLIR.unannotate) newParams)
+                <> Map.singleton forType.name (HLIR.Forall [] aliasedForType)
+
+    (newBody, cs) <- M.withEnvironment env $ checkE aliasedReturnType body
+
+    solveConstraints cs
+
+    pure
+        ( HLIR.MkTopImplementation
+            forType{HLIR.typeValue = aliasedForType}
+            header
+            newParams
+            aliasedReturnType
+            newBody
+        )
+
+findPropertyByName ::
+    (MonadIO m, M.MonadError M.Error m) => Text -> m (HLIR.Scheme HLIR.Type)
+findPropertyByName name = do
+    properties <- readIORef M.defaultCheckerState <&> M.properties
+
+    case Map.lookup name properties of
+        Just scheme -> pure scheme
+        Nothing -> M.throw (M.PropertyNotFound name)
 
 synthesizeE ::
     (MonadIO m, M.MonadError M.Error m) =>
     HLIR.HLIR "expression" ->
-    m (HLIR.Type, HLIR.TLIR "expression")
+    m (HLIR.Type, HLIR.TLIR "expression", M.Constraints)
 synthesizeE (HLIR.MkExprLocated p e) = do
     HLIR.pushPosition p
 
-    (ty, expr) <- synthesizeE e
+    (ty, expr, cs) <- synthesizeE e
 
     void HLIR.popPosition
 
-    pure (ty, HLIR.MkExprLocated p expr)
+    pure (ty, HLIR.MkExprLocated p expr, cs)
 synthesizeE (HLIR.MkExprLiteral lit) = case lit of
-    HLIR.MkLitInt n -> pure (HLIR.MkTyInt, HLIR.MkExprLiteral (HLIR.MkLitInt n))
-    HLIR.MkLitFloat f -> pure (HLIR.MkTyFloat, HLIR.MkExprLiteral (HLIR.MkLitFloat f))
-    HLIR.MkLitBool b -> pure (HLIR.MkTyBool, HLIR.MkExprLiteral (HLIR.MkLitBool b))
-    HLIR.MkLitString s -> pure (HLIR.MkTyString, HLIR.MkExprLiteral (HLIR.MkLitString s))
-    HLIR.MkLitChar c -> pure (HLIR.MkTyChar, HLIR.MkExprLiteral (HLIR.MkLitChar c))
+    HLIR.MkLitInt n -> pure (HLIR.MkTyInt, HLIR.MkExprLiteral (HLIR.MkLitInt n), mempty)
+    HLIR.MkLitFloat f -> pure (HLIR.MkTyFloat, HLIR.MkExprLiteral (HLIR.MkLitFloat f), mempty)
+    HLIR.MkLitBool b -> pure (HLIR.MkTyBool, HLIR.MkExprLiteral (HLIR.MkLitBool b), mempty)
+    HLIR.MkLitString s -> pure (HLIR.MkTyString, HLIR.MkExprLiteral (HLIR.MkLitString s), mempty)
+    HLIR.MkLitChar c -> pure (HLIR.MkTyChar, HLIR.MkExprLiteral (HLIR.MkLitChar c), mempty)
 synthesizeE (HLIR.MkExprVariable ann types) = do
-    variables <- readIORef M.defaultCheckerState <&> M.environment
+    env <- readIORef M.defaultCheckerState
+    let variables = env.environment
+        properties = env.properties
 
     case Map.lookup ann.name variables of
         Just scheme -> do
             ty <- M.instantiateWithSub scheme types >>= M.performAliasRemoval
-            pure (ty, HLIR.MkExprVariable ann{HLIR.typeValue = Identity ty} types)
-        Nothing -> M.throw (M.VariableNotFound ann.name)
+            pure (ty, HLIR.MkExprVariable ann{HLIR.typeValue = Identity ty} types, mempty)
+        Nothing -> case Map.lookup ann.name properties of
+            Just scheme -> do
+                ty <- M.instantiateWithSub scheme types >>= M.performAliasRemoval
+                pos <- HLIR.peekPosition'
+                pure
+                    ( ty
+                    , HLIR.MkExprVariable ann{HLIR.typeValue = Identity ty} types
+                    , [(ann.name, ty, pos)]
+                    )
+            Nothing -> M.throw (M.VariableNotFound ann.name)
 synthesizeE (HLIR.MkExprCondition cond thenB elseB) = do
-    condExpr <- checkE HLIR.MkTyBool cond
+    (condExpr, cs1) <- checkE HLIR.MkTyBool cond
 
-    (thenTy, thenExpr) <- synthesizeE thenB
-    elseExpr <- checkE thenTy elseB
+    (thenTy, thenExpr, cs2) <- synthesizeE thenB
+    (elseExpr, cs3) <- checkE thenTy elseB
 
-    pure (thenTy, HLIR.MkExprCondition condExpr thenExpr elseExpr)
+    let cs = cs1 <> cs2 <> cs3
+
+    pure (thenTy, HLIR.MkExprCondition condExpr thenExpr elseExpr, cs)
 synthesizeE (HLIR.MkExprLetIn binding value inExpr) = do
     expectedType <- maybe M.newType M.performAliasRemoval binding.typeValue
 
@@ -157,12 +245,14 @@ synthesizeE (HLIR.MkExprLetIn binding value inExpr) = do
                 Map.insert binding.name (HLIR.Forall [] expectedType) s.environment
             }
 
-    valueExpr <- checkE expectedType value
+    (valueExpr, cs1) <- checkE expectedType value
 
-    (inTy, typedInExpr) <- synthesizeE inExpr
+    (inTy, typedInExpr, cs2) <- synthesizeE inExpr
 
     modifyIORef' M.defaultCheckerState $ \s ->
         s{M.environment = oldEnv}
+
+    let cs = cs1 <> cs2
 
     pure
         ( inTy
@@ -170,6 +260,7 @@ synthesizeE (HLIR.MkExprLetIn binding value inExpr) = do
             binding{HLIR.typeValue = Identity expectedType}
             valueExpr
             typedInExpr
+        , cs
         )
 synthesizeE (HLIR.MkExprLambda params ret body) = do
     paramTypes <- mapM (maybe M.newType M.performAliasRemoval . (.typeValue)) params
@@ -191,7 +282,7 @@ synthesizeE (HLIR.MkExprLambda params ret body) = do
 
     retType <- maybe M.newType M.performAliasRemoval ret
 
-    bodyExpr <- checkE retType body
+    (bodyExpr, cs) <- checkE retType body
 
     modifyIORef' M.defaultCheckerState $ \s ->
         s
@@ -200,17 +291,21 @@ synthesizeE (HLIR.MkExprLambda params ret body) = do
 
     let funcType = paramTypes HLIR.:->: retType
 
-    pure (funcType, HLIR.MkExprLambda paramAnnotations (Identity retType) bodyExpr)
+    pure
+        (funcType, HLIR.MkExprLambda paramAnnotations (Identity retType) bodyExpr, cs)
 synthesizeE (HLIR.MkExprApplication callee args) = do
-    (calleeTy, calleeExpr) <- synthesizeE callee
+    (calleeTy, calleeExpr, cs1) <- synthesizeE callee
 
     case calleeTy of
         HLIR.MkTyFun paramTypes retType -> do
             if length paramTypes /= length args
                 then M.throw (M.InvalidArgumentQuantity (length paramTypes) (length args))
                 else do
-                    checkedArgs <- zipWithM checkE paramTypes args
-                    pure (retType, HLIR.MkExprApplication calleeExpr checkedArgs)
+                    (checkedArgs, cs2) <- unzip <$> zipWithM checkE paramTypes args
+
+                    let cs = cs1 <> mconcat cs2
+
+                    pure (retType, HLIR.MkExprApplication calleeExpr checkedArgs, cs)
         _ -> M.throw (M.ExpectedFunction calleeTy)
 synthesizeE (HLIR.MkExprStructureCreation ty fields) = do
     let annHeader = getHeader ty
@@ -221,18 +316,19 @@ synthesizeE (HLIR.MkExprStructureCreation ty fields) = do
     checkedFields <- forM (Map.toList fields) $ \(name, expr) -> do
         case Map.lookup name structTy of
             Just fieldTy -> do
-                checkedExpr <- checkE fieldTy expr
-                pure (name, checkedExpr)
+                (checkedExpr, cs) <- checkE fieldTy expr
+                pure ((name, checkedExpr), cs)
             Nothing -> M.throw (M.FieldNotFound name)
 
-    let (fieldNames, fieldExprs) = unzip checkedFields
+    let (unzippedFields, cs) = unzip checkedFields
 
     pure
         ( ty
-        , HLIR.MkExprStructureCreation ty (Map.fromList (zip fieldNames fieldExprs))
+        , HLIR.MkExprStructureCreation ty (Map.fromList unzippedFields)
+        , concat cs
         )
 synthesizeE (HLIR.MkExprStructureAccess struct field) = do
-    (structTy, structExpr) <- synthesizeE struct
+    (structTy, structExpr, cs) <- synthesizeE struct
 
     let annHeader = getHeader structTy
     scheme <- findStructureMaybeById annHeader
@@ -240,20 +336,20 @@ synthesizeE (HLIR.MkExprStructureAccess struct field) = do
     (structMap, _) <- M.instantiateMapAndSub scheme
 
     case Map.lookup field structMap of
-        Just fieldTy -> pure (fieldTy, HLIR.MkExprStructureAccess structExpr field)
+        Just fieldTy -> pure (fieldTy, HLIR.MkExprStructureAccess structExpr field, cs)
         Nothing -> M.throw (M.FieldNotFound field)
 
 checkE ::
     (MonadIO m, M.MonadError M.Error m) =>
     HLIR.Type ->
     HLIR.HLIR "expression" ->
-    m (HLIR.TLIR "expression")
+    m (HLIR.TLIR "expression", M.Constraints)
 checkE expected expr = do
-    (inferredTy, typedExpr) <- synthesizeE expr
+    (inferredTy, typedExpr, cs) <- synthesizeE expr
 
     void $ inferredTy `M.isSubtypeOf` expected
 
-    pure typedExpr
+    pure (typedExpr, cs)
 
 getHeader :: HLIR.Type -> Maybe Text
 getHeader (HLIR.MkTyApp (HLIR.MkTyId name) _) = Just name
@@ -271,3 +367,29 @@ findStructureMaybeById name = do
             Just scheme -> pure scheme
             Nothing -> M.throw (M.StructureNotFound (HLIR.MkTyId n))
         Nothing -> M.throw M.InvalidHeader
+
+solveConstraints :: (MonadIO m, M.MonadError M.Error m) => M.Constraints -> m ()
+solveConstraints constraints = do
+    implementations <-
+        Map.toList <$> (readIORef M.defaultCheckerState <&> M.implementations)
+    forM_ constraints $ \(name, ty, pos) -> do
+        implType <- findImplementationMatching implementations name ty pos
+        void $ ty `M.isSubtypeOf` implType
+    where
+    findImplementationMatching ::
+        (MonadIO m, M.MonadError M.Error m) =>
+        [((Text, HLIR.Type), HLIR.Scheme HLIR.Type)] ->
+        Text ->
+        HLIR.Type ->
+        HLIR.Position ->
+        m HLIR.Type
+    findImplementationMatching [] name ty pos = M.throwError (M.ImplementationNotFound name ty, pos)
+    findImplementationMatching (((implName, _), scheme) : xs) name ty pos
+        | implName == name = do
+            implTy <- M.instantiate scheme >>= M.performAliasRemoval
+            result <- runExceptT $ M.applySubtypeRelation False implTy ty
+
+            case result of
+                Right _ -> pure implTy
+                Left _ -> findImplementationMatching xs name ty pos
+        | otherwise = findImplementationMatching xs name ty pos
