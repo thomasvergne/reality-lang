@@ -34,7 +34,7 @@ data Type
     | MkTyApp Type [Type]
     | MkTyVar (IORef TyVar)
     | MkTyQuantified Text
-    | MkTyAnonymousStructure (Map Text Type)
+    | MkTyAnonymousStructure Type (Map Text Type)
     deriving (Ord, Generic)
 
 -- | ORD INSTANCE FOR TYPE
@@ -135,10 +135,10 @@ instance ToText Type where
         let a' = IO.unsafePerformIO $ readIORef a
         toText a'
     toText (MkTyQuantified a) = a
-    toText (MkTyAnonymousStructure a) =
+    toText (MkTyAnonymousStructure h a) =
         let fields = Map.toList a
             fieldTexts = map (\(name, ty) -> name <> ": " <> toText ty) fields
-         in T.concat ["{ ", T.intercalate ", " fieldTexts, " }"]
+         in T.concat [toText h, " { ", T.intercalate ", " fieldTexts, " }"]
 
 -- | TYPE SIMPLIFICATION
 -- | Given a type, simplify it by following the links of type variables until

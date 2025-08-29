@@ -65,9 +65,10 @@ removeAliases (HLIR.MkTyVar ref) = do
         HLIR.Link ty' -> removeAliases ty'
         HLIR.Unbound{} -> pure (HLIR.MkTyVar ref)
 removeAliases (HLIR.MkTyQuantified name) = pure (HLIR.MkTyQuantified name)
-removeAliases (HLIR.MkTyAnonymousStructure fields) = do
+removeAliases (HLIR.MkTyAnonymousStructure n fields) = do
+    n' <- removeAliases n
     newFields <- traverse removeAliases fields
-    pure (HLIR.MkTyAnonymousStructure newFields)
+    pure (HLIR.MkTyAnonymousStructure n' newFields)
 removeAliases (HLIR.MkTyApp base args) =
     HLIR.MkTyApp <$> removeAliases base <*> mapM removeAliases args
 

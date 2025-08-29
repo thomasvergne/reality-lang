@@ -127,7 +127,7 @@ checkToplevelSingular (HLIR.MkTopStructureDeclaration ann fields) = do
                 Map.insert ann.name (HLIR.Forall ann.typeValue fieldTypes) s.structures
             }
 
-    pure (HLIR.MkTopStructureDeclaration ann fields)
+    pure (HLIR.MkTopStructureDeclaration ann fieldTypes)
 checkToplevelSingular (HLIR.MkTopExternalFunction ann params ret) = do
     -- Removing aliases from the parameter and return types
     paramTypes <- mapM (M.performAliasRemoval . (.typeValue)) params
@@ -234,16 +234,12 @@ synthesizeE (HLIR.MkExprLiteral lit) = case lit of
 
     -- Int have type i32 by default
     HLIR.MkLitInt n -> pure (HLIR.MkTyInt, HLIR.MkExprLiteral (HLIR.MkLitInt n), mempty)
-
     -- Float have type f32 by default
     HLIR.MkLitFloat f -> pure (HLIR.MkTyFloat, HLIR.MkExprLiteral (HLIR.MkLitFloat f), mempty)
-
     -- Bool have type bool
     HLIR.MkLitBool b -> pure (HLIR.MkTyBool, HLIR.MkExprLiteral (HLIR.MkLitBool b), mempty)
-
     -- String have type *char
     HLIR.MkLitString s -> pure (HLIR.MkTyString, HLIR.MkExprLiteral (HLIR.MkLitString s), mempty)
-
     -- Char have type char
     HLIR.MkLitChar c -> pure (HLIR.MkTyChar, HLIR.MkExprLiteral (HLIR.MkLitChar c), mempty)
 synthesizeE (HLIR.MkExprVariable ann types) = do
@@ -259,7 +255,6 @@ synthesizeE (HLIR.MkExprVariable ann types) = do
             ty <- M.instantiateWithSub scheme types >>= M.performAliasRemoval
 
             pure (ty, HLIR.MkExprVariable ann{HLIR.typeValue = Identity ty} types, mempty)
-
         Nothing -> case Map.lookup ann.name properties of
             Just scheme -> do
                 -- If variable is a property, we treat it as a regular
@@ -272,7 +267,6 @@ synthesizeE (HLIR.MkExprVariable ann types) = do
                     , HLIR.MkExprVariable ann{HLIR.typeValue = Identity ty} types
                     , [(ann.name, ty, pos)]
                     )
-
             Nothing -> M.throw (M.VariableNotFound ann.name)
 synthesizeE (HLIR.MkExprCondition cond thenB elseB) = do
     -- Condition must be of type bool
@@ -431,7 +425,8 @@ synthesizeE (HLIR.MkExprStructureCreation ty fields) = do
     let substMap = Map.fromList (subst ++ zip rest newVars)
 
     -- Applying the substitution to the structure's field types
-    structTy <- Map.traverseWithKey (\_ t -> M.applySubstitution substMap t) structType
+    structTy <-
+        Map.traverseWithKey (\_ t -> M.applySubstitution substMap t) structType
 
     -- Checking each field against the corresponding field type
     -- and collecting constraints from each field.
@@ -570,7 +565,7 @@ solveConstraints constraints = do
         case implType of
             Just implTyValue -> void $ implTyValue `M.isSubtypeOf` ty
             Nothing -> pure ()
-    where
+  where
     findImplementationMatching ::
         (MonadIO m, M.MonadError M.Error m) =>
         [((Text, HLIR.Type), HLIR.Scheme HLIR.Type)] ->
@@ -578,7 +573,7 @@ solveConstraints constraints = do
         HLIR.Type ->
         HLIR.Position ->
         m (Maybe HLIR.Type)
-    findImplementationMatching []  _ _ _ = pure Nothing
+    findImplementationMatching [] _ _ _ = pure Nothing
     findImplementationMatching (((implName, _), scheme) : xs) name ty pos
         | implName == name = do
             -- We instantiate the implementation scheme to get a concrete type
