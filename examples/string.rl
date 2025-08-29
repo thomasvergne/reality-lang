@@ -50,8 +50,8 @@ impl fn (x: string) show() -> String {
     String::new(x)
 }
 
-fn print[A](x: A) -> i32 {
-    printf((show(x) + String::new("\n")).data)
+impl fn (x: *A) show[A]() -> String {
+    String::new("pointer")
 }
 
 impl fn (x: string) add(y: string) -> string {
@@ -91,4 +91,8 @@ impl fn (x: i32) equals(y: i32) -> bool {
 
 impl fn (x: bool) show() -> String {
     String::new(if (x) { "true" } else { "false" })
+}
+
+fn print[A](x: A) -> i32 {
+    printf((show(x) + String::new("\n")).data)
 }

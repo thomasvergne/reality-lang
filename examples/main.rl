@@ -2,16 +2,16 @@ const x: i32 = 5;
 
 import imports::*;
 
-fn id[A](x: A) -> A {
-    x
-}
+extern fn ptr_add[A](c: A, idx: u64) -> A;
 
-fn cnst[A, B](x: A) -> fn(B) -> A {
-    |_: B| id(x)
+property get_index[Cont, Idx, Item](container: Cont, index: Idx) -> Item;
+
+impl fn (container: *A) get_index[A](index: i32) -> *A {
+    let ptr = ptr_add(container, index);
+    ptr
 }
 
 fn main() -> i32 {
-    let id_ = |x| x;
-    let c = cnst(id_(x))(5.4);
-    c
+    let c = get_index("test", 0);
+    0
 }
