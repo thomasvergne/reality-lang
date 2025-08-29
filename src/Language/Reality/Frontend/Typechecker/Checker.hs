@@ -122,7 +122,7 @@ synthesizeE (HLIR.MkExprVariable ann types) = do
 
     case Map.lookup ann.name variables of
         Just scheme -> do
-            ty <- M.instantiate scheme >>= M.performAliasRemoval
+            ty <- M.instantiateWithSub scheme types >>= M.performAliasRemoval
             pure (ty, HLIR.MkExprVariable ann { HLIR.typeValue = Identity ty } types)
         Nothing -> M.throw (M.VariableNotFound ann.name)
 synthesizeE (HLIR.MkExprCondition cond thenB elseB) = do
@@ -225,7 +225,7 @@ checkE ::
 checkE expected expr = do
     (inferredTy, typedExpr) <- synthesizeE expr
 
-    void $ expected `M.isSubtypeOf` inferredTy
+    void $ inferredTy `M.isSubtypeOf` expected
 
     pure typedExpr
 
