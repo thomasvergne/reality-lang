@@ -69,6 +69,14 @@ instantiateMapAndSub (HLIR.Forall qvars schemeTy) = do
 
     pure (ty, s)
 
+instantiateWithSub :: MonadIO m => HLIR.Scheme HLIR.Type -> [HLIR.Type] -> m HLIR.Type
+instantiateWithSub (HLIR.Forall qvars schemeTy) types = do
+    let subst = zip qvars types
+        rest = drop (length types) qvars
+    newVars <- forM rest $ const newType
+    let s' = Map.fromList (subst ++ zip rest newVars)
+    applySubstitution s' schemeTy
+
 instantiate :: MonadIO m => HLIR.Scheme HLIR.Type -> m HLIR.Type
 instantiate (HLIR.Forall qvars schemeTy) = fst <$> instantiateAndSub (HLIR.Forall qvars schemeTy)
 
