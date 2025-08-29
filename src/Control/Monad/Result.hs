@@ -137,6 +137,41 @@ handle (Left (err, pos@(p1, _))) _ = liftIO $ do
                 , pos
                 )
                 "Resolution"
+        PropertyNotFound name ->
+            printErrorFromString
+                Nothing
+                ( "Property " <> show name <> " not found"
+                , Nothing
+                , pos
+                )
+                "Resolution"
+        UnsolvedConstraints cs ->
+            printErrorFromString
+                Nothing
+                ( "Unsolved constraints:\n"
+                    <> Text.unpack
+                        ( Text.unlines
+                            ( map
+                                (\(n, t) -> " - " <> n <> " : " <> toText t)
+                                cs
+                            )
+                        )
+                , Nothing
+                , pos
+                )
+                "Resolution"
+        ImplementationNotFound name ty ->
+            printErrorFromString
+                Nothing
+                ( "Implementation for property "
+                    <> show name
+                    <> " and type "
+                    <> show (toText ty)
+                    <> " not found"
+                , Nothing
+                , pos
+                )
+                "Resolution"
 
 type ImportStack = [FilePath]
 
@@ -165,6 +200,9 @@ data BonzaiError
     | EnvironmentVariableNotFound Text
     | ExpectedFunction HLIR.Type
     | InvalidHeader
+    | PropertyNotFound Text
+    | UnsolvedConstraints [(Text, HLIR.Type)]
+    | ImplementationNotFound Text HLIR.Type
     deriving (Eq, Generic)
 
 instance Show BonzaiError where
@@ -193,6 +231,22 @@ instance Show BonzaiError where
             <> show
                 (toText ty)
     show InvalidHeader = "Invalid header type"
+    show (PropertyNotFound name) = "Property " <> show name <> " not found"
+    show (UnsolvedConstraints cs) =
+        "Unsolved constraints:\n"
+            <> Text.unpack
+                ( Text.unlines
+                    ( map
+                        (\(n, t) -> " - " <> n <> " : " <> toText t)
+                        cs
+                    )
+                )
+    show (ImplementationNotFound name ty) =
+        "Implementation for property "
+            <> show name
+            <> " and type "
+            <> show (toText ty)
+            <> " not found"
 
 showError :: P.ParseError -> String
 showError = P.errorBundlePretty
