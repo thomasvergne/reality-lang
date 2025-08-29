@@ -55,6 +55,7 @@ library
     Control.Color
     Control.Monad.Parser
     Control.Monad.Result
+    Language.Reality.Backend.Specialization.Resolver
     Language.Reality.Frontend.Import.Resolver
     Language.Reality.Frontend.Module.Resolver
     Language.Reality.Frontend.Parser
@@ -63,6 +64,9 @@ library
     Language.Reality.Frontend.Parser.Internal.Type
     Language.Reality.Frontend.Parser.Lexer
     Language.Reality.Frontend.Parser.Toplevel
+    Language.Reality.Frontend.Typechecker.Checker
+    Language.Reality.Frontend.Typechecker.Monad
+    Language.Reality.Frontend.Typechecker.Unification
     Language.Reality.Syntax.HLIR
     Language.Reality.Syntax.Internal.Annotation
     Language.Reality.Syntax.Internal.Literal
