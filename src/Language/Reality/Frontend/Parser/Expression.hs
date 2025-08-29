@@ -191,6 +191,20 @@ parseExprStructCreation = do
 
         pure (name, value)
 
+-- | PARSE SIZEOF EXPRESSION
+-- | Parse a sizeof expression. A sizeof expression is an expression that consists
+-- | of the keyword "sizeof" followed by a type in parentheses. It is used to get
+-- | the size of a type in bytes in Reality. The syntax of a sizeof expression is
+-- | as follows:
+-- |
+-- | "sizeof" "(" type ")"
+parseExprSizeOf ::
+    (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
+parseExprSizeOf = do
+    ((start, _), _) <- Lex.reserved "sizeof"
+    ((_, end), ty) <- Lex.parens (snd <$> Typ.parseType)
+    pure ((start, end), HLIR.MkExprSizeOf ty)
+
 -- | PARSE TERM EXPRESSION
 -- | Parse a term expression. A term expression is the most basic form of an expression
 -- | in Reality. It can be a literal, a variable, a parenthesized expression, a block,
@@ -213,6 +227,7 @@ parseExprTerm =
             [ snd <$> Lex.parens parseExprFull
             , parseExprBlock
             , parseExprLambda
+            , parseExprSizeOf
             , parseExprTernary
             , P.try parseExprStructCreation
             , parseExprLetIn
@@ -285,52 +300,66 @@ parseExprFull = Lex.locateWith <$> P.makeExprParser parseExprTerm operators
                 pure $ \((start, _), e) -> ((start, end), HLIR.MkExprApplication e args)
             ]
         ,
+            [ P.Prefix . Lex.makeUnaryOp $ do
+                void $ Lex.symbol "*"
+                pure $ second HLIR.MkExprDereference
+            , P.Prefix . Lex.makeUnaryOp $ do
+                void $ Lex.symbol "&"
+                pure $ second HLIR.MkExprReference
+            ]
+        ,
             [ P.InfixL $ do
                 void $ Lex.symbol "*"
-                pure $ makeOperator "*"
+                pure $ makeOperator "mul"
             , P.InfixL $ do
                 void $ Lex.symbol "/"
-                pure $ makeOperator "/"
+                pure $ makeOperator "div"
             ]
         ,
             [ P.InfixL $ do
                 void $ Lex.symbol "+"
-                pure $ makeOperator "+"
+                pure $ makeOperator "add"
             , P.InfixL $ do
                 void $ Lex.symbol "-"
-                pure $ makeOperator "-"
+                pure $ makeOperator "sub"
             ]
         ,
             [ P.InfixN $ do
                 void $ Lex.symbol "=="
-                pure $ makeOperator "=="
+                pure $ makeOperator "equals"
             , P.InfixN $ do
                 void $ Lex.symbol "!="
-                pure $ makeOperator "!="
+                pure $ makeOperator "not_equals"
             ]
         ,
             [ P.InfixN $ do
                 void $ Lex.symbol ">="
-                pure $ makeOperator ">="
+                pure $ makeOperator "great_equals"
             , P.InfixN $ do
                 void $ Lex.symbol "<="
-                pure $ makeOperator "<="
+                pure $ makeOperator "less_equals"
             , P.InfixN $ do
                 void $ Lex.symbol ">"
-                pure $ makeOperator ">"
+                pure $ makeOperator "greater"
             , P.InfixN $ do
                 void $ Lex.symbol "<"
-                pure $ makeOperator "<"
+                pure $ makeOperator "lesser"
             ]
         ,
             [ P.InfixL $ do
                 void $ Lex.symbol "||"
-                pure $ makeOperator "||"
+                pure $ makeOperator "or"
             ]
         ,
             [ P.InfixL $ do
                 void $ Lex.symbol "&&"
-                pure $ makeOperator "&&"
+                pure $ makeOperator "and"
+            ]
+        , -- Assignment
+
+            [ P.InfixR $ do
+                void $ Lex.symbol "="
+                pure $ \((start, _), a) ((_, end), b) -> ((start, end), HLIR.MkExprUpdate a b)
             ]
         ]
 

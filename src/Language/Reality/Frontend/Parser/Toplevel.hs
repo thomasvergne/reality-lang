@@ -105,7 +105,7 @@ parseTopStructureDeclaration = do
         pure gens
 
     ((_, end), fields) <-
-        Lex.braces $ Map.fromList <$> P.sepBy1 parseField Lex.comma
+        Lex.braces $ Map.fromList <$> P.sepBy parseField Lex.comma
     pure
         ( (start, end)
         , HLIR.MkTopStructureDeclaration
