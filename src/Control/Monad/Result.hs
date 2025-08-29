@@ -268,7 +268,7 @@ compilerError msg = do
 
 throw :: (MonadError Error m, MonadIO m) => BonzaiError -> m a
 throw e = do
-    pos <- HLIR.popPosition'
+    pos <- HLIR.peekPosition'
     throwError (e, pos)
 
 parseError :: P.ParsingError -> FilePath -> Maybe P.FileContent -> IO a
