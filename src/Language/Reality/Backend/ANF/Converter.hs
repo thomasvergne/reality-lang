@@ -196,6 +196,17 @@ convertExpression (HLIR.MkExprLambda {}) =
 convertExpression (HLIR.MkExprCast e t) = do
     (e', l1) <- convertExpression e
     pure (MLIR.MkExprCast t e', l1)
+convertExpression (HLIR.MkExprWhile cond body inTy inExpr) = do
+    (cond', l1) <- convertExpression cond
+    (body', l2) <- convertExpression body
+    (inExpr', l3) <- convertExpression inExpr
+
+    newVariable <- freshSymbol
+    let var = MLIR.MkExprVariable newVariable
+    let bl = MLIR.MkExprBlock (l2 ++ [body'])
+    let def = MLIR.MkExprLet newVariable inTy.runIdentity (Just inExpr')
+    let whileExpr = MLIR.MkExprWhile cond' bl
+    pure (var, l1 ++ l3 ++ [def, whileExpr])
 
 
 {-# NOINLINE symbolCounter #-}

@@ -24,6 +24,10 @@ runSpecializationResolver ::
     [HLIR.TLIR "toplevel"] ->
     m [HLIR.TLIR "toplevel"]
 runSpecializationResolver toplevels = do
+    -- Resetting the specialization state before running the resolver.
+    -- This ensures that each run starts with a clean state.
+    writeIORef defaultSpecializer emptySpecializer
+
     resolved <- forM toplevels $ \n -> do
         (resolvedNode, newDefs) <- resolveSpecializationSingular n
         pure (newDefs ++ maybeToList resolvedNode)
@@ -283,6 +287,16 @@ resolveSpecializationInExpr (HLIR.MkExprCast e t) = do
     (specT, newDefs2) <- resolveSpecializationInType t
 
     pure (HLIR.MkExprCast typedE specT, newDefs1 ++ newDefs2)
+resolveSpecializationInExpr (HLIR.MkExprWhile cond body ret inExpr) = do
+    (typedCond, newDefs1) <- resolveSpecializationInExpr cond
+    (typedBody, newDefs2) <- resolveSpecializationInExpr body
+    (specRet, newDefs3) <- first Identity <$> resolveSpecializationInType ret.runIdentity
+    (typedInExpr, newDefs4) <- resolveSpecializationInExpr inExpr
+
+    pure
+        ( HLIR.MkExprWhile typedCond typedBody specRet typedInExpr
+        , newDefs1 ++ newDefs2 ++ newDefs3 ++ newDefs4
+        )
 
 -- | Apply a substitution to all types in an expression.
 -- | This function takes a substitution map and an expression, and returns
@@ -365,6 +379,12 @@ applySubstInExpr subst (HLIR.MkExprCast e t) = do
     newE <- applySubstInExpr subst e
     newT <- M.applySubstitution subst t
     pure (HLIR.MkExprCast newE newT)
+applySubstInExpr subst (HLIR.MkExprWhile cond body ret inExpr) = do
+    newCond <- applySubstInExpr subst cond
+    newBody <- applySubstInExpr subst body
+    newRet <- M.applySubstitution subst ret.runIdentity
+    newInExpr <- applySubstInExpr subst inExpr
+    pure (HLIR.MkExprWhile newCond newBody (Identity newRet) newInExpr)
 
 -- | Resolve specialization for identifiers.
 -- | This function takes an identifier and a associated type
