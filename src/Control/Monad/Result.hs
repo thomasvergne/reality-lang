@@ -1,4 +1,5 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Control.Monad.Result where
 
@@ -15,6 +16,7 @@ import Language.Reality.Syntax.HLIR qualified as HLIR
 import System.Directory (doesFileExist)
 import System.FilePath (normalise)
 import Text.Megaparsec hiding (parseError)
+import Language.Reality.Frontend.Typechecker.Monad qualified as TC
 
 instance (D.HasHints Void String) where
     hints _ = mempty
@@ -152,7 +154,10 @@ handle (Left (err, pos@(p1, _))) _ = liftIO $ do
                     <> Text.unpack
                         ( Text.unlines
                             ( map
-                                (\(n, t) -> " - " <> n <> " : " <> toText t)
+                                (\case
+                                    TC.MkFieldConstraint ty field fieldTy _ -> " - field " <> field <> " of type " <> toText fieldTy <> " in type " <> toText ty
+                                    TC.MkImplConstraint name ty _ -> " - implementation of property " <> name <> " for type " <> toText ty
+                                )
                                 cs
                             )
                         )
@@ -201,7 +206,7 @@ data BonzaiError
     | ExpectedFunction HLIR.Type
     | InvalidHeader
     | PropertyNotFound Text
-    | UnsolvedConstraints [(Text, HLIR.Type)]
+    | UnsolvedConstraints TC.Constraints
     | ImplementationNotFound Text HLIR.Type
     deriving (Eq, Generic)
 
@@ -237,7 +242,10 @@ instance Show BonzaiError where
             <> Text.unpack
                 ( Text.unlines
                     ( map
-                        (\(n, t) -> " - " <> n <> " : " <> toText t)
+                        (\case
+                            TC.MkFieldConstraint ty field fieldTy _ -> " - field " <> field <> " of type " <> toText fieldTy <> " in type " <> toText ty
+                            TC.MkImplConstraint name ty _ -> " - implementation of property " <> name <> " for type " <> toText ty
+                        )
                         cs
                     )
                 )
