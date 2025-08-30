@@ -55,6 +55,11 @@ library
     Control.Color
     Control.Monad.Parser
     Control.Monad.Result
+    Language.Reality.Backend.ANF.Converter
+    Language.Reality.Backend.Closure.Converter
+    Language.Reality.Backend.Closure.Free
+    Language.Reality.Backend.Closure.Hoisting
+    Language.Reality.Backend.Codegen
     Language.Reality.Backend.Specialization.Resolver
     Language.Reality.Frontend.Import.Resolver
     Language.Reality.Frontend.Module.Resolver
@@ -72,6 +77,7 @@ library
     Language.Reality.Syntax.Internal.Literal
     Language.Reality.Syntax.Internal.Position
     Language.Reality.Syntax.Internal.Type
+    Language.Reality.Syntax.MLIR
 
   -- Modules included in this library but not exported.
   -- other-modules:
