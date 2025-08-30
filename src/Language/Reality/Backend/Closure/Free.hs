@@ -38,3 +38,4 @@ instance Free (HLIR.Expression Identity HLIR.Type) where
     free (HLIR.MkExprSizeOf _) = Map.empty
     free (HLIR.MkExprSingleIf cond thenB _) = free cond <> free thenB
     free (HLIR.MkExprCast e _) = free e
+    free (HLIR.MkExprWhile cond body _ inExpr) = free cond <> free body <> free inExpr

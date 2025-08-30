@@ -28,12 +28,14 @@ convertSingularNode (HLIR.MkTopFunctionDeclaration name params returnType body) 
     modifyIORef' globals (Map.insert name.name funType)
 
     oldLocals <- readIORef locals
+
     modifyIORef' locals (<> Map.fromList (map HLIR.unannotate params))
 
     (newBody, ns, newReturnType) <- convertExpression body
 
     writeIORef locals oldLocals
     let newFunType = HLIR.MkTyFun (map (.typeValue) params) newReturnType
+
     modifyIORef' globals (Map.insert name.name newFunType)
 
     pure
@@ -116,17 +118,21 @@ convertExpression (HLIR.MkExprApplication callee arguments) = do
 
     let allFunctions = nativeFunctions <> globalFunctions
 
-    (newArguments, nss, _) <- unzip3 <$> mapM convertExpression arguments
+    (newArguments, nss, argTypes) <- unzip3 <$> mapM convertExpression arguments
 
     case getVariable callee of
         Just (name, ty) | Just _ <- Map.lookup name allFunctions -> do
-            let (_, retTy) = case ty of
+            let chosenTy = fromMaybe ty (Map.lookup name globalFunctions)
+
+            let (_, retTy) = case chosenTy of
                     HLIR.MkTyFun args ret -> (args, ret)
                     _ -> M.compilerError "Expected a function type"
 
+            let funTy = argTypes HLIR.:->: retTy
+
             pure
                 ( HLIR.MkExprApplication
-                    { callee = callee
+                    { callee = HLIR.MkExprVariable (HLIR.MkAnnotation name (Identity funTy)) []
                     , arguments = newArguments
                     }
                 , mconcat nss
@@ -136,9 +142,22 @@ convertExpression (HLIR.MkExprApplication callee arguments) = do
             (convertedFunction, ns', calleeType) <- convertExpression callee
 
             lambdaCallName <- freshSymbol "lambda_call_"
+            lambdaStructureName <- freshSymbol "lambda_struct_"
+
+            let structure = HLIR.MkTopStructureDeclaration
+                    { HLIR.header = HLIR.MkAnnotation lambdaStructureName []
+                    , HLIR.fields = Map.fromList
+                        [ ( "function"
+                          , HLIR.MkTyFun (HLIR.MkTyPointer (HLIR.MkTyId "void") : argTypes) (case calleeType of
+                                HLIR.MkTyFun _ ret -> ret
+                                _ -> M.compilerError "Expected a function type")
+                          )
+                        , ("environment", HLIR.MkTyPointer (HLIR.MkTyId "void"))
+                        ]
+                    }
 
             let callVar =
-                    HLIR.MkExprVariable (HLIR.MkAnnotation lambdaCallName (Identity calleeType)) []
+                    HLIR.MkExprDereference (HLIR.MkExprVariable (HLIR.MkAnnotation lambdaCallName (Identity (HLIR.MkTyPointer (HLIR.MkTyId lambdaStructureName)))) []) (Identity (HLIR.MkTyId lambdaStructureName))
                 function = HLIR.MkExprStructureAccess callVar "function"
                 environment = HLIR.MkExprStructureAccess callVar "environment"
 
@@ -146,21 +165,29 @@ convertExpression (HLIR.MkExprApplication callee arguments) = do
 
             pure
                 ( HLIR.MkExprLetIn
-                    { HLIR.binding = HLIR.MkAnnotation lambdaCallName (Identity calleeType)
-                    , HLIR.value = convertedFunction
+                    { HLIR.binding = HLIR.MkAnnotation lambdaCallName (Identity (HLIR.MkTyPointer (HLIR.MkTyId lambdaStructureName)))
+                    , HLIR.value = HLIR.MkExprCast convertedFunction (HLIR.MkTyPointer (HLIR.MkTyId lambdaStructureName))
                     , HLIR.inExpr = call
                     , HLIR.returnType = Identity (case calleeType of
                         HLIR.MkTyFun _ ret -> ret
                         _ -> M.compilerError "Expected a function type")
                     }
-                , mconcat nss <> ns'
+                , mconcat nss <> ns' <> [structure]
                 , case calleeType of
                     HLIR.MkTyId _ -> M.compilerError "Cannot determine return type of lambda call"
                     HLIR.MkTyFun _ ret -> ret
                     _ -> M.compilerError "Expected a function type"
                 )
 convertExpression (HLIR.MkExprLocated _ e) = convertExpression e
-convertExpression e@(HLIR.MkExprVariable (HLIR.MkAnnotation _ (Identity ty)) _) = pure (e, [], ty)
+convertExpression e@(HLIR.MkExprVariable (HLIR.MkAnnotation name (Identity ty)) _) = do
+    locals' <- readIORef locals
+    globals' <- readIORef globals
+
+    let variables = locals' <> globals'
+
+    case Map.lookup name variables of
+        Just varTy -> pure (e, [], varTy)
+        Nothing -> pure (e, [], ty)
 convertExpression e@(HLIR.MkExprLiteral lit) =
     pure
         ( e
@@ -247,6 +274,16 @@ convertExpression (HLIR.MkExprSingleIf cond thenB _) = do
 convertExpression (HLIR.MkExprCast e t) = do
     (newE, ns, _) <- convertExpression e
     pure (HLIR.MkExprCast newE t, ns, t)
+convertExpression (HLIR.MkExprWhile cond body _ inExpr) = do
+    (newCond, ns1, _) <- convertExpression cond
+    (newBody, ns2, _) <- convertExpression body
+    (newInExpr, ns3, inTy) <- convertExpression inExpr
+    pure
+        ( HLIR.MkExprWhile newCond newBody (Identity inTy) newInExpr
+        , ns1 <> ns2 <> ns3
+        , inTy
+        )
+
 
 -- | Convert a lambda expression to a closure-converted expression.
 -- | This function takes a lambda expression, and returns an expression with closures
@@ -293,10 +330,10 @@ convertLambda (HLIR.MkExprLambda args returnType body) reserved = do
                         [
                             ( "function"
                             , HLIR.MkTyFun
-                                (HLIR.MkTyId environmentStructName : map (runIdentity . (.typeValue)) args)
+                                (HLIR.MkTyPointer (HLIR.MkTyId environmentStructName) : map (runIdentity . (.typeValue)) args)
                                 returnType.runIdentity
                             )
-                        , ("environment", HLIR.MkTyId environmentStructName)
+                        , ("environment", HLIR.MkTyPointer (HLIR.MkTyId environmentStructName))
                         ]
                 }
 
@@ -319,7 +356,7 @@ convertLambda (HLIR.MkExprLambda args returnType body) reserved = do
                         { HLIR.binding = HLIR.MkAnnotation name (Identity ty)
                         , HLIR.value =
                             HLIR.MkExprStructureAccess
-                                { HLIR.structure = environmentVar
+                                { HLIR.structure = HLIR.MkExprDereference environmentVar (Identity (HLIR.MkTyId environmentStructName))
                                 , HLIR.field = name
                                 }
                         , HLIR.inExpr = acc
@@ -328,6 +365,10 @@ convertLambda (HLIR.MkExprLambda args returnType body) reserved = do
                 )
                 newBody
                 (Map.toList environment)
+    let newBodyWithEnvCasting = HLIR.MkExprLetIn (HLIR.MkAnnotation environmentName (Identity (HLIR.MkTyPointer (HLIR.MkTyId environmentStructName))) )
+            (HLIR.MkExprCast environmentVar (HLIR.MkTyPointer (HLIR.MkTyId environmentStructName)))
+            newBody'
+            (Identity newReturnType)
 
     let lambdaStructureCreation =
             HLIR.MkExprStructureCreation
@@ -338,19 +379,20 @@ convertLambda (HLIR.MkExprLambda args returnType body) reserved = do
                             ( "function"
                             , HLIR.MkExprLambda
                                 { HLIR.parameters =
-                                    HLIR.MkAnnotation "env" (Identity (HLIR.MkTyId environmentStructName)) : args
+                                    HLIR.MkAnnotation "env" (Identity (HLIR.MkTyPointer (HLIR.MkTyId environmentStructName)))
+                                        : args
                                 , HLIR.returnType = Identity newReturnType
-                                , HLIR.body = newBody'
+                                , HLIR.body = newBodyWithEnvCasting
                                 }
                             )
-                        , ("environment", environmentStructCreation)
+                        , ("environment", HLIR.MkExprReference environmentStructCreation (Identity (HLIR.MkTyPointer (HLIR.MkTyId environmentStructName))) )
                         ]
-                }
+            }
 
     pure
-        ( lambdaStructureCreation
+        ( HLIR.MkExprCast (HLIR.MkExprReference lambdaStructureCreation (Identity (HLIR.MkTyPointer (HLIR.MkTyId lambdaStructName))) ) (HLIR.MkTyPointer (HLIR.MkTyId "void"))
         , [environmentStructure, lambdaStructure] <> ns
-        , HLIR.MkTyId lambdaStructName
+        , HLIR.MkTyPointer (HLIR.MkTyId lambdaStructName)
         )
 convertLambda _ _ = M.compilerError "Expected a lambda expression"
 
