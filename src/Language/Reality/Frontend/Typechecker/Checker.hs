@@ -1,3 +1,5 @@
+{-# LANGUAGE LambdaCase #-}
+
 module Language.Reality.Frontend.Typechecker.Checker where
 
 import Control.Monad.Except qualified as M
@@ -40,7 +42,7 @@ checkToplevelSingular (HLIR.MkTopConstantDeclaration ann expr) = do
     -- means that there are function calls. But constants cannot have function calls.
     -- So we throw an error if there are any unresolved constraints.
     unless (null cs)
-        $ M.throw (M.UnsolvedConstraints (map removeThird cs))
+        $ M.throw (M.UnsolvedConstraints cs)
 
     -- Adding the constant to the environment
     modifyIORef' M.defaultCheckerState $ \s ->
@@ -265,10 +267,10 @@ synthesizeE (HLIR.MkExprVariable ann types) = do
                 pure
                     ( ty
                     , HLIR.MkExprVariable ann{HLIR.typeValue = Identity ty} types
-                    , [(ann.name, ty, pos)]
+                    , [M.MkImplConstraint ann.name ty pos]
                     )
             Nothing -> M.throw (M.VariableNotFound ann.name)
-synthesizeE (HLIR.MkExprCondition cond thenB elseB) = do
+synthesizeE (HLIR.MkExprCondition cond thenB elseB _) = do
     -- Condition must be of type bool
     (condExpr, cs1) <- checkE HLIR.MkTyBool cond
 
@@ -281,8 +283,8 @@ synthesizeE (HLIR.MkExprCondition cond thenB elseB) = do
     -- Collecting all constraints
     let cs = cs1 <> cs2 <> cs3
 
-    pure (thenTy, HLIR.MkExprCondition condExpr thenExpr elseExpr, cs)
-synthesizeE (HLIR.MkExprLetIn binding value inExpr) = do
+    pure (thenTy, HLIR.MkExprCondition condExpr thenExpr elseExpr (Identity thenTy), cs)
+synthesizeE (HLIR.MkExprLetIn binding value inExpr _) = do
     -- Collecting old environment to restore it later
     oldEnv <- readIORef M.defaultCheckerState <&> M.environment
 
@@ -322,6 +324,7 @@ synthesizeE (HLIR.MkExprLetIn binding value inExpr) = do
             binding{HLIR.typeValue = Identity expectedType}
             valueExpr
             typedInExpr
+            (Identity inTy)
         , cs
         )
 synthesizeE (HLIR.MkExprLambda params ret body) = do
@@ -413,38 +416,39 @@ synthesizeE (HLIR.MkExprStructureCreation ty fields) = do
     -- If the structure is not found, we throw an error.
     -- If found, we do not instantiate it, because we need to
     -- manually substitute the type variables with the applied types.
-    HLIR.Forall qvars structType <- findStructureMaybeById annHeader
+    findStructureMaybeById annHeader >>= \case
+        Nothing -> M.throw M.InvalidHeader
+        Just (HLIR.Forall qvars structType) -> do
+            -- Building a substitution map from the structure's quantified
+            -- variables to the applied types. If there are more quantified
+            -- variables than applied types, we create new type variables
+            -- for the remaining quantified variables.
+            let subst = zip qvars annTypes
+                rest = drop (length annTypes) qvars
+            newVars <- forM rest $ const M.newType
+            let substMap = Map.fromList (subst ++ zip rest newVars)
 
-    -- Building a substitution map from the structure's quantified
-    -- variables to the applied types. If there are more quantified
-    -- variables than applied types, we create new type variables
-    -- for the remaining quantified variables.
-    let subst = zip qvars annTypes
-        rest = drop (length annTypes) qvars
-    newVars <- forM rest $ const M.newType
-    let substMap = Map.fromList (subst ++ zip rest newVars)
+            -- Applying the substitution to the structure's field types
+            structTy <-
+                Map.traverseWithKey (\_ t -> M.applySubstitution substMap t) structType
 
-    -- Applying the substitution to the structure's field types
-    structTy <-
-        Map.traverseWithKey (\_ t -> M.applySubstitution substMap t) structType
+            -- Checking each field against the corresponding field type
+            -- and collecting constraints from each field.
+            checkedFields <- forM (Map.toList fields) $ \(name, expr) -> do
+                case Map.lookup name structTy of
+                    Just fieldTy -> do
+                        (checkedExpr, cs) <- checkE fieldTy expr
+                        pure ((name, checkedExpr), cs)
+                    Nothing -> M.throw (M.FieldNotFound name)
 
-    -- Checking each field against the corresponding field type
-    -- and collecting constraints from each field.
-    checkedFields <- forM (Map.toList fields) $ \(name, expr) -> do
-        case Map.lookup name structTy of
-            Just fieldTy -> do
-                (checkedExpr, cs) <- checkE fieldTy expr
-                pure ((name, checkedExpr), cs)
-            Nothing -> M.throw (M.FieldNotFound name)
+            -- Collecting all constraints
+            let (unzippedFields, cs) = unzip checkedFields
 
-    -- Collecting all constraints
-    let (unzippedFields, cs) = unzip checkedFields
-
-    pure
-        ( aliasedTy
-        , HLIR.MkExprStructureCreation aliasedTy (Map.fromList unzippedFields)
-        , concat cs
-        )
+            pure
+                ( aliasedTy
+                , HLIR.MkExprStructureCreation aliasedTy (Map.fromList unzippedFields)
+                , concat cs
+                )
 synthesizeE (HLIR.MkExprStructureAccess struct field) = do
     -- Synthesizing the type of the structure expression
     (structTy, structExpr, cs) <- synthesizeE struct
@@ -452,21 +456,26 @@ synthesizeE (HLIR.MkExprStructureAccess struct field) = do
     -- Finding the structure definition by its header, and collecting
     -- it applied type variables.
     annHeader <- getHeader <$> M.removeAliases structTy
-    HLIR.Forall qvars ty <- findStructureMaybeById annHeader
+    findStructureMaybeById annHeader >>= \case
+        Nothing -> do
+            fieldTy <- M.newType
+            pos <- HLIR.peekPosition'
 
-    -- Building a substitution map from the structure's quantified
-    -- variables to the applied types. And applying the substitution to
-    -- the structure's field types.
-    let substMap = Map.fromList (zip qvars (getTypeArgs structTy))
-    structMap <- Map.traverseWithKey (\_ t -> M.applySubstitution substMap t) ty
+            pure (fieldTy, HLIR.MkExprStructureAccess structExpr field, cs <> [M.MkFieldConstraint structTy field fieldTy pos])
+        Just (HLIR.Forall qvars ty) -> do
+            -- Building a substitution map from the structure's quantified
+            -- variables to the applied types. And applying the substitution to
+            -- the structure's field types.
+            let substMap = Map.fromList (zip qvars (getTypeArgs structTy))
+            structMap <- Map.traverseWithKey (\_ t -> M.applySubstitution substMap t) ty
 
-    -- Looking up the field in the structure's field types
-    -- If found, we return its type and the typed expression.
-    -- If not found, we throw an error.
-    case Map.lookup field structMap of
-        Just fieldTy -> pure (fieldTy, HLIR.MkExprStructureAccess structExpr field, cs)
-        Nothing -> M.throw (M.FieldNotFound field)
-synthesizeE (HLIR.MkExprDereference e) = do
+            -- Looking up the field in the structure's field types
+            -- If found, we return its type and the typed expression.
+            -- If not found, we throw an error.
+            case Map.lookup field structMap of
+                Just fieldTy -> pure (fieldTy, HLIR.MkExprStructureAccess structExpr field, cs)
+                Nothing -> M.throw (M.FieldNotFound field)
+synthesizeE (HLIR.MkExprDereference e _) = do
     -- Synthesizing the type of the expression to dereference
     -- It must be a pointer type. We also create a fresh type variable
     -- to represent the type being pointed to.
@@ -480,15 +489,15 @@ synthesizeE (HLIR.MkExprDereference e) = do
     -- of the expected pointer type.
     void $ eTy `M.isSubtypeOf` expectedType
 
-    pure (newType, HLIR.MkExprDereference eExpr, cs)
-synthesizeE (HLIR.MkExprReference e) = do
+    pure (newType, HLIR.MkExprDereference eExpr (Identity newType), cs)
+synthesizeE (HLIR.MkExprReference e _) = do
     -- Synthesizing the type of the expression to reference
     -- The resulting type is a pointer to that type.
     (eTy, eExpr, cs) <- synthesizeE e
     let refType = HLIR.MkTyPointer eTy
 
-    pure (refType, HLIR.MkExprReference eExpr, cs)
-synthesizeE (HLIR.MkExprUpdate update value) = do
+    pure (refType, HLIR.MkExprReference eExpr (Identity refType), cs)
+synthesizeE (HLIR.MkExprUpdate update value _) = do
     -- Synthesizing the type of the update expression
     -- The update expression must be of a type that can be updated,
     -- so we just synthesize its type and use it as the expected type
@@ -499,13 +508,33 @@ synthesizeE (HLIR.MkExprUpdate update value) = do
     -- Collecting all constraints
     let cs = cs1 <> cs2
 
-    pure (updateTy, HLIR.MkExprUpdate updateExpr valueExpr, cs)
+    pure (updateTy, HLIR.MkExprUpdate updateExpr valueExpr (Identity updateTy), cs)
 synthesizeE (HLIR.MkExprSizeOf t) = do
     -- Sizeof expressions have type u64, and we just need to
     -- remove aliases from the type being measured.
     aliasedType <- M.performAliasRemoval t
 
     pure (HLIR.MkTyId "u64", HLIR.MkExprSizeOf aliasedType, mempty)
+synthesizeE (HLIR.MkExprSingleIf cond thenBranch _) = do
+    -- Condition must be of type bool
+    (condExpr, cs) <- checkE HLIR.MkTyBool cond
+
+    (thenTy, typedThenBranch, cs2) <- synthesizeE thenBranch
+
+    -- The type of the single-if expression is the type of the then branch
+    pure (thenTy, HLIR.MkExprSingleIf condExpr typedThenBranch (Identity thenTy), cs <> cs2)
+synthesizeE (HLIR.MkExprCast expr targetTy) = do
+    -- Synthesizing the type of the expression to cast
+    (exprTy, exprExpr, cs) <- synthesizeE expr
+
+    -- Removing aliases from the target type
+    aliasedTargetTy <- M.performAliasRemoval targetTy
+
+    -- Adding a constraint that the expression type must be a subtype
+    -- of the target type.
+    void $ exprTy `M.isSubtypeOf` aliasedTargetTy
+
+    pure (aliasedTargetTy, HLIR.MkExprCast exprExpr aliasedTargetTy, cs)
 
 -- | CHECK EXPRESSION
 -- | Check an expression against an expected type.
@@ -531,15 +560,13 @@ checkE expected expr = do
 -- | If found, we return its type scheme.
 findStructureMaybeById ::
     (MonadIO m, M.MonadError M.Error m) =>
-    Maybe Text -> m (HLIR.Scheme (Map Text HLIR.Type))
+    Maybe Text -> m (Maybe (HLIR.Scheme (Map Text HLIR.Type)))
 findStructureMaybeById name = do
     structTypes <- readIORef M.defaultCheckerState <&> M.structures
 
     case name of
-        Just n -> case Map.lookup n structTypes of
-            Just scheme -> pure scheme
-            Nothing -> M.throw (M.StructureNotFound (HLIR.MkTyId n))
-        Nothing -> M.throw M.InvalidHeader
+        Just n -> pure $ Map.lookup n structTypes
+        Nothing -> pure Nothing
 
 -- | SOLVE CONSTRAINTS
 -- | Solve a list of constraints by finding suitable implementations
@@ -556,16 +583,43 @@ solveConstraints constraints = do
     -- Getting the current implementations from the state
     implementations <-
         Map.toList <$> (readIORef M.defaultCheckerState <&> M.implementations)
+    structures <- readIORef M.defaultCheckerState <&> Map.toList . M.structures
 
     -- For each constraint, we try to find a matching implementation
     -- If found, we affine the types by ensuring that the implementation
     -- type is a subtype of the required type.
-    forM_ constraints $ \(name, ty, pos) -> do
-        implType <- findImplementationMatching implementations name ty pos
-        case implType of
-            Just implTyValue -> void $ implTyValue `M.isSubtypeOf` ty
-            Nothing -> pure ()
+    forM_ constraints $ \case
+        M.MkImplConstraint name ty pos -> do
+            mImplTy <- findImplementationMatching implementations name ty pos
+            case mImplTy of
+                Just implTy -> void $ implTy `M.isSubtypeOf` ty
+                Nothing -> pure () -- Ignoring unsolved constraints
+        M.MkFieldConstraint structTy fieldName fieldTy pos -> do
+            header <- getHeader <$> M.removeAliases structTy
+
+            case header of
+                Just resolved -> findStructureMatching structures resolved pos >>= \case
+                    Just structMap -> case Map.lookup fieldName structMap of
+                        Just expectedFieldTy -> void $ expectedFieldTy `M.isSubtypeOf` fieldTy
+                        Nothing -> pure () -- Ignoring unsolved constraints
+                    Nothing -> pure () -- Ignoring unsolved constraints
+                Nothing -> pure () -- Ignoring unsolved constraints
+
   where
+    findStructureMatching ::
+        (MonadIO m, M.MonadError M.Error m) =>
+        [(Text, HLIR.Scheme (Map Text HLIR.Type))] ->
+        Text ->
+        HLIR.Position ->
+        m (Maybe (Map Text HLIR.Type))
+    findStructureMatching [] _ _ = pure Nothing
+    findStructureMatching ((structName, scheme) : xs) name pos
+        | structName == name = do
+            -- We instantiate the structure scheme to get a concrete type
+            structTy <- M.instantiateMap scheme >>= mapM M.performAliasRemoval
+            pure (Just structTy)
+        | otherwise = findStructureMatching xs name pos
+
     findImplementationMatching ::
         (MonadIO m, M.MonadError M.Error m) =>
         [((Text, HLIR.Type), HLIR.Scheme HLIR.Type)] ->

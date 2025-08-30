@@ -4,6 +4,7 @@ import Data.Map qualified as Map
 import Data.Text qualified as Text
 import GHC.IO qualified as IO
 import Language.Reality.Syntax.HLIR qualified as HLIR
+import Prelude hiding (Constraint)
 
 -- | The state of the type checker monad.
 -- | This state includes:
@@ -37,7 +38,12 @@ type Substitution = Map Text HLIR.Type
 -- | It is used to represent a type constraint that needs to be satisfied.
 -- | For instance a constraint can represent that a variable must have a certain type.
 -- | This is mainly used during type inference to resolve implementation constraints.
-type Constraints = [(Text, HLIR.Type, HLIR.Position)]
+type Constraints = [Constraint]
+
+data Constraint
+    = MkImplConstraint Text HLIR.Type HLIR.Position
+    | MkFieldConstraint HLIR.Type Text HLIR.Type HLIR.Position
+    deriving (Eq, Ord, Generic)
 
 -- | WITH ENVIRONMENT
 -- | Temporarily extend the type environment with a new mapping.
