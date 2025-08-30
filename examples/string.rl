@@ -29,15 +29,6 @@ mod String {
     }
 }
 
-impl fn (x: String) add(y: String) -> String {
-    let result = strcat(x.data, y.data);
-
-    String {
-        data: result,
-        length: strlen(result)
-    }
-}
-
 extern fn printf(s: string) -> i32;
 
 property show[A](x: A) -> String;

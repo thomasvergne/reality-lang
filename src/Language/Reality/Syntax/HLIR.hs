@@ -46,12 +46,15 @@ data Expression f t
         { binding :: Ann.Annotation (f t)
         , value :: Expression f t
         , inExpr :: Expression f t
+        , returnType :: f t
         }
     | MkExprCondition
         { condition :: Expression f t
         , thenBranch :: Expression f t
         , elseBranch :: Expression f t
+        , returnType :: f t
         }
+    | MkExprSingleIf (Expression f t) (Expression f t) (f t)
     | MkExprLocated
         { span :: Position
         , expr :: Expression f t
@@ -64,13 +67,15 @@ data Expression f t
         { annotation :: t
         , fields :: Map Text (Expression f t)
         }
-    | MkExprDereference (Expression f t)
-    | MkExprReference (Expression f t)
+    | MkExprDereference (Expression f t) (f t)
+    | MkExprReference (Expression f t) (f t)
     | MkExprUpdate
         { update :: Expression f t
         , value :: Expression f t
+        , updateType :: f t
         }
     | MkExprSizeOf t
+    | MkExprCast (Expression f t) t
     deriving (Eq, Ord, Generic)
 
 data Toplevel f t
@@ -174,7 +179,7 @@ instance (ToText (f t), ToText t) => ToText (Expression f t) where
             , toText body
             , " }"
             ]
-    toText (MkExprLetIn binding value inExpr) =
+    toText (MkExprLetIn binding value inExpr _) =
         T.concat
             [ "let "
             , toText binding
@@ -183,7 +188,7 @@ instance (ToText (f t), ToText t) => ToText (Expression f t) where
             , " in "
             , toText inExpr
             ]
-    toText (MkExprCondition cond thenB elseB) =
+    toText (MkExprCondition cond thenB elseB _) =
         T.concat
             [ "if "
             , toText cond
@@ -198,11 +203,14 @@ instance (ToText (f t), ToText t) => ToText (Expression f t) where
     toText (MkExprStructureCreation ann fields) =
         let fieldTexts = map (\(name, expr) -> name <> ": " <> toText expr) (Map.toList fields)
          in T.concat ["{ ", T.intercalate ", " fieldTexts, " } :: ", toText ann]
-    toText (MkExprDereference e) = T.concat ["*", toText e]
-    toText (MkExprReference e) = T.concat ["&", toText e]
-    toText (MkExprUpdate update value) =
+    toText (MkExprDereference e _) = T.concat ["*", toText e]
+    toText (MkExprReference e _) = T.concat ["&", toText e]
+    toText (MkExprUpdate update value _) =
         T.concat [toText update, " = ", toText value]
     toText (MkExprSizeOf t) = T.concat ["sizeof(", toText t, ")"]
+    toText (MkExprSingleIf cond thenB _) =
+        T.concat ["if ", toText cond, " then ", toText thenB]
+    toText (MkExprCast e t) = T.concat ["(", toText e, " as ", toText t, ")"]
 
 instance (ToText (f t), ToText t) => ToText (Toplevel f t) where
     toText (MkTopConstantDeclaration binding value) =
