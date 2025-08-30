@@ -139,6 +139,9 @@ parseExprBlock = do
         | otherwise = HLIR.MkExprLetIn ann v (buildBlockFromList (b : xs)) Nothing
     buildBlockFromList (HLIR.MkExprLocated p e : xs) =
         HLIR.MkExprLocated p (buildBlockFromList (e : xs))
+    buildBlockFromList (HLIR.MkExprWhile cond body ty inE : xs)
+        | isUnit inE = HLIR.MkExprWhile cond body ty (buildBlockFromList xs)
+        | otherwise = HLIR.MkExprWhile cond body ty (buildBlockFromList (inE : xs))
     buildBlockFromList (x : xs) =
         HLIR.MkExprLetIn (HLIR.MkAnnotation "_" Nothing) x (buildBlockFromList xs) Nothing
 
@@ -391,8 +394,18 @@ parseStmtFull ::
 parseStmtFull = do
     P.choice
         [ parseStmtLet
+        , parseStmtWhile
         , parseExprFull
         ]
+
+parseStmtWhile ::
+    (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
+parseStmtWhile = do
+    ((start, _), _) <- Lex.reserved "while"
+    cond <- snd <$> parseExprFull
+    ((_, end), body) <- parseExprBlock
+
+    pure ((start, end), HLIR.MkExprWhile cond body Nothing (HLIR.MkExprVariable (HLIR.MkAnnotation "unit" Nothing) []))
 
 parseStmtLet ::
     (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")

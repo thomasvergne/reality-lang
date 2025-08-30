@@ -535,6 +535,21 @@ synthesizeE (HLIR.MkExprCast expr targetTy) = do
     void $ exprTy `M.isSubtypeOf` aliasedTargetTy
 
     pure (aliasedTargetTy, HLIR.MkExprCast exprExpr aliasedTargetTy, cs)
+synthesizeE (HLIR.MkExprWhile cond body _ inExpr) = do
+    -- Condition must be of type bool
+    (condExpr, cs1) <- checkE HLIR.MkTyBool cond
+
+    -- Synthesizing the type of the body
+    (bodyTy, bodyExpr, cs2) <- synthesizeE body
+
+    -- Synthesizing the type of the in expression
+    (inTy, inExprTyped, cs3) <- synthesizeE inExpr
+
+    -- Collecting all constraints
+    let cs = cs1 <> cs2 <> cs3
+
+    -- The type of the while expression is the type of the in expression
+    pure (inTy, HLIR.MkExprWhile condExpr bodyExpr (Identity bodyTy) inExprTyped, cs)
 
 -- | CHECK EXPRESSION
 -- | Check an expression against an expected type.

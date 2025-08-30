@@ -76,6 +76,12 @@ data Expression f t
         }
     | MkExprSizeOf t
     | MkExprCast (Expression f t) t
+    | MkExprWhile
+        { condition :: Expression f t
+        , body :: Expression f t
+        , returnType :: f t
+        , inExpr :: Expression f t
+        }
     deriving (Eq, Ord, Generic)
 
 data Toplevel f t
@@ -211,6 +217,15 @@ instance (ToText (f t), ToText t) => ToText (Expression f t) where
     toText (MkExprSingleIf cond thenB _) =
         T.concat ["if ", toText cond, " then ", toText thenB]
     toText (MkExprCast e t) = T.concat ["(", toText e, " as ", toText t, ")"]
+    toText (MkExprWhile cond body _ inExpr) =
+        T.concat
+            [ "while "
+            , toText cond
+            , " { "
+            , toText body
+            , " } in "
+            , toText inExpr
+            ]
 
 instance (ToText (f t), ToText t) => ToText (Toplevel f t) where
     toText (MkTopConstantDeclaration binding value) =

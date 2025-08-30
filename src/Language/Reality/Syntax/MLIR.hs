@@ -34,6 +34,7 @@ data Expression
     | MkExprSizeOf Ty.Type
     | MkExprCast Ty.Type Expression
     | MkExprBlock [Expression]
+    | MkExprWhile Expression Expression
     deriving (Eq, Ord, Show, Generic)
 
 data Toplevel
@@ -93,6 +94,14 @@ instance ToText Expression where
             ]
     toText (MkExprSingleIf cond thenBr) =
         T.concat ["if ", toText cond, " then ", toText thenBr]
+    toText (MkExprWhile cond body) =
+        T.concat
+            [ "while "
+            , toText cond
+            , " {\n  "
+            , toText body
+            , "\n}"
+            ]
 
 instance ToText Toplevel where
     toText (MkTopFunction name params ret body) =
