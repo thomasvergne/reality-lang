@@ -1,7 +1,6 @@
 module Language.Reality.Syntax.MLIR (
-    Expression(..),
-    Toplevel(..),
-
+    Expression (..),
+    Toplevel (..),
     -- Re-exports
     module Lit,
     module Ann,

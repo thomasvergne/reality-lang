@@ -1,11 +1,11 @@
 module Language.Reality.Backend.ANF.Converter where
 
-import Language.Reality.Syntax.HLIR qualified as HLIR
-import Language.Reality.Syntax.MLIR qualified as MLIR
 import Control.Monad.Result qualified as Err
 import Data.Map qualified as Map
 import Data.Text qualified as Text
 import GHC.IO qualified as IO
+import Language.Reality.Syntax.HLIR qualified as HLIR
+import Language.Reality.Syntax.MLIR qualified as MLIR
 
 -- | ANF CONVERTER
 -- | Convert a HLIR expression to ANF (MLIR).
@@ -27,7 +27,7 @@ import GHC.IO qualified as IO
 -- | The conversion is done recursively, so that all non-trivial expressions are
 -- | converted to let bindings.
 convertToANF ::
-    MonadIO m =>
+    (MonadIO m) =>
     [HLIR.TLIR "toplevel"] ->
     m [MLIR.Toplevel]
 convertToANF = mapM convertToplevel
@@ -35,18 +35,22 @@ convertToANF = mapM convertToplevel
 -- | Convert a HLIR toplevel to a MLIR toplevel.
 -- | This function takes a HLIR toplevel, and returns a MLIR toplevel.
 -- | The conversion is done by converting the body of the toplevel.
-convertToplevel :: MonadIO m => HLIR.TLIR "toplevel" -> m MLIR.Toplevel
+convertToplevel :: (MonadIO m) => HLIR.TLIR "toplevel" -> m MLIR.Toplevel
 convertToplevel (HLIR.MkTopFunctionDeclaration ann params ret body) = do
     (body', lets) <- convertExpression body
 
-    let gcStart = MLIR.MkExprApplication (MLIR.MkExprVariable "gc_start") [
-              MLIR.MkExprApplication (MLIR.MkExprVariable "get_gc") []
-            , MLIR.MkExprReference (MLIR.MkExprVariable "argc")
-            ]
+    let gcStart =
+            MLIR.MkExprApplication
+                (MLIR.MkExprVariable "gc_start")
+                [ MLIR.MkExprApplication (MLIR.MkExprVariable "get_gc") []
+                , MLIR.MkExprReference (MLIR.MkExprVariable "argc")
+                ]
 
-        gcEnd = MLIR.MkExprApplication (MLIR.MkExprVariable "gc_stop") [
-            MLIR.MkExprApplication (MLIR.MkExprVariable "get_gc") []
-            ]
+        gcEnd =
+            MLIR.MkExprApplication
+                (MLIR.MkExprVariable "gc_stop")
+                [ MLIR.MkExprApplication (MLIR.MkExprVariable "get_gc") []
+                ]
 
     let args
             | ann.name == "main" && length params /= 2 =
@@ -54,7 +58,6 @@ convertToplevel (HLIR.MkTopFunctionDeclaration ann params ret body) = do
                 , MLIR.MkAnnotation "argv" (MLIR.MkTyPointer (MLIR.MkTyPointer MLIR.MkTyChar))
                 ]
             | otherwise = params
-
 
     let body''
             | ann.name == "main" = gcStart : lets ++ [gcEnd, body']
@@ -64,33 +67,41 @@ convertToplevel (HLIR.MkTopFunctionDeclaration ann params ret body) = do
 convertToplevel (HLIR.MkTopConstantDeclaration ann expr) = do
     (expr', lets) <- convertExpression expr
 
-    unless (null lets) $
-        Err.compilerError
+    unless (null lets)
+        $ Err.compilerError
             "Top-level constant declarations cannot contain let bindings. Please inline the expression."
 
     pure $ MLIR.MkTopGlobal ann.name ann.typeValue (Just expr')
 convertToplevel (HLIR.MkTopLocated _ e) = convertToplevel e
-convertToplevel (HLIR.MkTopModuleDeclaration {}) =
+convertToplevel (HLIR.MkTopModuleDeclaration{}) =
     Err.compilerError "Modules should have been resolved before ANF conversion."
 convertToplevel (HLIR.MkTopImport _) =
     Err.compilerError "Imports should have been resolved before ANF conversion."
 convertToplevel (HLIR.MkTopStructureDeclaration name fields) =
     pure $ MLIR.MkTopStructure name.name (Map.toList fields)
-convertToplevel (HLIR.MkTopTypeAlias {}) =
-    Err.compilerError "Type aliases should have been resolved before ANF conversion."
+convertToplevel (HLIR.MkTopTypeAlias{}) =
+    Err.compilerError
+        "Type aliases should have been resolved before ANF conversion."
 convertToplevel (HLIR.MkTopPublic node) = do
     node' <- convertToplevel node
     pure $ MLIR.MkTopPublic node'
 convertToplevel (HLIR.MkTopExternalFunction name parameters returnType) =
-    pure $ MLIR.MkTopExternalFunction name.name name.typeValue (map (.typeValue) parameters) returnType
-convertToplevel (HLIR.MkTopImplementation {}) =
-    Err.compilerError "Implementations should have been resolved before ANF conversion."
-convertToplevel (HLIR.MkTopProperty {}) =
+    pure
+        $ MLIR.MkTopExternalFunction
+            name.name
+            name.typeValue
+            (map (.typeValue) parameters)
+            returnType
+convertToplevel (HLIR.MkTopImplementation{}) =
+    Err.compilerError
+        "Implementations should have been resolved before ANF conversion."
+convertToplevel (HLIR.MkTopProperty{}) =
     Err.compilerError "Properties should have been resolved before ANF conversion."
 
 -- | Convert a HLIR expression to a MLIR expression in ANF.
 -- | This function takes a HLIR expression, and returns a MLIR expression.
-convertExpression :: MonadIO m => HLIR.TLIR "expression" -> m (MLIR.Expression, [MLIR.Expression])
+convertExpression ::
+    (MonadIO m) => HLIR.TLIR "expression" -> m (MLIR.Expression, [MLIR.Expression])
 convertExpression (HLIR.MkExprLiteral l) = pure (MLIR.MkExprLiteral l, [])
 convertExpression (HLIR.MkExprVariable ann _) = pure (MLIR.MkExprVariable ann.name, [])
 convertExpression (HLIR.MkExprApplication f args) = do
@@ -191,8 +202,9 @@ convertExpression (HLIR.MkExprUpdate update value _) = do
     (value', l2) <- convertExpression value
     pure (MLIR.MkExprUpdate update' value', l1 ++ l2)
 convertExpression (HLIR.MkExprSizeOf t) = pure (MLIR.MkExprSizeOf t, [])
-convertExpression (HLIR.MkExprLambda {}) =
-    Err.compilerError "Lambdas should have been converted to top-level functions before ANF conversion."
+convertExpression (HLIR.MkExprLambda{}) =
+    Err.compilerError
+        "Lambdas should have been converted to top-level functions before ANF conversion."
 convertExpression (HLIR.MkExprCast e t) = do
     (e', l1) <- convertExpression e
     pure (MLIR.MkExprCast t e', l1)
@@ -208,13 +220,12 @@ convertExpression (HLIR.MkExprWhile cond body inTy inExpr) = do
     let whileExpr = MLIR.MkExprWhile cond' bl
     pure (var, l1 ++ l3 ++ [def, whileExpr])
 
-
 {-# NOINLINE symbolCounter #-}
 symbolCounter :: IORef Int
 symbolCounter = IO.unsafePerformIO (newIORef 0)
 
-freshSymbol :: MonadIO m => m Text
+freshSymbol :: (MonadIO m) => m Text
 freshSymbol = do
-    modifyIORef' symbolCounter (+1)
+    modifyIORef' symbolCounter (+ 1)
     i <- readIORef symbolCounter
     pure $ "anf_tmp_" <> Text.pack (show i)

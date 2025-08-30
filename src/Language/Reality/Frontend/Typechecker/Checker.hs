@@ -283,7 +283,8 @@ synthesizeE (HLIR.MkExprCondition cond thenB elseB _) = do
     -- Collecting all constraints
     let cs = cs1 <> cs2 <> cs3
 
-    pure (thenTy, HLIR.MkExprCondition condExpr thenExpr elseExpr (Identity thenTy), cs)
+    pure
+        (thenTy, HLIR.MkExprCondition condExpr thenExpr elseExpr (Identity thenTy), cs)
 synthesizeE (HLIR.MkExprLetIn binding value inExpr _) = do
     -- Collecting old environment to restore it later
     oldEnv <- readIORef M.defaultCheckerState <&> M.environment
@@ -461,7 +462,11 @@ synthesizeE (HLIR.MkExprStructureAccess struct field) = do
             fieldTy <- M.newType
             pos <- HLIR.peekPosition'
 
-            pure (fieldTy, HLIR.MkExprStructureAccess structExpr field, cs <> [M.MkFieldConstraint structTy field fieldTy pos])
+            pure
+                ( fieldTy
+                , HLIR.MkExprStructureAccess structExpr field
+                , cs <> [M.MkFieldConstraint structTy field fieldTy pos]
+                )
         Just (HLIR.Forall qvars ty) -> do
             -- Building a substitution map from the structure's quantified
             -- variables to the applied types. And applying the substitution to
@@ -522,7 +527,11 @@ synthesizeE (HLIR.MkExprSingleIf cond thenBranch _) = do
     (thenTy, typedThenBranch, cs2) <- synthesizeE thenBranch
 
     -- The type of the single-if expression is the type of the then branch
-    pure (thenTy, HLIR.MkExprSingleIf condExpr typedThenBranch (Identity thenTy), cs <> cs2)
+    pure
+        ( thenTy
+        , HLIR.MkExprSingleIf condExpr typedThenBranch (Identity thenTy)
+        , cs <> cs2
+        )
 synthesizeE (HLIR.MkExprCast expr targetTy) = do
     -- Synthesizing the type of the expression to cast
     (exprTy, exprExpr, cs) <- synthesizeE expr
@@ -549,7 +558,8 @@ synthesizeE (HLIR.MkExprWhile cond body _ inExpr) = do
     let cs = cs1 <> cs2 <> cs3
 
     -- The type of the while expression is the type of the in expression
-    pure (inTy, HLIR.MkExprWhile condExpr bodyExpr (Identity bodyTy) inExprTyped, cs)
+    pure
+        (inTy, HLIR.MkExprWhile condExpr bodyExpr (Identity bodyTy) inExprTyped, cs)
 
 -- | CHECK EXPRESSION
 -- | Check an expression against an expected type.
@@ -613,13 +623,13 @@ solveConstraints constraints = do
             header <- getHeader <$> M.removeAliases structTy
 
             case header of
-                Just resolved -> findStructureMatching structures resolved pos >>= \case
-                    Just structMap -> case Map.lookup fieldName structMap of
-                        Just expectedFieldTy -> void $ expectedFieldTy `M.isSubtypeOf` fieldTy
+                Just resolved ->
+                    findStructureMatching structures resolved pos >>= \case
+                        Just structMap -> case Map.lookup fieldName structMap of
+                            Just expectedFieldTy -> void $ expectedFieldTy `M.isSubtypeOf` fieldTy
+                            Nothing -> pure () -- Ignoring unsolved constraints
                         Nothing -> pure () -- Ignoring unsolved constraints
-                    Nothing -> pure () -- Ignoring unsolved constraints
                 Nothing -> pure () -- Ignoring unsolved constraints
-
   where
     findStructureMatching ::
         (MonadIO m, M.MonadError M.Error m) =>

@@ -173,7 +173,7 @@ removeExternals ::
     (MonadIO m, M.MonadError M.Error m) =>
     [HLIR.HLIR "toplevel"] ->
     m [HLIR.HLIR "toplevel"]
-removeExternals (HLIR.MkTopExternalFunction {} : ns) =
+removeExternals (HLIR.MkTopExternalFunction{} : ns) =
     removeExternals ns
 removeExternals (HLIR.MkTopLocated p n : ns) = do
     nodes <- removeExternals [n]

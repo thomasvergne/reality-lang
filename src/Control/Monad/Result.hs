@@ -1,5 +1,5 @@
-{-# OPTIONS_GHC -Wno-orphans #-}
 {-# LANGUAGE LambdaCase #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Control.Monad.Result where
 
@@ -12,11 +12,11 @@ import Error.Diagnose.Compat.Megaparsec qualified as D
 import GHC.IO qualified as IO
 import GHC.Show qualified as Show
 import Language.Reality.Frontend.Parser qualified as P
+import Language.Reality.Frontend.Typechecker.Monad qualified as TC
 import Language.Reality.Syntax.HLIR qualified as HLIR
 import System.Directory (doesFileExist)
 import System.FilePath (normalise)
 import Text.Megaparsec hiding (parseError)
-import Language.Reality.Frontend.Typechecker.Monad qualified as TC
 
 instance (D.HasHints Void String) where
     hints _ = mempty
@@ -154,8 +154,14 @@ handle (Left (err, pos@(p1, _))) _ = liftIO $ do
                     <> Text.unpack
                         ( Text.unlines
                             ( map
-                                (\case
-                                    TC.MkFieldConstraint ty field fieldTy _ -> " - field " <> field <> " of type " <> toText fieldTy <> " in type " <> toText ty
+                                ( \case
+                                    TC.MkFieldConstraint ty field fieldTy _ ->
+                                        " - field "
+                                            <> field
+                                            <> " of type "
+                                            <> toText fieldTy
+                                            <> " in type "
+                                            <> toText ty
                                     TC.MkImplConstraint name ty _ -> " - implementation of property " <> name <> " for type " <> toText ty
                                 )
                                 cs
@@ -242,8 +248,14 @@ instance Show BonzaiError where
             <> Text.unpack
                 ( Text.unlines
                     ( map
-                        (\case
-                            TC.MkFieldConstraint ty field fieldTy _ -> " - field " <> field <> " of type " <> toText fieldTy <> " in type " <> toText ty
+                        ( \case
+                            TC.MkFieldConstraint ty field fieldTy _ ->
+                                " - field "
+                                    <> field
+                                    <> " of type "
+                                    <> toText fieldTy
+                                    <> " in type "
+                                    <> toText ty
                             TC.MkImplConstraint name ty _ -> " - implementation of property " <> name <> " for type " <> toText ty
                         )
                         cs

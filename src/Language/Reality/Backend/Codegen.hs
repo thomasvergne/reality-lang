@@ -1,16 +1,16 @@
 module Language.Reality.Backend.Codegen where
 
-import Language.Reality.Syntax.MLIR qualified as MLIR
-import Data.Text qualified as Text
-import Data.Map qualified as Map
-import Data.Char qualified as Char
 import Control.Monad.Result qualified as Err
-import Text.Printf qualified as Text
+import Data.Char qualified as Char
+import Data.Map qualified as Map
+import Data.Text qualified as Text
 import GHC.IO qualified as IO
+import Language.Reality.Syntax.MLIR qualified as MLIR
+import Text.Printf qualified as Text
 
 -- | CODEGEN
 -- | Convert MLIR to a C code string.
-codegenProgram :: MonadIO m => [MLIR.Toplevel] -> m Text
+codegenProgram :: (MonadIO m) => [MLIR.Toplevel] -> m Text
 codegenProgram toplevels = do
     codeLines <- mapM codegenToplevel toplevels
     pure (Text.unlines codeLines)
@@ -18,17 +18,21 @@ codegenProgram toplevels = do
 unsnoc :: [a] -> Maybe ([a], a)
 unsnoc [] = Nothing
 unsnoc [x] = Just ([], x)
-unsnoc (x:xs) = case unsnoc xs of
-    Just (init', last') -> Just (x:init', last')
+unsnoc (x : xs) = case unsnoc xs of
+    Just (init', last') -> Just (x : init', last')
     Nothing -> Nothing
 
 -- | Convert a single MLIR toplevel node to C code lines.
 -- | This function takes a toplevel node, and returns a list of C code lines.
 -- | This is a simplified example and does not cover all MLIR constructs.
 -- | You would need to expand this function to handle all the constructs you need.
-codegenToplevel :: MonadIO m => MLIR.Toplevel -> m Text
+codegenToplevel :: (MonadIO m) => MLIR.Toplevel -> m Text
 codegenToplevel (MLIR.MkTopFunction name params ret body) = do
-    paramList <- fmap (Text.intercalate ", ") $ mapM (\(MLIR.MkAnnotation paramName ty) -> codegenType True (Just paramName) [] ty) params
+    paramList <-
+        fmap (Text.intercalate ", ")
+            $ mapM
+                (\(MLIR.MkAnnotation paramName ty) -> codegenType True (Just paramName) [] ty)
+                params
     retType <- codegenType True Nothing [] ret
     let funcHeader = Text.concat [retType, " ", varify name, "(", paramList, ") {"]
     funcBody <- mapM codegenExpression body
@@ -48,14 +52,20 @@ codegenToplevel (MLIR.MkTopPublic n) = do
     innerCode <- codegenToplevel n
     pure $ Text.concat ["// Public\n", innerCode]
 codegenToplevel (MLIR.MkTopStructure name fields) = do
-    fieldLines <- mapM (\(fName, fType) -> do
-        fTypeStr <- codegenType False (Just fName) [] fType
-        pure $ Text.concat ["    ", fTypeStr, ";"]) fields
+    fieldLines <-
+        mapM
+            ( \(fName, fType) -> do
+                fTypeStr <- codegenType False (Just fName) [] fType
+                pure $ Text.concat ["    ", fTypeStr, ";"]
+            )
+            fields
     let structHeader = Text.concat ["typedef struct ", varify name, " {"]
     let structFooter = Text.concat ["} ", varify name, ";"]
     pure $ Text.unlines ([structHeader] ++ fieldLines ++ [structFooter])
 codegenToplevel (MLIR.MkTopExternalFunction name generics params ret) = do
-    paramList <- fmap (Text.intercalate ", ") $ mapM (\p -> codegenType True Nothing generics p) params
+    paramList <-
+        fmap (Text.intercalate ", ")
+            $ mapM (\p -> codegenType True Nothing generics p) params
     retType <- codegenType True (Just name) generics ret
     pure $ Text.concat ["extern ", retType, "(", paramList, ");"]
 
@@ -63,7 +73,7 @@ codegenToplevel (MLIR.MkTopExternalFunction name generics params ret) = do
 -- | This function takes an expression, and returns a list of C code lines.
 -- | This is a simplified example and does not cover all MLIR constructs.
 -- | You would need to expand this function to handle all the constructs you need.
-codegenExpression :: MonadIO m => MLIR.Expression -> m Text
+codegenExpression :: (MonadIO m) => MLIR.Expression -> m Text
 codegenExpression (MLIR.MkExprLiteral lit) = codegenLiteral lit
 codegenExpression (MLIR.MkExprVariable name) = pure $ varify name
 codegenExpression (MLIR.MkExprApplication f args) = do
@@ -106,9 +116,13 @@ codegenExpression (MLIR.MkExprStructureAccess e f) = do
     pure $ Text.concat [eStr, ".", varify f]
 codegenExpression (MLIR.MkExprStructureCreation ty fields) = do
     tyStr <- codegenType True Nothing [] ty
-    fieldInits <- mapM (\(n, v) -> do
-        vStr <- codegenExpression v
-        pure $ Text.concat [".", n, " = ", vStr]) (Map.toList fields)
+    fieldInits <-
+        mapM
+            ( \(n, v) -> do
+                vStr <- codegenExpression v
+                pure $ Text.concat [".", n, " = ", vStr]
+            )
+            (Map.toList fields)
     pure $ Text.concat ["(", tyStr, ") { ", Text.intercalate ", " fieldInits, " }"]
 codegenExpression (MLIR.MkExprUpdate e v) = do
     eStr <- codegenExpression e
@@ -127,7 +141,7 @@ codegenExpression (MLIR.MkExprWhile cond body) = do
 -- | This function takes a literal, and returns a C code string.
 -- | This is a simplified example and does not cover all MLIR literal types.
 -- | You would need to expand this function to handle all the literal types you need.
-codegenLiteral :: MonadIO m => MLIR.Literal -> m Text
+codegenLiteral :: (MonadIO m) => MLIR.Literal -> m Text
 codegenLiteral (MLIR.MkLitInt n) = pure $ Text.pack (show n)
 codegenLiteral (MLIR.MkLitFloat f) = pure $ Text.pack (show f)
 codegenLiteral (MLIR.MkLitBool True) = pure "true"
@@ -141,7 +155,7 @@ codegenLiteral (MLIR.MkLitChar c) = do
     inner <- dropDoubleQuotes (Text.pack cShow)
     pure $ Text.concat ["'", inner, "'"]
 
-dropDoubleQuotes :: MonadIO m => Text -> m Text
+dropDoubleQuotes :: (MonadIO m) => Text -> m Text
 dropDoubleQuotes txt =
     if Text.length txt >= 2 && Text.head txt == '\"' && Text.last txt == '\"'
         then pure $ Text.init (Text.tail txt)
@@ -151,7 +165,7 @@ dropDoubleQuotes txt =
 -- | This function takes a type, and returns a C type string.
 -- | This is a simplified example and does not cover all MLIR type constructs.
 -- | You would need to expand this function to handle all the type constructs you need.
-codegenType :: MonadIO m => Bool -> Maybe Text -> [Text] -> MLIR.Type -> m Text
+codegenType :: (MonadIO m) => Bool -> Maybe Text -> [Text] -> MLIR.Type -> m Text
 codegenType _ def _ (MLIR.MkTyId "i8") = pure $ Text.concat ["int8_t ", fromMaybe "" def]
 codegenType _ def _ (MLIR.MkTyId "i16") = pure $ Text.concat ["int16_t ", fromMaybe "" def]
 codegenType _ def _ (MLIR.MkTyId "i32") = pure $ Text.concat ["int32_t ", fromMaybe "" def]
@@ -176,7 +190,8 @@ codegenType shouldPutEnv def generics (MLIR.MkTyPointer ty) = do
     innerTy <- codegenType shouldPutEnv Nothing generics ty
     pure $ Text.concat [innerTy, "*", fromMaybe "" def]
 codegenType shouldPutEnv def generics (args MLIR.:->: ret) = do
-    argTypes <- Text.intercalate ", " <$> mapM (codegenType shouldPutEnv Nothing generics) args
+    argTypes <-
+        Text.intercalate ", " <$> mapM (codegenType shouldPutEnv Nothing generics) args
     retType <- codegenType shouldPutEnv Nothing generics ret
 
     if shouldPutEnv
@@ -193,15 +208,17 @@ isIdent :: Char -> Bool
 isIdent x = Char.isAlphaNum x || x == '_' || x == '$'
 
 varify :: Text -> Text
-varify = Text.concatMap (\x' -> if isIdent x' then toText [x'] else fromString (show (ord x')))
+varify =
+    Text.concatMap
+        (\x' -> if isIdent x' then toText [x'] else fromString (show (ord x')))
 
 encodeUnicode16 :: Text -> Text
 encodeUnicode16 = Text.concatMap escapeChar
   where
     escapeChar c
-      | c == '\"' = "\\\""
-      | c == '\'' = "\\\'"
-      | c == '\\' = "\\\\"
-      | ' ' <= c && c <= 'z' = toText [c]
-      | Char.isPrint c = toText [c]
-      | otherwise = Text.pack (Text.printf "\\u%04x" (ord c))
+        | c == '\"' = "\\\""
+        | c == '\'' = "\\\'"
+        | c == '\\' = "\\\\"
+        | ' ' <= c && c <= 'z' = toText [c]
+        | Char.isPrint c = toText [c]
+        | otherwise = Text.pack (Text.printf "\\u%04x" (ord c))

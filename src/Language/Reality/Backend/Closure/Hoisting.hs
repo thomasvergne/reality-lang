@@ -104,13 +104,15 @@ hoistLambdasInExpr (HLIR.MkExprUpdate update value updateType) = do
     (newUpdate, hoistedUpdate) <- hoistLambdasInExpr update
     (newValue, hoistedValue) <- hoistLambdasInExpr value
 
-    pure (HLIR.MkExprUpdate newUpdate newValue updateType, hoistedUpdate ++ hoistedValue)
+    pure
+        (HLIR.MkExprUpdate newUpdate newValue updateType, hoistedUpdate ++ hoistedValue)
 hoistLambdasInExpr (HLIR.MkExprSizeOf t) =
     pure (HLIR.MkExprSizeOf t, [])
 hoistLambdasInExpr (HLIR.MkExprSingleIf cond thenB branchType) = do
     (newCond, hoistedCond) <- hoistLambdasInExpr cond
     (newThenB, hoistedThenB) <- hoistLambdasInExpr thenB
-    pure (HLIR.MkExprSingleIf newCond newThenB branchType, hoistedCond ++ hoistedThenB)
+    pure
+        (HLIR.MkExprSingleIf newCond newThenB branchType, hoistedCond ++ hoistedThenB)
 hoistLambdasInExpr (HLIR.MkExprCast e t) = do
     (newE, hoistedE) <- hoistLambdasInExpr e
     pure (HLIR.MkExprCast newE t, hoistedE)

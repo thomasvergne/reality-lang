@@ -143,7 +143,11 @@ parseExprBlock = do
         | isUnit inE = HLIR.MkExprWhile cond body ty (buildBlockFromList xs)
         | otherwise = HLIR.MkExprWhile cond body ty (buildBlockFromList (inE : xs))
     buildBlockFromList (x : xs) =
-        HLIR.MkExprLetIn (HLIR.MkAnnotation "_" Nothing) x (buildBlockFromList xs) Nothing
+        HLIR.MkExprLetIn
+            (HLIR.MkAnnotation "_" Nothing)
+            x
+            (buildBlockFromList xs)
+            Nothing
 
     isUnit :: HLIR.HLIR "expression" -> Bool
     isUnit (HLIR.MkExprVariable (HLIR.MkAnnotation "unit" _) _) = True
@@ -310,7 +314,7 @@ parseExprFull = Lex.locateWith <$> P.makeExprParser parseExprTerm operators
         ,
             [ P.Prefix . Lex.makeUnaryOp $ do
                 void $ Lex.symbol "*"
-                pure $ second (` HLIR.MkExprDereference` Nothing)
+                pure $ second (`HLIR.MkExprDereference` Nothing)
             , P.Prefix . Lex.makeUnaryOp $ do
                 void $ Lex.symbol "&"
                 pure $ second (`HLIR.MkExprReference` Nothing)
@@ -318,15 +322,20 @@ parseExprFull = Lex.locateWith <$> P.makeExprParser parseExprTerm operators
                 void $ Lex.symbol "->"
                 ((_, end), field) <- Lex.nonLexedID <* Lex.scn
 
-                pure $ \((start, _), e) -> ((start, end), HLIR.MkExprStructureAccess (HLIR.MkExprDereference e Nothing) field)
+                pure $ \((start, _), e) ->
+                    ( (start, end)
+                    , HLIR.MkExprStructureAccess (HLIR.MkExprDereference e Nothing) field
+                    )
             ]
-        ,   [ P.Postfix . Lex.makeUnaryOp $ do
+        ,
+            [ P.Postfix . Lex.makeUnaryOp $ do
                 void $ Lex.reserved "as"
                 ((_, end), ty) <- Typ.parseType
 
                 pure $ \((start, _), e) -> ((start, end), HLIR.MkExprCast e ty)
             ]
-        ,   [ P.InfixN $ do
+        ,
+            [ P.InfixN $ do
                 void $ Lex.symbol "%"
                 pure $ makeOperator "modulo"
             , P.InfixL $ do
@@ -405,7 +414,14 @@ parseStmtWhile = do
     cond <- snd <$> parseExprFull
     ((_, end), body) <- parseExprBlock
 
-    pure ((start, end), HLIR.MkExprWhile cond body Nothing (HLIR.MkExprVariable (HLIR.MkAnnotation "unit" Nothing) []))
+    pure
+        ( (start, end)
+        , HLIR.MkExprWhile
+            cond
+            body
+            Nothing
+            (HLIR.MkExprVariable (HLIR.MkAnnotation "unit" Nothing) [])
+        )
 
 parseStmtLet ::
     (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
