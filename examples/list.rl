@@ -81,6 +81,20 @@ mod List {
 
         0
     }
+
+    fn map[A, B](list: *List[A], f: fn(A) -> B) -> *List[B] {
+        let new_list = new::[B]();
+
+        let i = 0 as u64;
+
+        while i < list->length {
+            let value = (*list)[i];
+            push(new_list, f(value));
+            i = i + 1;
+        };
+
+        new_list
+    }
 }
 
 impl fn (list: List[A]) show[A]() -> String {

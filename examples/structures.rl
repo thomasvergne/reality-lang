@@ -15,8 +15,13 @@ fn main(argc: i32) -> i64 {
     List::push(list, String::new("test"));
     List::push(list, String::new("bruh"));
 
-    print((*list)[0]);
-    print((*list)[1]);
+    let new_list = List::map(list, |s| {
+        print(s)
+    });
+
+    List::map(new_list, |x| {
+        print(x)
+    });
 
     0
 }
