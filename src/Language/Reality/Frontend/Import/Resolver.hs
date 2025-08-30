@@ -155,8 +155,9 @@ flattenOneLevel ::
     (MonadIO m, M.MonadError M.Error m) =>
     [HLIR.HLIR "toplevel"] ->
     m [HLIR.HLIR "toplevel"]
-flattenOneLevel (n@(HLIR.MkTopModuleDeclaration _ nodes) : ns) = do
-    let newNodes = n : nodes
+flattenOneLevel ((HLIR.MkTopModuleDeclaration name nodes) : ns) = do
+    nodes' <- removeExternals nodes
+    let newNodes = nodes ++ [HLIR.MkTopModuleDeclaration name nodes']
     rest <- flattenOneLevel ns
     pure (newNodes ++ rest)
 flattenOneLevel (HLIR.MkTopLocated p n : ns) = do
@@ -167,6 +168,21 @@ flattenOneLevel (n : ns) = do
     rest <- flattenOneLevel ns
     pure (n : rest)
 flattenOneLevel [] = pure []
+
+removeExternals ::
+    (MonadIO m, M.MonadError M.Error m) =>
+    [HLIR.HLIR "toplevel"] ->
+    m [HLIR.HLIR "toplevel"]
+removeExternals (HLIR.MkTopExternalFunction {} : ns) =
+    removeExternals ns
+removeExternals (HLIR.MkTopLocated p n : ns) = do
+    nodes <- removeExternals [n]
+    rest <- removeExternals ns
+    pure (map (HLIR.MkTopLocated p) nodes ++ rest)
+removeExternals (n : ns) = do
+    rest <- removeExternals ns
+    pure (n : rest)
+removeExternals [] = pure []
 
 -- | UTILITY TYPES
 -- | These types are used to keep track of the state of the module resolution
