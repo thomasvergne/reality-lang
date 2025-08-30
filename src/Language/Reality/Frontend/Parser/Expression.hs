@@ -63,13 +63,18 @@ parseExprTernary = do
     ((start, _), _) <- Lex.reserved "if"
     cond <- snd <$> parseExprFull
 
-    (_, thenBranch) <- parseExprBlock
+    ((_, firstEnd), thenBranch) <- parseExprBlock
 
-    void $ Lex.reserved "else"
+    result <- P.optional $ do
+        void $ Lex.reserved "else"
 
-    ((_, end), elseBranch) <- parseExprFull
+        ((_, end), elseBranch) <- parseExprFull
 
-    pure ((start, end), HLIR.MkExprCondition cond thenBranch elseBranch)
+        pure (end, elseBranch)
+
+    case result of
+        Nothing -> pure ((start, firstEnd), HLIR.MkExprSingleIf cond thenBranch Nothing)
+        Just (end, elseBranch) -> pure ((start, end), HLIR.MkExprCondition cond thenBranch elseBranch Nothing)
 
 -- | PARSE VARIABLE
 -- | Parse a variable expression. A variable expression is an expression that
@@ -109,7 +114,7 @@ parseExprLetIn = do
 
     ((_, end), body) <- parseExprFull
 
-    pure ((start, end), HLIR.MkExprLetIn binding value body)
+    pure ((start, end), HLIR.MkExprLetIn binding value body Nothing)
 
 -- | PARSE BLOCK EXPRESSION
 -- | Parse a block expression. A block expression is an expression that consists of
@@ -129,13 +134,13 @@ parseExprBlock = do
     buildBlockFromList :: [HLIR.HLIR "expression"] -> HLIR.HLIR "expression"
     buildBlockFromList [] = HLIR.MkExprVariable (HLIR.MkAnnotation "unit" Nothing) []
     buildBlockFromList [x] = x
-    buildBlockFromList (HLIR.MkExprLetIn ann v b : xs)
-        | isUnit b = HLIR.MkExprLetIn ann v (buildBlockFromList xs)
-        | otherwise = HLIR.MkExprLetIn ann v (buildBlockFromList (b : xs))
+    buildBlockFromList (HLIR.MkExprLetIn ann v b _ : xs)
+        | isUnit b = HLIR.MkExprLetIn ann v (buildBlockFromList xs) Nothing
+        | otherwise = HLIR.MkExprLetIn ann v (buildBlockFromList (b : xs)) Nothing
     buildBlockFromList (HLIR.MkExprLocated p e : xs) =
         HLIR.MkExprLocated p (buildBlockFromList (e : xs))
     buildBlockFromList (x : xs) =
-        HLIR.MkExprLetIn (HLIR.MkAnnotation "_" Nothing) x (buildBlockFromList xs)
+        HLIR.MkExprLetIn (HLIR.MkAnnotation "_" Nothing) x (buildBlockFromList xs) Nothing
 
     isUnit :: HLIR.HLIR "expression" -> Bool
     isUnit (HLIR.MkExprVariable (HLIR.MkAnnotation "unit" _) _) = True
@@ -302,10 +307,28 @@ parseExprFull = Lex.locateWith <$> P.makeExprParser parseExprTerm operators
         ,
             [ P.Prefix . Lex.makeUnaryOp $ do
                 void $ Lex.symbol "*"
-                pure $ second HLIR.MkExprDereference
+                pure $ second (` HLIR.MkExprDereference` Nothing)
             , P.Prefix . Lex.makeUnaryOp $ do
                 void $ Lex.symbol "&"
-                pure $ second HLIR.MkExprReference
+                pure $ second (`HLIR.MkExprReference` Nothing)
+            , P.Postfix . Lex.makeUnaryOp $ do
+                void $ Lex.symbol "->"
+                ((_, end), field) <- Lex.nonLexedID <* Lex.scn
+
+                pure $ \((start, _), e) -> ((start, end), HLIR.MkExprStructureAccess (HLIR.MkExprDereference e Nothing) field)
+            ]
+        ,   [ P.Postfix . Lex.makeUnaryOp $ do
+                void $ Lex.reserved "as"
+                ((_, end), ty) <- Typ.parseType
+
+                pure $ \((start, _), e) -> ((start, end), HLIR.MkExprCast e ty)
+            ]
+        ,   [ P.InfixN $ do
+                void $ Lex.symbol "%"
+                pure $ makeOperator "modulo"
+            , P.InfixL $ do
+                void $ Lex.symbol "**"
+                pure $ makeOperator "pow"
             ]
         ,
             [ P.InfixL $ do
@@ -359,7 +382,7 @@ parseExprFull = Lex.locateWith <$> P.makeExprParser parseExprTerm operators
 
             [ P.InfixR $ do
                 void $ Lex.symbol "="
-                pure $ \((start, _), a) ((_, end), b) -> ((start, end), HLIR.MkExprUpdate a b)
+                pure $ \((start, _), a) ((_, end), b) -> ((start, end), HLIR.MkExprUpdate a b Nothing)
             ]
         ]
 
@@ -385,4 +408,5 @@ parseStmtLet = do
             binding
             value
             (HLIR.MkExprVariable (HLIR.MkAnnotation "unit" Nothing) [])
+            Nothing
         )
