@@ -2,7 +2,8 @@ import string::*;
 
 struct List[A] {
     data: *A,
-    length: u64
+    length: u64,
+    capacity: u64
 };
 
 mod GC {
@@ -21,7 +22,7 @@ mod GC {
         gc_malloc(get_gc(), sizeof(A))
     }
 
-    pub fn malloc_multiple[A](count: u64) -> *A {
+    pub fn calloc[A](count: u64) -> *A {
         gc_malloc(get_gc(), sizeof(A) * count)
     }
 
@@ -36,9 +37,10 @@ mod GC {
 property get_index[B, A](container: A, index: u64) -> B;
 
 extern fn ptr_add[A](ptr: A, offset: u64) -> A;
+extern fn fetch_ptr[A](ptr: A, index: u64) -> A;
 
 impl fn (c: *A) get_index[A](index: u64) -> A {
-    let ptr = ptr_add(c, index);
+    let ptr = ptr_add(c, index * sizeof(A));
     *ptr
 }
 
@@ -49,7 +51,7 @@ impl fn (c: List[A]) get_index[A](index: u64) -> A {
 property get_index_mut[B, A](container: A, index: u64) -> *B;
 
 impl fn (c: *A) get_index_mut[A](index: u64) -> *A {
-    let ptr = ptr_add(c, index);
+    let ptr = ptr_add(c, index * sizeof(A));
     ptr
 }
 
@@ -58,20 +60,24 @@ impl fn (c: List[A]) get_index_mut[A](index: u64) -> *A {
 }
 
 mod List {
-    fn new[A]() -> List[A] {
-        List[A] {
-            data: malloc_multiple(10),
-            length: 10
-        }
+    fn new[A]() -> *List[A] {
+        let list = malloc::[List[A]]();
+
+        list->capacity = 10 as u64;
+
+        list->data = calloc::[A](10);
+        list->length = 0 as u64;
+
+        list
     }
 
-    fn push[A](list: List[A], value: A) -> i32 {
-        list.data = realloc(list.data, list.length + 1);
-        (*get_index_mut(list.data, list.length)) = value;
-        list.length = list.length + 1;
+    fn push[A](list: *List[A], value: A) -> u64 {
+        if list->length == list->capacity {
+            list->data = realloc(list->data, list->capacity + 10);
+        };
 
-        print(get_index::[A](list, list.length - 1));
-        print(list.length);
+        *get_index_mut(list->data, list->length) = value;
+        list->length = list->length + 1;
 
         0
     }

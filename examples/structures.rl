@@ -10,15 +10,13 @@ fn factorial(n: i32) -> i32 {
 }
 
 fn main(argc: i32) -> i64 {
-    print("test");
-    print(4 + 3);
+    let list = List::new();
 
-    let list = List::new::[i32]();
+    List::push(list, String::new("test"));
+    List::push(list, String::new("bruh"));
 
-    List::push(list, 4);
-    List::push(list, 5);
-
-    print(get_index::[i32](list, 1));
+    print((*list)[0]);
+    print((*list)[1]);
 
     0
 }
