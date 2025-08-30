@@ -10,8 +10,6 @@ import Language.Reality.Frontend.Typechecker.Checker qualified as TC
 import Language.Reality.Frontend.Typechecker.Unification qualified as TC
 import Language.Reality.Syntax.HLIR qualified as HLIR
 
-import Control.Color
-
 -- | Convert a program to a closure-converted program.
 -- | This function takes a list of toplevel nodes, and returns a list of toplevel
 -- | nodes with closures converted.
@@ -74,7 +72,7 @@ convertExpression ::
     (MonadIO m) =>
     HLIR.TLIR "expression" ->
     m (HLIR.TLIR "expression", [HLIR.TLIR "toplevel"], HLIR.Type)
-convertExpression (HLIR.MkExprLetIn binding value inExpr)
+convertExpression (HLIR.MkExprLetIn binding value inExpr _)
     | Just (HLIR.MkExprLambda args returnType body) <- getLambda value = do
         oldLocals <- readIORef locals
 
@@ -94,6 +92,7 @@ convertExpression (HLIR.MkExprLetIn binding value inExpr)
                 { HLIR.binding = binding
                 , HLIR.value = newValue
                 , HLIR.inExpr = newInExpr
+                , HLIR.returnType = Identity retTy
                 }
             , ns1 <> ns2
             , retTy
@@ -106,6 +105,7 @@ convertExpression (HLIR.MkExprLetIn binding value inExpr)
                 { HLIR.binding = binding
                 , HLIR.value = newValue
                 , HLIR.inExpr = newInExpr
+                , HLIR.returnType = Identity retTy
                 }
             , ns1 <> ns2
             , retTy
@@ -149,6 +149,9 @@ convertExpression (HLIR.MkExprApplication callee arguments) = do
                     { HLIR.binding = HLIR.MkAnnotation lambdaCallName (Identity calleeType)
                     , HLIR.value = convertedFunction
                     , HLIR.inExpr = call
+                    , HLIR.returnType = Identity (case calleeType of
+                        HLIR.MkTyFun _ ret -> ret
+                        _ -> M.compilerError "Expected a function type")
                     }
                 , mconcat nss <> ns'
                 , case calleeType of
@@ -172,7 +175,7 @@ convertExpression e@(HLIR.MkExprLiteral lit) =
 convertExpression e@(HLIR.MkExprLambda{}) = do
     reserved <- readIORef locals
     convertLambda e reserved
-convertExpression (HLIR.MkExprCondition cond thenB elseB) = do
+convertExpression (HLIR.MkExprCondition cond thenB elseB _) = do
     (newCond, ns1, _) <- convertExpression cond
     (newThen, ns2, thenTy) <- convertExpression thenB
     (newElse, ns3, elseTy) <- convertExpression elseB
@@ -181,7 +184,7 @@ convertExpression (HLIR.MkExprCondition cond thenB elseB) = do
         $ M.compilerError "Branches of conditional must have the same type"
 
     pure
-        ( HLIR.MkExprCondition newCond newThen newElse
+        ( HLIR.MkExprCondition newCond newThen newElse (Identity thenTy)
         , ns1 <> ns2 <> ns3
         , thenTy
         )
@@ -202,7 +205,7 @@ convertExpression (HLIR.MkExprStructureAccess struct field) = do
                     Nothing ->
                         M.compilerError
                             $ "Field " <> field <> " does not exist in structure " <> structName
-            _ -> M.compilerError "Expected a structure type"
+            _ -> M.compilerError $ "Expected a structure type: " <> show structTy
 convertExpression (HLIR.MkExprStructureCreation ann fields) = do
     (newFields, nss, tys) <- unzip3 <$> mapM convertExpression (Map.elems fields)
     let fieldNames = Map.keys fields
@@ -214,27 +217,36 @@ convertExpression (HLIR.MkExprStructureCreation ann fields) = do
         , mconcat nss
         , HLIR.MkTyAnonymousStructure ann fieldTypes
         )
-convertExpression (HLIR.MkExprDereference e) = do
+convertExpression (HLIR.MkExprDereference e _) = do
     (newE, ns, eTy) <- convertExpression e
+
     case eTy of
-        HLIR.MkTyPointer ty -> pure (HLIR.MkExprDereference newE, ns, ty)
+        HLIR.MkTyPointer ty -> pure (HLIR.MkExprDereference newE (Identity ty), ns, ty)
         _ -> M.compilerError "Expected a pointer type"
-convertExpression (HLIR.MkExprReference e) = do
+convertExpression (HLIR.MkExprReference e _) = do
     (newE, ns, eTy) <- convertExpression e
-    pure (HLIR.MkExprReference newE, ns, HLIR.MkTyPointer eTy)
-convertExpression (HLIR.MkExprUpdate update value) = do
+    pure (HLIR.MkExprReference newE (Identity (HLIR.MkTyPointer eTy)), ns, HLIR.MkTyPointer eTy)
+convertExpression (HLIR.MkExprUpdate update value _) = do
     (newUpdate, ns1, updateTy) <- convertExpression update
     (newValue, ns2, valueTy) <- convertExpression value
-
-    print (updateTy, valueTy)
-    printText newUpdate
-    printText newValue
 
     unlessM (isRight <$> runExceptT (TC.isSubtypeOf valueTy updateTy))
         $ M.compilerError "Types of update and value must be the same"
 
-    pure (HLIR.MkExprUpdate newUpdate newValue, ns1 <> ns2, updateTy)
+    pure (HLIR.MkExprUpdate newUpdate newValue (Identity updateTy), ns1 <> ns2, updateTy)
 convertExpression (HLIR.MkExprSizeOf t) = pure (HLIR.MkExprSizeOf t, [], HLIR.MkTyId "u64")
+convertExpression (HLIR.MkExprSingleIf cond thenB _) = do
+    (newCond, ns1, _) <- convertExpression cond
+    (newThen, ns2, thenTy) <- convertExpression thenB
+
+    pure
+        ( HLIR.MkExprSingleIf newCond newThen (Identity thenTy)
+        , ns1 <> ns2
+        , thenTy
+        )
+convertExpression (HLIR.MkExprCast e t) = do
+    (newE, ns, _) <- convertExpression e
+    pure (HLIR.MkExprCast newE t, ns, t)
 
 -- | Convert a lambda expression to a closure-converted expression.
 -- | This function takes a lambda expression, and returns an expression with closures
@@ -311,6 +323,7 @@ convertLambda (HLIR.MkExprLambda args returnType body) reserved = do
                                 , HLIR.field = name
                                 }
                         , HLIR.inExpr = acc
+                        , HLIR.returnType = Identity newReturnType
                         }
                 )
                 newBody

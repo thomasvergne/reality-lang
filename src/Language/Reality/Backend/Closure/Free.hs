@@ -24,15 +24,17 @@ instance Free (HLIR.Expression Identity HLIR.Type) where
     free (HLIR.MkExprLiteral _) = Map.empty
     free (HLIR.MkExprLambda params _ body) =
         free body Map.\\ Map.fromList (map HLIR.unannotate params)
-    free (HLIR.MkExprLetIn binding value inExpr) =
+    free (HLIR.MkExprLetIn binding value inExpr _) =
         (free value <> free inExpr)
             Map.\\ Map.singleton binding.name binding.typeValue.runIdentity
-    free (HLIR.MkExprCondition cond thenB elseB) = free cond <> free thenB <> free elseB
+    free (HLIR.MkExprCondition cond thenB elseB _) = free cond <> free thenB <> free elseB
     free (HLIR.MkExprLocated _ e) = free e
     free (HLIR.MkExprStructureAccess struct _) = free struct
     free (HLIR.MkExprStructureCreation _ fields) =
         free (Map.elems fields)
-    free (HLIR.MkExprDereference e) = free e
-    free (HLIR.MkExprReference e) = free e
-    free (HLIR.MkExprUpdate updatable expr) = free updatable <> free expr
+    free (HLIR.MkExprDereference e _) = free e
+    free (HLIR.MkExprReference e _) = free e
+    free (HLIR.MkExprUpdate updatable expr _) = free updatable <> free expr
     free (HLIR.MkExprSizeOf _) = Map.empty
+    free (HLIR.MkExprSingleIf cond thenB _) = free cond <> free thenB
+    free (HLIR.MkExprCast e _) = free e

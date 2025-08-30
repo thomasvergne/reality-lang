@@ -73,17 +73,17 @@ hoistLambdasInExpr (HLIR.MkExprLambda params ret body) = do
         ( HLIR.MkExprVariable (HLIR.MkAnnotation lambdaName (Identity funcType)) []
         , hoistedBody ++ [lambdaToplevel]
         )
-hoistLambdasInExpr (HLIR.MkExprLetIn binding value inExpr) = do
+hoistLambdasInExpr (HLIR.MkExprLetIn binding value inExpr ret) = do
     (newValue, hoistedValue) <- hoistLambdasInExpr value
     (newInExpr, hoistedInExpr) <- hoistLambdasInExpr inExpr
     pure
-        (HLIR.MkExprLetIn binding newValue newInExpr, hoistedValue ++ hoistedInExpr)
-hoistLambdasInExpr (HLIR.MkExprCondition cond thenB elseB) = do
+        (HLIR.MkExprLetIn binding newValue newInExpr ret, hoistedValue ++ hoistedInExpr)
+hoistLambdasInExpr (HLIR.MkExprCondition cond thenB elseB branchType) = do
     (newCond, hoistedCond) <- hoistLambdasInExpr cond
     (newThenB, hoistedThenB) <- hoistLambdasInExpr thenB
     (newElseB, hoistedElseB) <- hoistLambdasInExpr elseB
     pure
-        ( HLIR.MkExprCondition newCond newThenB newElseB
+        ( HLIR.MkExprCondition newCond newThenB newElseB branchType
         , hoistedCond ++ hoistedThenB ++ hoistedElseB
         )
 hoistLambdasInExpr (HLIR.MkExprStructureAccess struct field) = do
@@ -94,19 +94,26 @@ hoistLambdasInExpr (HLIR.MkExprStructureCreation ann fields) = do
 
     let newFieldMap = Map.fromList $ zip (Map.keys fields) newFields
     pure (HLIR.MkExprStructureCreation ann newFieldMap, concat hoistedFields)
-hoistLambdasInExpr (HLIR.MkExprDereference e) = do
+hoistLambdasInExpr (HLIR.MkExprDereference e targetType) = do
     (newE, hoistedE) <- hoistLambdasInExpr e
-    pure (HLIR.MkExprDereference newE, hoistedE)
-hoistLambdasInExpr (HLIR.MkExprReference e) = do
+    pure (HLIR.MkExprDereference newE targetType, hoistedE)
+hoistLambdasInExpr (HLIR.MkExprReference e targetType) = do
     (newE, hoistedE) <- hoistLambdasInExpr e
-    pure (HLIR.MkExprReference newE, hoistedE)
-hoistLambdasInExpr (HLIR.MkExprUpdate update value) = do
+    pure (HLIR.MkExprReference newE targetType, hoistedE)
+hoistLambdasInExpr (HLIR.MkExprUpdate update value updateType) = do
     (newUpdate, hoistedUpdate) <- hoistLambdasInExpr update
     (newValue, hoistedValue) <- hoistLambdasInExpr value
 
-    pure (HLIR.MkExprUpdate newUpdate newValue, hoistedUpdate ++ hoistedValue)
+    pure (HLIR.MkExprUpdate newUpdate newValue updateType, hoistedUpdate ++ hoistedValue)
 hoistLambdasInExpr (HLIR.MkExprSizeOf t) =
     pure (HLIR.MkExprSizeOf t, [])
+hoistLambdasInExpr (HLIR.MkExprSingleIf cond thenB branchType) = do
+    (newCond, hoistedCond) <- hoistLambdasInExpr cond
+    (newThenB, hoistedThenB) <- hoistLambdasInExpr thenB
+    pure (HLIR.MkExprSingleIf newCond newThenB branchType, hoistedCond ++ hoistedThenB)
+hoistLambdasInExpr (HLIR.MkExprCast e t) = do
+    (newE, hoistedE) <- hoistLambdasInExpr e
+    pure (HLIR.MkExprCast newE t, hoistedE)
 
 {-# NOINLINE symbolCounter #-}
 symbolCounter :: IORef Int
