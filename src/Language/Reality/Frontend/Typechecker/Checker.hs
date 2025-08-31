@@ -365,7 +365,7 @@ synthesizeE (HLIR.MkExprLambda params ret body) = do
 
     pure
         (funcType, HLIR.MkExprLambda paramAnnotations (Identity retType) bodyExpr, cs)
-synthesizeE (HLIR.MkExprApplication callee args) = do
+synthesizeE (HLIR.MkExprApplication callee args _) = do
     -- Synthesizing the type of the callee
     (calleeTy, calleeExpr, cs1) <- synthesizeE callee
 
@@ -383,7 +383,8 @@ synthesizeE (HLIR.MkExprApplication callee args) = do
                     -- Collecting all constraints
                     let cs = cs1 <> mconcat cs2
 
-                    pure (retType, HLIR.MkExprApplication calleeExpr checkedArgs, cs)
+                    pure
+                        (retType, HLIR.MkExprApplication calleeExpr checkedArgs (Identity retType), cs)
         _ -> do
             -- If the callee is not a function type, we create new type variables
             newParamTypes <- mapM (const M.newType) args
@@ -404,7 +405,11 @@ synthesizeE (HLIR.MkExprApplication callee args) = do
             -- Collecting all constraints
             let cs = cs1 <> mconcat cs2
 
-            pure (newRetType, HLIR.MkExprApplication calleeExpr checkedArgs, cs)
+            pure
+                ( newRetType
+                , HLIR.MkExprApplication calleeExpr checkedArgs (Identity newRetType)
+                , cs
+                )
 synthesizeE (HLIR.MkExprStructureCreation ty fields) = do
     -- Removing aliases from the annotated type
     aliasedTy <- M.performAliasRemoval ty

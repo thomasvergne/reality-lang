@@ -34,6 +34,7 @@ data Expression f t
     = MkExprApplication
         { callee :: Expression f t
         , arguments :: [Expression f t]
+        , returnType :: f t
         }
     | MkExprVariable (Ann.Annotation (f t)) [t]
     | MkExprLiteral Lit.Literal
@@ -137,12 +138,12 @@ data Toplevel f t
 pattern MkExprBinary ::
     Text -> Expression Maybe t -> Expression Maybe t -> Expression Maybe t
 pattern MkExprBinary op a b =
-    MkExprApplication (MkExprVariable (MkAnnotation op Nothing) []) [a, b]
+    MkExprApplication (MkExprVariable (MkAnnotation op Nothing) []) [a, b] Nothing
 
 pattern MkExprVarCall ::
     Text -> [Expression Maybe t] -> Expression Maybe t
 pattern MkExprVarCall name args =
-    MkExprApplication (MkExprVariable (MkAnnotation name Nothing) []) args
+    MkExprApplication (MkExprVariable (MkAnnotation name Nothing) []) args Nothing
 
 -- |  STRING EXPRESSION PATTERN
 -- | A pattern synonym to represent string expressions in Bonzai.
@@ -154,7 +155,10 @@ pattern MkExprString s = MkExprLiteral (MkLitString s)
 pattern MkExprTuple ::
     Expression Maybe t -> Expression Maybe t -> Expression Maybe t
 pattern MkExprTuple a b =
-    MkExprApplication (MkExprVariable (MkAnnotation "Tuple" Nothing) []) [a, b]
+    MkExprApplication
+        (MkExprVariable (MkAnnotation "Tuple" Nothing) [])
+        [a, b]
+        Nothing
 
 type family HLIR (s :: Symbol) where
     HLIR "expression" = Expression Maybe Type
@@ -171,7 +175,7 @@ instance Locate (Toplevel f t) where
     locate e p = MkTopLocated{span = p, node = e}
 
 instance (ToText (f t), ToText t) => ToText (Expression f t) where
-    toText (MkExprApplication callee args) =
+    toText (MkExprApplication callee args _) =
         T.concat [toText callee, "(", T.intercalate ", " (map toText args), ")"]
     toText (MkExprVariable ann vars) = toText ann <> "::[" <> T.intercalate ", " (map toText vars) <> "]"
     toText (MkExprLiteral lit) = toText lit

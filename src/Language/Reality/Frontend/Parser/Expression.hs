@@ -309,7 +309,7 @@ parseExprFull = Lex.locateWith <$> P.makeExprParser parseExprTerm operators
             [ P.Postfix . Lex.makeUnaryOp $ do
                 ((_, end), args) <- Lex.parens (P.sepBy (snd <$> parseExprFull) Lex.comma)
 
-                pure $ \((start, _), e) -> ((start, end), HLIR.MkExprApplication e args)
+                pure $ \((start, _), e) -> ((start, end), HLIR.MkExprApplication e args Nothing)
             ]
         ,
             [ P.Prefix . Lex.makeUnaryOp $ do

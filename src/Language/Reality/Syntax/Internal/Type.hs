@@ -75,6 +75,7 @@ instance Eq Type where
         let b' = IO.unsafePerformIO $ readIORef b
         a' == b'
     MkTyApp a b == MkTyApp c d = a == c && b == d
+    MkTyAnonymousStructure _ f1 == MkTyAnonymousStructure _ f2 = f1 == f2
     _ == _ = False
 
 -- | FUNCTION TYPE
