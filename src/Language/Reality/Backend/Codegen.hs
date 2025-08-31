@@ -8,12 +8,23 @@ import GHC.IO qualified as IO
 import Language.Reality.Syntax.MLIR qualified as MLIR
 import Text.Printf qualified as Text
 
+typedefs :: IORef [Text]
+typedefs = IO.unsafePerformIO $ newIORef []
+{-# NOINLINE typedefs #-}
+
+symbolCounter :: IORef Int
+symbolCounter = IO.unsafePerformIO $ newIORef 0
+{-# NOINLINE symbolCounter #-}
+
 -- | CODEGEN
 -- | Convert MLIR to a C code string.
 codegenProgram :: (MonadIO m) => [MLIR.Toplevel] -> m Text
 codegenProgram toplevels = do
     codeLines <- mapM codegenToplevel toplevels
-    pure (Text.unlines codeLines)
+
+    types <- readIORef typedefs
+
+    pure (Text.unlines (types <> codeLines))
 
 unsnoc :: [a] -> Maybe ([a], a)
 unsnoc [] = Nothing
@@ -165,7 +176,8 @@ dropDoubleQuotes txt =
 -- | This function takes a type, and returns a C type string.
 -- | This is a simplified example and does not cover all MLIR type constructs.
 -- | You would need to expand this function to handle all the type constructs you need.
-codegenType :: (MonadIO m) => Bool -> Maybe Text -> [Text] -> MLIR.Type -> m Text
+codegenType ::
+    (MonadIO m) => Bool -> Maybe Text -> [Text] -> MLIR.Type -> m Text
 codegenType _ def _ (MLIR.MkTyId "i8") = pure $ Text.concat ["int8_t ", fromMaybe "" def]
 codegenType _ def _ (MLIR.MkTyId "i16") = pure $ Text.concat ["int16_t ", fromMaybe "" def]
 codegenType _ def _ (MLIR.MkTyId "i32") = pure $ Text.concat ["int32_t ", fromMaybe "" def]
@@ -178,31 +190,66 @@ codegenType _ def _ (MLIR.MkTyId "f32") = pure $ Text.concat ["float ", fromMayb
 codegenType _ def _ (MLIR.MkTyId "f64") = pure $ Text.concat ["double ", fromMaybe "" def]
 codegenType _ def _ (MLIR.MkTyId "char") = pure $ Text.concat ["char ", fromMaybe "" def]
 codegenType _ def _ (MLIR.MkTyId "bool") = pure $ Text.concat ["bool ", fromMaybe "" def]
+codegenType _ def _ (MLIR.MkTyId "void") = pure $ Text.concat ["void ", fromMaybe "" def]
 codegenType _ def generics (MLIR.MkTyId n) | n `elem` generics = pure $ Text.concat ["void*", fromMaybe "" def]
-codegenType _ def _ (MLIR.MkTyId n) = pure $ varify n <> maybe "" (" " <>) def
+codegenType _ def _ (MLIR.MkTyId n) = do
+    let typeName = varify n
+
+    typedefs' <- readIORef typedefs
+
+    let typedef = Text.concat ["typedef struct ", typeName, " ", typeName, ";"]
+
+    unless (typedef `elem` typedefs') $ do
+        modifyIORef' typedefs (<> [typedef])
+
+    pure $ Text.concat [typeName, " ", fromMaybe "" def]
 codegenType shouldPutEnv def _ (MLIR.MkTyVar tv) = do
     let tvr = IO.unsafePerformIO $ readIORef tv
 
     case tvr of
         MLIR.Link ty -> codegenType shouldPutEnv def [] ty
         MLIR.Unbound name _ -> Err.compilerError $ "Unbound type variable in codegen: " <> name
-codegenType shouldPutEnv def generics (MLIR.MkTyPointer ty) = do
-    innerTy <- codegenType shouldPutEnv Nothing generics ty
-    pure $ Text.concat [innerTy, "*", fromMaybe "" def]
+codegenType shouldPutEnv def generics ptr@(MLIR.MkTyPointer ty)
+    | (MLIR.MkTyFun args ret, n) <- getMultipleTimesPointer ptr = do
+        argTypes <-
+            Text.intercalate ", " <$> mapM (codegenType True Nothing generics) args
+        retType <- codegenType shouldPutEnv Nothing generics ret
+
+        name <- freshSymbol
+
+        let typedefLine =
+                Text.concat
+                    ["typedef ", retType, " (*", Text.replicate n "*", name, ")(", argTypes, ");"]
+
+        modifyIORef' typedefs (<> [typedefLine])
+
+        pure $ Text.concat [name, " ", fromMaybe "" def]
+    | otherwise = do
+        innerTy <- codegenType shouldPutEnv Nothing generics ty
+        pure $ Text.concat [innerTy, "*", fromMaybe "" def]
 codegenType shouldPutEnv def generics (args MLIR.:->: ret) = do
     argTypes <-
-        Text.intercalate ", " <$> mapM (codegenType shouldPutEnv Nothing generics) args
+        Text.intercalate ", " <$> mapM (codegenType True Nothing generics) args
     retType <- codegenType shouldPutEnv Nothing generics ret
 
-    if shouldPutEnv
-        then pure $ Text.concat ["void*", fromMaybe "" def]
-        else pure $ Text.concat [retType, " (*", fromMaybe "" def, ")(", argTypes, ")"]
+    name <- freshSymbol
+
+    let typedefLine = Text.concat ["typedef ", retType, " (*", name, ")(", argTypes, ");"]
+
+    modifyIORef' typedefs (<> [typedefLine])
+
+    pure $ Text.concat [name, " ", fromMaybe "" def]
 codegenType shouldPutEnv def generics (MLIR.MkTyAnonymousStructure n _) = do
     n' <- codegenType shouldPutEnv Nothing generics n
 
     pure $ Text.concat [n', " ", fromMaybe "" def]
 codegenType _ _ _ (MLIR.MkTyQuantified _) = pure "void*"
 codegenType _ _ _ (MLIR.MkTyApp _ _) = Err.compilerError "Type applications are not directly supported in C codegen"
+
+isLambdaEnv :: MLIR.Type -> Bool
+isLambdaEnv (MLIR.MkTyId n) | "closure" `Text.isPrefixOf` n = True
+isLambdaEnv (MLIR.MkTyPointer ty) = isLambdaEnv ty
+isLambdaEnv _ = False
 
 isIdent :: Char -> Bool
 isIdent x = Char.isAlphaNum x || x == '_' || x == '$'
@@ -211,6 +258,12 @@ varify :: Text -> Text
 varify =
     Text.concatMap
         (\x' -> if isIdent x' then toText [x'] else fromString (show (ord x')))
+
+getMultipleTimesPointer :: MLIR.Type -> (MLIR.Type, Int)
+getMultipleTimesPointer (MLIR.MkTyPointer ty) =
+    let (baseTy, count) = getMultipleTimesPointer ty
+     in (baseTy, count + 1)
+getMultipleTimesPointer ty = (ty, 0)
 
 encodeUnicode16 :: Text -> Text
 encodeUnicode16 = Text.concatMap escapeChar
@@ -222,3 +275,8 @@ encodeUnicode16 = Text.concatMap escapeChar
         | ' ' <= c && c <= 'z' = toText [c]
         | Char.isPrint c = toText [c]
         | otherwise = Text.pack (Text.printf "\\u%04x" (ord c))
+
+freshSymbol :: (MonadIO m) => m Text
+freshSymbol = do
+    idx <- atomicModifyIORef' symbolCounter (\i -> (i + 1, i))
+    pure $ Text.pack ("_gen" <> show idx)
