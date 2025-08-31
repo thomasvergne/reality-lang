@@ -104,7 +104,7 @@ convertExpression ::
     (MonadIO m) => HLIR.TLIR "expression" -> m (MLIR.Expression, [MLIR.Expression])
 convertExpression (HLIR.MkExprLiteral l) = pure (MLIR.MkExprLiteral l, [])
 convertExpression (HLIR.MkExprVariable ann _) = pure (MLIR.MkExprVariable ann.name, [])
-convertExpression (HLIR.MkExprApplication f args) = do
+convertExpression (HLIR.MkExprApplication f args _) = do
     (f', l1) <- convertExpression f
     (args', l2s) <- mapAndUnzipM convertExpression args
 
@@ -218,7 +218,7 @@ convertExpression (HLIR.MkExprWhile cond body inTy inExpr) = do
     let bl = MLIR.MkExprBlock (l2 ++ [body'])
     let def = MLIR.MkExprLet newVariable inTy.runIdentity (Just inExpr')
     let whileExpr = MLIR.MkExprWhile cond' bl
-    pure (var, l1 ++ l3 ++ [def, whileExpr])
+    pure (var, l1 ++ [whileExpr] ++ l3 ++ [def])
 
 {-# NOINLINE symbolCounter #-}
 symbolCounter :: IORef Int
