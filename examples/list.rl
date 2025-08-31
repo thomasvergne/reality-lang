@@ -52,7 +52,7 @@ property get_index_mut[B, A](container: A, index: u64) -> *B;
 
 impl fn (c: *A) get_index_mut[A](index: u64) -> *A {
     let ptr = ptr_add(c, index * sizeof(A));
-    ptr
+    ptr as *A
 }
 
 impl fn (c: List[A]) get_index_mut[A](index: u64) -> *A {
@@ -98,5 +98,22 @@ mod List {
 }
 
 impl fn (list: List[A]) show[A]() -> String {
-    String::new("List")
+    let result = String::new("[");
+
+    let i = 0 as u64;
+
+    while i < list.length {
+        let value = list[i];
+        result = (result + show(value));
+
+        if i < list.length - 1 {
+            result = (result + String::new(", "));
+        };
+
+        i = i + 1;
+    };
+
+    result = (result + String::new("]"));
+
+    result
 }

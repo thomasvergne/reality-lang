@@ -9,19 +9,29 @@ fn factorial(n: i32) -> i32 {
     }
 }
 
-fn main(argc: i32) -> i64 {
+fn apply[A](f: fn(A) -> A, x: A) -> A {
+    f(x)
+}
+
+fn main() -> i64 {
     let list = List::new();
 
-    List::push(list, String::new("test"));
-    List::push(list, String::new("bruh"));
+    List::push(list, |x| x + "test");
+    List::push(list, |x| x + "bruh");
 
-    let new_list = List::map(list, |s| {
-        print(s)
+    let new_list = List::map(list, |f| {
+        |x| f(x)
     });
 
-    List::map(new_list, |x| {
-        print(x)
+    let result = List::map(new_list, |f| {
+        print(f("test"));
     });
+
+    let id = |x| x;
+
+    print(apply(id, 5));
+
+    print(*result);
 
     0
 }
