@@ -236,11 +236,15 @@ resolveSpecializationInExpr (HLIR.MkExprCondition cond thenB elseB branchTy) = d
         ( HLIR.MkExprCondition typedCond typedThen typedElse specBranchTy
         , newDefs1 ++ newDefs2 ++ newDefs3 ++ newDefs4
         )
-resolveSpecializationInExpr (HLIR.MkExprApplication callee args) = do
+resolveSpecializationInExpr (HLIR.MkExprApplication callee args retTy) = do
     (typedCallee, newDefs1) <- resolveSpecializationInExpr callee
     (typedArgs, newDefs2) <- mapAndUnzipM resolveSpecializationInExpr args
+    (specRetTy, newDefs3) <- resolveSpecializationInType retTy.runIdentity
 
-    pure (HLIR.MkExprApplication typedCallee typedArgs, newDefs1 ++ concat newDefs2)
+    pure
+        ( HLIR.MkExprApplication typedCallee typedArgs (Identity specRetTy)
+        , newDefs1 ++ concat newDefs2 ++ newDefs3
+        )
 resolveSpecializationInExpr (HLIR.MkExprStructureAccess struct field) = do
     (typedStruct, newDefs) <- resolveSpecializationInExpr struct
     pure (HLIR.MkExprStructureAccess typedStruct field, newDefs)
@@ -352,10 +356,11 @@ applySubstInExpr subst (HLIR.MkExprCondition cond thenB elseB branchType) =
         newBranchType <- M.applySubstitution subst branchType.runIdentity
 
         pure (HLIR.MkExprCondition newCond newThenB newElseB (Identity newBranchType))
-applySubstInExpr subst (HLIR.MkExprApplication callee args) = do
+applySubstInExpr subst (HLIR.MkExprApplication callee args retTy) = do
     newCallee <- applySubstInExpr subst callee
     newArgs <- mapM (applySubstInExpr subst) args
-    pure (HLIR.MkExprApplication newCallee newArgs)
+    newRetTy <- M.applySubstitution subst retTy.runIdentity
+    pure (HLIR.MkExprApplication newCallee newArgs (Identity newRetTy))
 applySubstInExpr subst (HLIR.MkExprStructureAccess struct field) = do
     newStruct <- applySubstInExpr subst struct
     pure (HLIR.MkExprStructureAccess newStruct field)
