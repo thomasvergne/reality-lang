@@ -19,7 +19,7 @@ instance (Free a, Free b, Free c) => Free (a, b, c) where
     free (a, b, c) = free a <> free b <> free c
 
 instance Free (HLIR.Expression Identity HLIR.Type) where
-    free (HLIR.MkExprApplication f args) = free f <> free args
+    free (HLIR.MkExprApplication f args _) = free f <> free args
     free (HLIR.MkExprVariable ann _) = Map.singleton ann.name ann.typeValue.runIdentity
     free (HLIR.MkExprLiteral _) = Map.empty
     free (HLIR.MkExprLambda params _ body) =

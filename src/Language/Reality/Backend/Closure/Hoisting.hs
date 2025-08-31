@@ -48,11 +48,13 @@ hoistLambdasInExpr ::
 hoistLambdasInExpr (HLIR.MkExprLocated p e) = do
     (newExpr, hoisted) <- hoistLambdasInExpr e
     pure (HLIR.MkExprLocated p newExpr, hoisted)
-hoistLambdasInExpr (HLIR.MkExprApplication callee args) = do
+hoistLambdasInExpr (HLIR.MkExprApplication callee args retTy) = do
     (newCallee, hoistedCallee) <- hoistLambdasInExpr callee
     (newArgs, hoistedArgs) <- mapAndUnzipM hoistLambdasInExpr args
     pure
-        (HLIR.MkExprApplication newCallee newArgs, hoistedCallee ++ concat hoistedArgs)
+        ( HLIR.MkExprApplication newCallee newArgs retTy
+        , hoistedCallee ++ concat hoistedArgs
+        )
 hoistLambdasInExpr (HLIR.MkExprVariable ann vars) =
     pure (HLIR.MkExprVariable ann vars, [])
 hoistLambdasInExpr (HLIR.MkExprLiteral lit) =
