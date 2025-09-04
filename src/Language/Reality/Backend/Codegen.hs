@@ -3,6 +3,7 @@ module Language.Reality.Backend.Codegen where
 import Control.Monad.Result qualified as Err
 import Data.Char qualified as Char
 import Data.Map qualified as Map
+import Data.Set qualified as Set
 import Data.Text qualified as Text
 import GHC.IO qualified as IO
 import Language.Reality.Syntax.MLIR qualified as MLIR
@@ -15,6 +16,10 @@ typedefs = IO.unsafePerformIO $ newIORef []
 symbolCounter :: IORef Int
 symbolCounter = IO.unsafePerformIO $ newIORef 0
 {-# NOINLINE symbolCounter #-}
+
+userDefinedTypes :: IORef (Set Text)
+userDefinedTypes = IO.unsafePerformIO $ newIORef Set.empty
+{-# NOINLINE userDefinedTypes #-}
 
 -- | CODEGEN
 -- | Convert MLIR to a C code string.
@@ -40,8 +45,8 @@ unsnoc (x : xs) = case unsnoc xs of
 codegenToplevel :: (MonadIO m) => MLIR.Toplevel -> m Text
 codegenToplevel (MLIR.MkTopFunction name params ret body) = do
     paramList <-
-        fmap (Text.intercalate ", ")
-            $ mapM
+        Text.intercalate ", "
+            <$> mapM
                 (\(MLIR.MkAnnotation paramName ty) -> codegenType True (Just paramName) [] ty)
                 params
     retType <- codegenType True Nothing [] ret
@@ -63,22 +68,35 @@ codegenToplevel (MLIR.MkTopPublic n) = do
     innerCode <- codegenToplevel n
     pure $ Text.concat ["// Public\n", innerCode]
 codegenToplevel (MLIR.MkTopStructure name fields) = do
-    fieldLines <-
-        mapM
-            ( \(fName, fType) -> do
-                fTypeStr <- codegenType False (Just fName) [] fType
-                pure $ Text.concat ["    ", fTypeStr, ";"]
-            )
-            fields
-    let structHeader = Text.concat ["typedef struct ", varify name, " {"]
-    let structFooter = Text.concat ["} ", varify name, ";"]
+    modifyIORef' userDefinedTypes (Set.insert (varify name))
+    fieldLines <- mapM codegenField fields
+    let structHeader = Text.concat ["struct ", varify name, " {"]
+    let structFooter = Text.concat ["};"]
     pure $ Text.unlines ([structHeader] ++ fieldLines ++ [structFooter])
 codegenToplevel (MLIR.MkTopExternalFunction name generics params ret) = do
     paramList <-
-        fmap (Text.intercalate ", ")
-            $ mapM (\p -> codegenType True Nothing generics p) params
+        Text.intercalate ", " <$>
+            mapM (codegenType True Nothing generics) params
     retType <- codegenType True (Just name) generics ret
     pure $ Text.concat ["extern ", retType, "(", paramList, ");"]
+codegenToplevel (MLIR.MkTopExternalVariable name ty) = do
+    varType <- codegenType True (Just name) [] ty
+    pure $ Text.concat ["extern ", varType, ";"]
+
+codegenField :: MonadIO m => MLIR.StructureMember -> m Text
+codegenField (MLIR.MkStructField name ty) = do
+    tyStr <- codegenType False (Just name) [] ty
+    pure $ Text.concat [tyStr, ";"]
+codegenField (MLIR.MkStructStruct name fields) = do
+    fieldLines <- mapM codegenField fields
+    let structHeader = "struct {"
+    let structFooter = "} " <> varify name <> ";"
+    pure $ Text.unlines ([structHeader] ++ map ("    " <>) fieldLines ++ [structFooter])
+codegenField (MLIR.MkStructUnion name fields) = do
+    fieldLines <- mapM codegenField fields
+    let unionHeader = "union {"
+    let unionFooter = "} " <> varify name <> ";"
+    pure $ Text.unlines ([unionHeader] ++ map ("    " <>) fieldLines ++ [unionFooter])
 
 -- | Convert a single MLIR expression to C code lines.
 -- | This function takes an expression, and returns a list of C code lines.
@@ -89,7 +107,7 @@ codegenExpression (MLIR.MkExprLiteral lit) = codegenLiteral lit
 codegenExpression (MLIR.MkExprVariable name) = pure $ varify name
 codegenExpression (MLIR.MkExprApplication f args) = do
     fStr <- codegenExpression f
-    argList <- fmap (Text.intercalate ", ") $ mapM codegenExpression args
+    argList <- Text.intercalate ", " <$> mapM codegenExpression args
     pure $ Text.concat [fStr, "(", argList, ")"]
 codegenExpression (MLIR.MkExprBlock bl) = do
     blockLines <- mapM codegenExpression bl
@@ -197,12 +215,14 @@ codegenType _ def _ (MLIR.MkTyId n) = do
 
     typedefs' <- readIORef typedefs
 
-    let typedef = Text.concat ["typedef struct ", typeName, " ", typeName, ";"]
+    let typedef = Text.concat ["struct ", typeName, ";"]
 
-    unless (typedef `elem` typedefs') $ do
+    userTypes <- readIORef userDefinedTypes
+
+    when (typeName `Set.member` userTypes && typedef `notElem` typedefs') $ do
         modifyIORef' typedefs (<> [typedef])
 
-    pure $ Text.concat [typeName, " ", fromMaybe "" def]
+    pure $ Text.concat [if typeName `Set.member` userTypes then "struct " else "", typeName, " ", fromMaybe "" def]
 codegenType shouldPutEnv def _ (MLIR.MkTyVar tv) = do
     let tvr = IO.unsafePerformIO $ readIORef tv
 
@@ -239,12 +259,12 @@ codegenType shouldPutEnv def generics (args MLIR.:->: ret) = do
     modifyIORef' typedefs (<> [typedefLine])
 
     pure $ Text.concat [name, " ", fromMaybe "" def]
-codegenType shouldPutEnv def generics (MLIR.MkTyAnonymousStructure n _) = do
+codegenType shouldPutEnv def generics (MLIR.MkTyAnonymousStructure _ n _) = do
     n' <- codegenType shouldPutEnv Nothing generics n
 
     pure $ Text.concat [n', " ", fromMaybe "" def]
 codegenType _ _ _ (MLIR.MkTyQuantified _) = pure "void*"
-codegenType _ _ _ (MLIR.MkTyApp _ _) = Err.compilerError "Type applications are not directly supported in C codegen"
+codegenType _ _ _ t@(MLIR.MkTyApp _ _) = Err.compilerError $ "Type applications are not directly supported in C codegen: " <> Text.pack (show t)
 
 isLambdaEnv :: MLIR.Type -> Bool
 isLambdaEnv (MLIR.MkTyId n) | "closure" `Text.isPrefixOf` n = True

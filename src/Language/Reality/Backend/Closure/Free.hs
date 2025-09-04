@@ -22,8 +22,13 @@ instance Free (HLIR.Expression Identity HLIR.Type) where
     free (HLIR.MkExprApplication f args _) = free f <> free args
     free (HLIR.MkExprVariable ann _) = Map.singleton ann.name ann.typeValue.runIdentity
     free (HLIR.MkExprLiteral _) = Map.empty
+
+    -- We exclude parameters from the free variables of a lambda
+    -- because they are bound variables.
     free (HLIR.MkExprLambda params _ body) =
         free body Map.\\ Map.fromList (map HLIR.unannotate params)
+
+    -- Same rule applies for let-in bindings as name is a bound variable.
     free (HLIR.MkExprLetIn binding value inExpr _) =
         (free value <> free inExpr)
             Map.\\ Map.singleton binding.name binding.typeValue.runIdentity
@@ -39,3 +44,14 @@ instance Free (HLIR.Expression Identity HLIR.Type) where
     free (HLIR.MkExprSingleIf cond thenB _) = free cond <> free thenB
     free (HLIR.MkExprCast e _) = free e
     free (HLIR.MkExprWhile cond body _ inExpr) = free cond <> free body <> free inExpr
+    free (HLIR.MkExprIfIs expr pat thenBr elseBr _) =
+        (free expr <> free thenBr <> free elseBr) Map.\\ free pat
+
+instance Free (HLIR.Pattern Identity HLIR.Type) where
+    free (HLIR.MkPatternVariable _) = mempty
+    free (HLIR.MkPatternLet ann) = Map.singleton ann.name ann.typeValue.runIdentity
+    free (HLIR.MkPatternConstructor _ patterns _) = free patterns
+    free (HLIR.MkPatternLiteral _) = Map.empty
+    free (HLIR.MkPatternStructure _ fields) = free (Map.elems fields)
+    free HLIR.MkPatternWildcard = Map.empty
+    free (HLIR.MkPatternLocated _ p) = free p

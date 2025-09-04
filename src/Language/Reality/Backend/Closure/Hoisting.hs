@@ -61,16 +61,28 @@ hoistLambdasInExpr (HLIR.MkExprLiteral lit) =
     pure (HLIR.MkExprLiteral lit, [])
 hoistLambdasInExpr (HLIR.MkExprLambda params ret body) = do
     (newBody, hoistedBody) <- hoistLambdasInExpr body
+
+    -- Generate a unique name for the hoisted lambda function
+    -- This is done to avoid name collisions with other functions.
     lambdaName <- freshLambdaName
 
+    -- Building the function type for the hoisted lambda
+    -- It takes the types of the parameters and the return type
+    -- to construct the function type.
+    --
+    -- This is used to annotate the hoisted function.
     let funcType = HLIR.MkTyFun (map (runIdentity <$> (.typeValue)) params) ret.runIdentity
 
+    -- Create the toplevel function declaration for the hoisted lambda
     let lambdaToplevel =
             HLIR.MkTopFunctionDeclaration
                 (HLIR.MkAnnotation lambdaName [])
                 (map (runIdentity <$>) params)
                 ret.runIdentity
                 newBody
+
+    -- Return the new expression which is a variable referencing the hoisted lambda
+    -- and the list of hoisted toplevel nodes which includes the new lambda function
     pure
         ( HLIR.MkExprVariable (HLIR.MkAnnotation lambdaName (Identity funcType)) []
         , hoistedBody ++ [lambdaToplevel]
@@ -126,6 +138,17 @@ hoistLambdasInExpr (HLIR.MkExprWhile cond body loopType inExpr) = do
     pure
         ( HLIR.MkExprWhile newCond newBody loopType newInExpr
         , hoistedCond ++ hoistedBody ++ hoistedInExpr
+        )
+hoistLambdasInExpr (HLIR.MkExprIfIs expr ty thenB elseB branchType) = do
+    (newExpr, hoistedExpr) <- hoistLambdasInExpr expr
+    (newThenB, hoistedThenB) <- hoistLambdasInExpr thenB
+    (newElseB, hoistedElseB) <- maybe (pure (Nothing, [])) (\e -> do
+        (ne, he) <- hoistLambdasInExpr e
+        pure (Just ne, he)) elseB
+
+    pure
+        ( HLIR.MkExprIfIs newExpr ty newThenB newElseB branchType
+        , hoistedExpr ++ hoistedThenB ++ hoistedElseB
         )
 
 {-# NOINLINE symbolCounter #-}

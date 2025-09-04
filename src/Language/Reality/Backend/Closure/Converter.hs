@@ -9,7 +9,6 @@ import GHC.IO qualified as IO
 import Language.Reality.Backend.Closure.Free qualified as M
 import Language.Reality.Backend.Closure.Hoisting qualified as HT
 import Language.Reality.Frontend.Typechecker.Checker qualified as TC
-import Language.Reality.Frontend.Typechecker.Unification qualified as TC
 import Language.Reality.Syntax.HLIR qualified as HLIR
 
 {-# NOINLINE structureDeclarations #-}
@@ -48,18 +47,18 @@ expandStructure :: (MonadIO m) => HLIR.TLIR "toplevel" -> m HLIR.Type
 expandStructure (HLIR.MkTopStructureDeclaration name fields) = do
     newFields <- traverse expandType fields
 
-    pure $ HLIR.MkTyAnonymousStructure (HLIR.MkTyId name.name) newFields
+    pure $ HLIR.MkTyAnonymousStructure False (HLIR.MkTyId name.name) newFields
 expandStructure (HLIR.MkTopLocated _ e) = expandStructure e
 expandStructure _ = error "Expected a structure declaration"
 
 expandType :: (MonadIO m) => HLIR.Type -> m HLIR.Type
-expandType (HLIR.MkTyAnonymousStructure ann fields) = do
+expandType (HLIR.MkTyAnonymousStructure b ann fields) = do
     (newAnn, _) <- convertType ann
     (newFields, _) <- mapAndUnzipM convertType (Map.elems fields)
     let fieldNames = Map.keys fields
         fieldTypes = Map.fromList (zip fieldNames newFields)
 
-    pure $ HLIR.MkTyAnonymousStructure newAnn fieldTypes
+    pure $ HLIR.MkTyAnonymousStructure b newAnn fieldTypes
 expandType (HLIR.MkTyPointer pointee) = HLIR.MkTyPointer <$> expandType pointee
 expandType (HLIR.MkTyFun args ret) = do
     newArgs <- mapM expandType args
@@ -82,13 +81,30 @@ findM p (x : xs) = do
         Just y -> pure (Just y)
         Nothing -> findM p xs
 
+-- | Convert a type to a closure-converted type.
+-- | This function takes a type, and returns a type with closures converted.
+-- | It also returns a list of toplevel nodes that were created during the conversion.
+-- |
+-- | For example, a function type `A -> B` will be converted to a structure type
+-- | containing a function pointer and an environment pointer.
+-- | The function pointer will have the type:
+-- |
+-- | struct {
+-- |    function: (void*, A) -> B,
+-- |    environment: void*
+-- | }
+-- |
+-- | The function type will then be a pointer to this structure type.
 convertType :: (MonadIO m) => HLIR.Type -> m (HLIR.Type, [HLIR.TLIR "toplevel"])
 convertType (HLIR.MkTyFun argTypes returnType) = do
+    -- Converting type arguments to their closure-converted form
     (newArgTypes, ns1) <- mapAndUnzipM convertType argTypes
     (newReturnType, ns2) <- convertType returnType
 
+    -- Creating a unique name for the lambda structure
     lambdaStructName <- freshSymbol "function_type_"
 
+    -- Creating the structure declaration for the lambda
     let structDecl =
             HLIR.MkTopStructureDeclaration
                 { HLIR.header = HLIR.MkAnnotation lambdaStructName []
@@ -102,18 +118,25 @@ convertType (HLIR.MkTyFun argTypes returnType) = do
                         ]
                 }
 
+    -- Expanding the structure to get a type with all types reduced
+    -- so we can compare it with existing structures
     f1 <-
         expandStructure structDecl >>= \case
-            HLIR.MkTyAnonymousStructure _ f -> pure f
+            HLIR.MkTyAnonymousStructure _ _ f -> pure f
             _ -> pure Map.empty
 
     found <-
         findM
             ( \node -> do
+                -- Also expand existing structures to compare them properly
+                -- (e.g. if they're strictly equal but with different names)
                 (name, f2) <-
                     expandStructure node >>= \case
-                        HLIR.MkTyAnonymousStructure name f -> pure (Just name, f)
+                        HLIR.MkTyAnonymousStructure _ name f -> pure (Just name, f)
                         _ -> pure (Nothing, Map.empty)
+
+                -- If the fields are the same, we can reuse the existing structure
+                -- otherwise, we need to create a new one
                 if f1 == f2
                     then case name of
                         Just n -> pure (Just n)
@@ -122,6 +145,13 @@ convertType (HLIR.MkTyFun argTypes returnType) = do
             )
             =<< readIORef structureDeclarations
 
+    -- If we found an existing structure, reuse it
+    -- otherwise, add the new structure to the list of declarations
+    -- and return a pointer to it
+    -- We return the list of new structure declarations as well
+    -- so they can be added to the toplevel later
+    -- This way, we avoid duplicating structure declarations
+    -- for identical function types
     case found of
         Just nameTy -> pure (HLIR.MkTyPointer nameTy, [])
         Nothing -> do
@@ -134,13 +164,13 @@ convertType (HLIR.MkTyFun argTypes returnType) = do
 convertType (HLIR.MkTyPointer pointee) = do
     (newPointee, ns) <- convertType pointee
     pure (HLIR.MkTyPointer newPointee, ns)
-convertType (HLIR.MkTyAnonymousStructure ann fields) = do
+convertType (HLIR.MkTyAnonymousStructure b ann fields) = do
     (ty, ns) <- convertType ann
     (tys, nss) <- mapAndUnzipM convertType (Map.elems fields)
     let fieldNames = Map.keys fields
         fieldTypes = Map.fromList (zip fieldNames tys)
 
-    pure (HLIR.MkTyAnonymousStructure ty fieldTypes, mconcat nss <> ns)
+    pure (HLIR.MkTyAnonymousStructure b ty fieldTypes, mconcat nss <> ns)
 convertType t = pure (t, [])
 
 -- | Convert a program to a closure-converted program.
@@ -156,6 +186,10 @@ convertProgram nodes = HT.hoistLambdas . concat =<< mapM convertSingularNode nod
 convertSingularNode ::
     (MonadIO m) => HLIR.TLIR "toplevel" -> m [HLIR.TLIR "toplevel"]
 convertSingularNode (HLIR.MkTopFunctionDeclaration name params returnType body) = do
+    -- Pre-converting the parameter types, and return type, but not
+    -- using them yet, as the converter currently convert types when
+    -- encountering variables, so we need to keep the original types
+    -- for now.
     (nss, params') <-
         mapAndUnzipM
             ( \(HLIR.MkAnnotation paramName paramType) -> do
@@ -163,10 +197,20 @@ convertSingularNode (HLIR.MkTopFunctionDeclaration name params returnType body) 
                 pure (ns, HLIR.MkAnnotation paramName newParamType)
             )
             params
+    (newReturnType, ns') <- convertType returnType
+
+    -- Inserting the function type in the global environment
+    -- so that recursive functions can reference themselves
+    -- with their closure-converted type
 
     let funType = HLIR.MkTyFun (map (.typeValue) params) returnType
 
     modifyIORef' globals (Map.insert name.name funType)
+
+    -- Adding original parameters to the local environment
+    -- so that they can be referenced in the body
+    -- Also saving the old local environment to restore it later
+    -- so that parameters don't leak outside the function body
 
     oldLocals <- readIORef locals
 
@@ -175,8 +219,14 @@ convertSingularNode (HLIR.MkTopFunctionDeclaration name params returnType body) 
     (newBody, ns, _) <- convertExpression body
 
     writeIORef locals oldLocals
-    (newReturnType, ns') <- convertType returnType
-    let newFunType = HLIR.MkTyFun (map (.typeValue) params) newReturnType
+
+    -- Creating the new function type with closure-converted types
+    -- and inserting it in the global environment
+    -- so that other functions can reference it
+    -- This is necessary because the body may have introduced new types
+    -- that were not present in the original parameter types
+    -- (e.g. if a parameter was a function type that was converted to a closure type)
+    let newFunType = HLIR.MkTyFun (map (.typeValue) params') newReturnType
 
     modifyIORef' globals (Map.insert name.name newFunType)
 
@@ -216,6 +266,25 @@ convertSingularNode (HLIR.MkTopExternalFunction header params returnType) = do
     let funType = HLIR.MkTyFun (map (.typeValue) params) returnType
     modifyIORef' natives (Map.insert header.name funType)
     pure [HLIR.MkTopExternalFunction header params returnType]
+convertSingularNode (HLIR.MkTopExternLet ann) = do
+    modifyIORef' natives (Map.insert ann.name ann.typeValue)
+    pure [HLIR.MkTopExternLet ann]
+convertSingularNode (HLIR.MkTopAnnotation exprs node) = do
+    ns <- convertSingularNode node
+
+    case exprs of
+        (x:_) | Just "intrinsic" <- HLIR.getFirstAnnotationArgument x -> pure []
+        _ -> pure ns
+convertSingularNode (HLIR.MkTopEnumeration header constructors) = do
+    let typeHeader = HLIR.MkTyId header.name
+
+    forM_ (Map.toList constructors) $ \case
+        (name, Just tys) ->
+            modifyIORef' globals (Map.insert name (HLIR.MkTyFun tys typeHeader))
+        (name, Nothing) ->
+            modifyIORef' globals (Map.insert name typeHeader)
+
+    pure [HLIR.MkTopEnumeration header constructors]
 convertSingularNode other = pure [other]
 
 -- | Convert an expression to a closure-converted expression.
@@ -226,7 +295,13 @@ convertExpression ::
     HLIR.TLIR "expression" ->
     m (HLIR.TLIR "expression", [HLIR.TLIR "toplevel"], HLIR.Type)
 convertExpression (HLIR.MkExprLetIn binding value inExpr _)
+    -- If the value is a lambda, we need to convert it to a closure
+    -- and taking care of the let-binding name to allow for recursion
+    -- (e.g. let f = \x -> if x == 0 then 1 else x * f (x - 1) in f 5)
     | Just (HLIR.MkExprLambda args returnType body) <- getLambda value = do
+        -- Converting the lambda expression to a closure. We pass
+        -- the binding name and type in the environment so that the
+        -- lambda can reference itself recursively
         (newValue, ns1, ty) <-
             convertLambda
                 (HLIR.MkExprLambda args returnType body)
@@ -272,16 +347,25 @@ convertExpression (HLIR.MkExprLetIn binding value inExpr _)
             , retTy
             )
 convertExpression (HLIR.MkExprApplication callee arguments retType) = do
+    -- Reading the global and native environments to check if the callee
+    -- is a known function. If it is, we can use its type directly
+    -- otherwise, we need to convert the callee expression
+    -- and create a closure call
     nativeFunctions <- readIORef natives
     globalFunctions <- readIORef globals
 
     let allFunctions = nativeFunctions <> globalFunctions
 
+    -- Converting the arguments and the return type of the application
+    -- so that we can use them in the function type
     (newArguments, nss, argTypes) <- unzip3 <$> mapM convertExpression arguments
 
     (retType', ns') <- convertType retType.runIdentity
 
     case getVariable callee of
+        -- Checking if the callee is a known function
+        -- If it is, we can create a direct call
+        -- otherwise, we need to create a closure call
         Just (name, _) | Just _ <- Map.lookup name allFunctions -> do
             let funTy = argTypes HLIR.:->: retType'
 
@@ -295,10 +379,28 @@ convertExpression (HLIR.MkExprApplication callee arguments retType) = do
                 , retType'
                 )
         _ -> do
+            -- Converting the callee expression to get the closure
+            -- structure and its type
             (convertedFunction, ns'', calleeType) <- convertExpression callee
 
+            -- Creating a unique name for the lambda call variable
+            -- to avoid name collisions
             lambdaCallName <- freshSymbol "lambda_call_"
 
+            -- We exactly have this schema foreach closure call:
+            --
+            -- let lambda_call_X = (CLOSURE_EXPRESSION : CALLEE_TYPE) in
+            --     lambda_call_X->function(lambda_call_X->environment, ARGS...)
+            --
+            -- Where CALLEE_TYPE is a pointer to a structure:
+            --
+            -- struct {
+            --    function: (void*, ARG_TYPES...) -> RET_TYPE,
+            --    environment: void*
+            -- }
+            --
+            -- This way, we can call the function with its environment
+            -- and the arguments
             let callVar =
                     HLIR.MkExprDereference
                         ( HLIR.MkExprVariable
@@ -333,16 +435,31 @@ convertExpression (HLIR.MkExprApplication callee arguments retType) = do
                 )
 convertExpression (HLIR.MkExprLocated _ e) = convertExpression e
 convertExpression e@(HLIR.MkExprVariable ann@(HLIR.MkAnnotation name (Identity ty)) _) = do
+    -- Reading the local and global environments to find the variable type
+    -- and convert it to its closure-converted form
     locals' <- readIORef locals
     globals' <- readIORef globals
 
     let variables = locals' <> globals'
 
     case Map.lookup name variables of
+        -- If the variable is found, we convert its type and return it
         Just varTy -> do
             (varTy', ns) <- convertType varTy
             pure
                 (HLIR.MkExprVariable ann{HLIR.typeValue = Identity varTy'} [], ns, varTy')
+
+        -- If the variable is not found, we assume it's a native variable
+        --
+        -- NOTE: We may add further checks to ensure the variable should not
+        -- be encapsulated in a closure. Like this:
+        --
+        --            Γ f : τ₀ -> τ₁ ⊢ cc f
+        -- ---------------------------------------------
+        --  Γ f : τ₀ -> τ₁, x₀: τ₀ ⊢ cc (λx₀: τ₀. f x₀)
+        --
+        -- This permits native functions to be used in function calls
+        -- as function call arguments
         Nothing -> pure (e, [], ty)
 convertExpression e@(HLIR.MkExprLiteral lit) =
     pure
@@ -360,10 +477,7 @@ convertExpression e@(HLIR.MkExprLambda{}) = do
 convertExpression (HLIR.MkExprCondition cond thenB elseB _) = do
     (newCond, ns1, _) <- convertExpression cond
     (newThen, ns2, thenTy) <- convertExpression thenB
-    (newElse, ns3, elseTy) <- convertExpression elseB
-
-    unlessM (isRight <$> runExceptT (TC.isSubtypeOf thenTy elseTy))
-        $ M.compilerError "Branches of conditional must have the same type"
+    (newElse, ns3, _) <- convertExpression elseB
 
     pure
         ( HLIR.MkExprCondition newCond newThen newElse (Identity thenTy)
@@ -373,20 +487,30 @@ convertExpression (HLIR.MkExprCondition cond thenB elseB _) = do
 convertExpression (HLIR.MkExprStructureAccess struct field) = do
     (newStruct, ns, structTy) <- convertExpression struct
 
+    -- Looking up the structure fields in the global structure environment
+    -- to find the type of the accessed field
     structures' <- readIORef structures
     let name = TC.getHeader structTy
 
     case structTy of
-        HLIR.MkTyAnonymousStructure _ fields -> case Map.lookup field fields of
+        -- If the structure is anonymous, we can directly look up the field
+        -- in its fields
+        HLIR.MkTyAnonymousStructure _ _ fields -> case Map.lookup field fields of
             Just ty -> pure (HLIR.MkExprStructureAccess newStruct field, ns, ty)
             Nothing -> M.compilerError $ "Field " <> field <> " does not exist in structure"
         _ -> case name of
+            -- If the structure is named, we look it up in the global environment
+            -- to find its fields
             Just structName | Just fields <- Map.lookup structName structures' ->
                 case Map.lookup field fields of
                     Just ty -> pure (HLIR.MkExprStructureAccess newStruct field, ns, ty)
+
+                    -- If the field is not found, we raise a compiler error
                     Nothing ->
                         M.compilerError
                             $ "Field " <> field <> " does not exist in structure " <> structName
+
+            -- If the structure is not found, we raise a compiler error
             _ -> M.compilerError $ "Expected a structure type: " <> show structTy
 convertExpression (HLIR.MkExprStructureCreation ann fields) = do
     (newFields, nss, tys) <- unzip3 <$> mapM convertExpression (Map.elems fields)
@@ -397,7 +521,7 @@ convertExpression (HLIR.MkExprStructureCreation ann fields) = do
     pure
         ( HLIR.MkExprStructureCreation ann newFieldMap
         , mconcat nss
-        , HLIR.MkTyAnonymousStructure ann fieldTypes
+        , HLIR.MkTyAnonymousStructure False ann fieldTypes
         )
 convertExpression (HLIR.MkExprDereference e _) = do
     (newE, ns, eTy) <- convertExpression e
@@ -443,6 +567,19 @@ convertExpression (HLIR.MkExprWhile cond body _ inExpr) = do
         , ns1 <> ns2 <> ns3
         , inTy
         )
+convertExpression (HLIR.MkExprIfIs expr pat thenB elseB _) = do
+    (newExpr, ns1, _) <- convertExpression expr
+    (newThen, ns2, thenTy) <- convertExpression thenB
+    (newElse, ns3, _) <- maybe (pure (Nothing, [], thenTy)) (\x -> do
+        (e, nse, ety) <- convertExpression x
+        pure (Just e, nse, ety)
+        ) elseB
+
+    pure
+        ( HLIR.MkExprIfIs newExpr pat newThen newElse (Identity thenTy)
+        , ns1 <> ns2 <> ns3
+        , thenTy
+        )
 
 -- | Convert a lambda expression to a closure-converted expression.
 -- | This function takes a lambda expression, and returns an expression with closures
@@ -453,29 +590,43 @@ convertLambda ::
     Map Text HLIR.Type ->
     m (HLIR.TLIR "expression", [HLIR.TLIR "toplevel"], HLIR.Type)
 convertLambda (HLIR.MkExprLambda args _ body) reserved = do
+    -- Finding the free variables in the lambda body to include them in the
+    -- closure environment structure. We exclude the arguments and reserved
+    -- variables (e.g. the function name for recursion) from the free variables.
+    -- We also exclude native and global functions from the free variables
+    -- as they don't need to be included in the closure environment.
     let freeVariablesInBody = M.free body
     nativeFunctions <- readIORef natives
     globalFunctions <- readIORef globals
 
-    (ns1, typedArguments) <-
-        sequence
-            <$> forM
-                args
-                ( \(HLIR.MkAnnotation name (Identity ty)) -> do
-                    (newTy, ns) <- convertType ty
-                    pure (ns, HLIR.MkAnnotation name (Identity newTy))
-                )
+    -- Building the current environment, by sequentially adding and exluding
+    -- variables from the local environment. Then converting the pre-environment
+    -- variables to their closure-converted form.
     let arguments = Map.fromList (map (HLIR.unannotate . (runIdentity <$>)) args)
-
     let finalNativeFunctions = (nativeFunctions <> globalFunctions) Map.\\ arguments
-
     let preEnvironment = freeVariablesInBody Map.\\ (finalNativeFunctions <> arguments <> reserved)
     (ns, environment) <-
         sequence <$> traverse ((swap <$>) . convertType) preEnvironment
 
+    -- Creating unique names for the environment and lambda structures
+    -- to avoid name collisions
     environmentStructName <- freshSymbol "closure_env_"
     lambdaStructName <- freshSymbol "closure_fn_"
 
+    -- Creating both the environment structure declaration and its creation expression
+    -- to be used in the closure structure creation:
+    --
+    -- struct env {
+    --   x0: T0,
+    --   x1: T1,
+    --   ...
+    -- }
+    --
+    -- let env = env {
+    --   x0 = x0,
+    --   x1 = x1,
+    --  ...
+    -- }
     let environmentStructure =
             HLIR.MkTopStructureDeclaration
                 { HLIR.header = HLIR.MkAnnotation environmentStructName []
@@ -489,12 +640,14 @@ convertLambda (HLIR.MkExprLambda args _ body) reserved = do
                         (\name ty -> HLIR.MkExprVariable (HLIR.MkAnnotation name (Identity ty)) [])
                         environment
                 }
-
-    let environmentVar =
+        environmentVar =
             HLIR.MkExprVariable
                 (HLIR.MkAnnotation "env" (Identity (HLIR.MkTyId environmentStructName)))
                 []
 
+    -- Adding the arguments to the local environment so that they can be referenced
+    -- in the body. We also save the old local environment to restore it later
+    -- so that the arguments don't leak outside the lambda body.
     oldLocals <- readIORef locals
     modifyIORef' locals (<> arguments)
 
@@ -502,6 +655,14 @@ convertLambda (HLIR.MkExprLambda args _ body) reserved = do
 
     writeIORef locals oldLocals
 
+    -- Wrapping the body with let-bindings to extract the free variables
+    -- from the environment structure:
+    --
+    -- let x0 = env->x0;
+    -- let x1 = env->x1;
+    -- ...
+    -- let xn = env->xn;
+    -- BODY
     let newBody' =
             foldr
                 ( \(name, ty) acc ->
@@ -522,6 +683,27 @@ convertLambda (HLIR.MkExprLambda args _ body) reserved = do
                 newBody
                 (Map.toList environment)
 
+
+    -- Converting the argument types to their closure-converted form
+    (ns1, typedArguments) <-
+        sequence
+            <$> forM
+                args
+                ( \(HLIR.MkAnnotation name (Identity ty)) -> do
+                    (newTy, ns') <- convertType ty
+                    pure (ns', HLIR.MkAnnotation name (Identity newTy))
+                )
+
+    -- Building the lambda structure declaration:
+    --
+    -- struct lambda {
+    --   function: (env*, ARG_TYPES...) -> RET_TYPE,
+    --   environment: env*
+    -- }
+    --
+    -- Environment is passed as a pointer to avoid sizeof issues when
+    -- the structure is empty (because of void* environment carried by
+    -- generic closures).
     let lambdaStructure =
             HLIR.MkTopStructureDeclaration
                 { HLIR.header = HLIR.MkAnnotation lambdaStructName []
@@ -539,6 +721,15 @@ convertLambda (HLIR.MkExprLambda args _ body) reserved = do
                         ]
                 }
 
+    -- Creating the environment allocation. We need this because closures
+    -- may outlive their defining scope, so we need to allocate them on the heap.
+    --
+    -- This means for instance that a list of closures cannot be valid if closures
+    -- are allocated on the stack.
+    --
+    -- So we do:
+    -- let env_alloc_X = malloc(env);
+    --    *env_alloc_X = env { ... };
     envAllocName <- freshSymbol "env_alloc_"
     let envAlloc = malloc (HLIR.MkTyId environmentStructName)
         envAllocVar =
@@ -557,6 +748,12 @@ convertLambda (HLIR.MkExprLambda args _ body) reserved = do
                 environmentStructCreation
                 (Identity (HLIR.MkTyId environmentStructName))
 
+    -- Creating the lambda structure creation expression:
+    --
+    -- <lambdaStructName> {
+    --   function = \env args... -> BODY,
+    --   environment = env_alloc_X
+    -- }
     let lambdaStructureCreation =
             HLIR.MkExprStructureCreation
                 { HLIR.annotation = HLIR.MkTyId lambdaStructName
@@ -581,6 +778,11 @@ convertLambda (HLIR.MkExprLambda args _ body) reserved = do
                         ]
                 }
 
+    -- We do similarly for the lambda structure:
+    --
+    -- let lambda_alloc_X = malloc(lambda);
+    --   *lambda_alloc_X = lambda { ... };
+    -- return (lambda_alloc_X : void*);
     lambdaStructAllocName <- freshSymbol "lambda_alloc_"
     let lambdaStructAlloc = malloc (HLIR.MkTyId lambdaStructName)
         lambdaStructAllocVar =
@@ -599,26 +801,39 @@ convertLambda (HLIR.MkExprLambda args _ body) reserved = do
                 lambdaStructureCreation
                 (Identity (HLIR.MkTyId lambdaStructName))
 
-    let castAndReference = HLIR.MkExprCast
-            lambdaStructAllocVar
-            (HLIR.MkTyPointer (HLIR.MkTyId "void"))
+    -- Casting the lambda structure pointer to void* to match every type
+    -- of generic closure, as closures are passed by reference, by
+    -- malloc-ing them on the heap.
+    let castAndReference =
+            HLIR.MkExprCast
+                lambdaStructAllocVar
+                (HLIR.MkTyPointer (HLIR.MkTyId "void"))
 
+    -- We build a one-expression let-binding sequence to perform the allocations
+    -- and updates, and return the lambda structure pointer casted to void*:
     let updates =
             HLIR.MkExprLetIn
                 { HLIR.binding = HLIR.MkAnnotation "_" (Identity (HLIR.MkTyId "void"))
                 , HLIR.value = envUpdate
-                , HLIR.inExpr = HLIR.MkExprLetIn
-                    { HLIR.binding = HLIR.MkAnnotation "_" (Identity (HLIR.MkTyId "void"))
-                    , HLIR.value = lambdaStructUpdate
-                    , HLIR.inExpr = castAndReference
-                    , HLIR.returnType = Identity (HLIR.MkTyPointer (HLIR.MkTyId lambdaStructName))
-                    }
-                , HLIR.returnType = Identity (HLIR.MkTyPointer (HLIR.MkTyId environmentStructName))
+                , HLIR.inExpr =
+                    HLIR.MkExprLetIn
+                        { HLIR.binding = HLIR.MkAnnotation "_" (Identity (HLIR.MkTyId "void"))
+                        , HLIR.value = lambdaStructUpdate
+                        , HLIR.inExpr = castAndReference
+                        , HLIR.returnType = Identity (HLIR.MkTyPointer (HLIR.MkTyId lambdaStructName))
+                        }
+                , HLIR.returnType =
+                    Identity (HLIR.MkTyPointer (HLIR.MkTyId environmentStructName))
                 }
 
-
-
-    let lets = HLIR.MkExprLetIn
+    -- We broke the code logic down to make it more readable, but
+    -- this is effectively:
+    --
+    -- let env_alloc_X = malloc(env); *env_alloc_X = env { ... };
+    -- let lambda_alloc_X = malloc(lambda); *lambda_alloc_X = lambda { ... };
+    -- return (lambda_alloc_X : void*);
+    let lets =
+            HLIR.MkExprLetIn
                 { HLIR.binding =
                     HLIR.MkAnnotation
                         envAllocName
@@ -636,6 +851,11 @@ convertLambda (HLIR.MkExprLambda args _ body) reserved = do
                         }
                 , HLIR.returnType = Identity (HLIR.MkTyPointer (HLIR.MkTyId lambdaStructName))
                 }
+
+    -- Returning the final expression, along with the new toplevel nodes
+    -- that were created during the conversion (the environment and lambda
+    -- structures) and the final type of the lambda (a pointer to the
+    -- lambda structure)
     pure
         ( lets
         , ns <> ns1 <> ns2 <> [environmentStructure, lambdaStructure]
