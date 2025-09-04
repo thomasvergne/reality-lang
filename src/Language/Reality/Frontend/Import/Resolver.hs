@@ -86,10 +86,12 @@ visitModule ::
     FlattenModule ->
     m [HLIR.HLIR "toplevel"]
 visitModule absPath pkgName flatten = do
+    -- Checking if the file exists
     let pkgAsFilePath = toString pkgName
     unlessM (liftIO $ IO.doesFileExist absPath) $ do
         M.throw $ M.ModuleNotFound pkgAsFilePath
 
+    -- Reading the file content and parsing it
     fileContent :: Text <- decodeUtf8 <$> readFileBS absPath
 
     result <- P.parseRealityFile absPath fileContent P.parseProgram
@@ -99,36 +101,60 @@ visitModule absPath pkgName flatten = do
         Right toplevels -> do
             moduleState <- readIORef defaultModuleState
 
+            -- Checking the module state to avoid cyclic dependencies
+            -- and also avoiding re-processing ASTs, if the module has already
+            -- been visited.
             case Map.lookup absPath moduleState.modules of
                 Just modState -> do
                     case modState.modState of
                         Unvisited -> processAST toplevels
                         Visiting -> M.throw $ M.CyclicModuleDependency absPath []
                         Visited ->
+                            -- We check if we should flatten the modules or not
+                            -- based on the current import statement.
+                            --
+                            -- For instance, if we have:
+                            --
+                            -- import A::B::C::*
+                            --
+                            -- Then, we may want to flatten the module C one level.
                             if flatten
                                 then flattenOneLevel modState.modToplevels
                                 else pure modState.modToplevels
+                -- If we found nothing, that means that the module has never been
+                -- visited before, so we can process it.
                 Nothing -> processAST toplevels
   where
     processAST ::
         (MonadIO m, M.MonadError M.Error m) =>
         [HLIR.HLIR "toplevel"] -> m [HLIR.HLIR "toplevel"]
     processAST nodes = do
+        -- Creating a new module artifact and marking it as visiting
+        -- to detect cyclic dependencies.
+        --
+        -- Then adding it to the module state.
         let newModule =
                 Module
                     { modPath = absPath
                     , modPackage = pkgName
-                    , modState = Unvisited
+                    , modState = Visiting
                     , modToplevels = []
                     }
 
         addNewModule newModule
 
+        -- Resolving imports in the module's toplevel nodes
+        -- This is done recursively, as each import may resolve to
+        -- multiple toplevel nodes.
         resolvedToplevels <- resolveImports nodes
 
+        -- Marking the module as visited and updating its toplevel nodes
+        -- in the module state.
         updateModuleState absPath Visited
         updateModuleToplevels absPath resolvedToplevels
 
+        -- We check if we should flatten the modules or not
+        -- based on the current import statement.
         if flatten
             then flattenOneLevel resolvedToplevels
             else pure resolvedToplevels
