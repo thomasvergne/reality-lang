@@ -34,7 +34,7 @@ main = do
 
             pipelineResult <- runExceptT $ pipeline ast
 
-            let includes = ["<stdint.h>", "<stdbool.h>"]
+            let includes = ["<stdint.h>", "<stdbool.h>", "<pthread.h>"]
 
             handle pipelineResult $ \cstr -> do
                 let finalCstr = unlines (map ("#include " <>) includes) <> "\n\n" <> cstr
