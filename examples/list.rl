@@ -95,6 +95,20 @@ mod List {
 
         new_list
     }
+
+    fn from_pointer[A](ptr: *A, count: u64) -> *List[A] {
+        let list = new::[A]();
+
+        let i = 0 as u64;
+
+        while i < count {
+            let value = ptr[i];
+            push(list, value);
+            i = i + 1;
+        };
+
+        list
+    }
 }
 
 impl fn (list: List[A]) show[A]() -> String {
@@ -104,16 +118,16 @@ impl fn (list: List[A]) show[A]() -> String {
 
     while i < list.length {
         let value = list[i];
-        result = (result + show(value));
+        result = result + show(value);
 
         if i < list.length - 1 {
-            result = (result + String::new(", "));
+            result = result + String::new(", ");
         };
 
         i = i + 1;
     };
 
-    result = (result + String::new("]"));
+    result = result + String::new("]");
 
     result
 }

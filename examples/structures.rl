@@ -1,5 +1,6 @@
 import string::*;
 import list::*;
+import actor;
 
 fn factorial(n: i32) -> i32 {
     if n == 0 {
@@ -13,25 +14,19 @@ fn apply[A](f: fn(A) -> A, x: A) -> A {
     f(x)
 }
 
-fn main() -> i64 {
-    let list = List::new();
+fn main(argc: i32, argv: *string) -> i32 {
+    let a = Actor::init::[i32]();
 
-    List::push(list, |x| x + "test");
-    List::push(list, |x| x + "bruh");
-
-    let new_list = List::map(list, |f| {
-        |x| f(x)
+    let thread = Actor::listen(a, |msg| {
+        print(msg)
     });
 
-    let result = List::map(new_list, |f| {
-        print(f("test"));
-    });
+    Actor::send(a, 42);
+    Actor::send(a, 43);
 
-    let id = |x| x;
+    Actor::close(a);
 
-    print(apply(id, 5));
-
-    print(*result);
+    pthread_join(thread, 0);
 
     0
 }

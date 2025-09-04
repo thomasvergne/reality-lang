@@ -2,6 +2,32 @@ mod string {
     type string = *char;
 }
 
+
+fn and(a: bool, b: bool) -> bool {
+    if a {
+        b
+    } else {
+        false
+    }
+}
+
+
+fn or(a: bool, b: bool) -> bool {
+    if a {
+        true
+    } else {
+        b
+    }
+}
+
+fn not(a: bool) -> bool {
+    if a {
+        false
+    } else {
+        true
+    }
+}
+
 property add[A](x: A, y: A) -> A;
 property sub[A](x: A, y: A) -> A;
 property mul[A](x: A, y: A) -> A;
@@ -22,6 +48,8 @@ extern fn equals_number(a: i32, b: i32) -> bool;
 extern fn greater_number(a: i32, b: i32) -> bool;
 extern fn less_number(a: i32, b: i32) -> bool;
 extern fn mod_number(a: i32, b: i32) -> i32;
+extern fn string_eq(a: string, b: string) -> bool;
+
 impl fn (x: i32) add(y: i32) -> i32 {
     add_number(x, y)
 }
@@ -52,6 +80,18 @@ impl fn (x: i32) lesser(y: i32) -> bool {
 
 impl fn (x: i32) modulo(y: i32) -> i32 {
     mod_number(x, y)
+}
+
+fn great_equals[A](x: A, y: A) -> bool {
+    or(greater(x, y), equals(x, y))
+}
+
+fn less_equals[A](x: A, y: A) -> bool {
+    or(lesser(x, y), equals(x, y))
+}
+
+fn not_equals[A](x: A, y: A) -> bool {
+    not(equals(x, y))
 }
 
 struct String {
@@ -114,7 +154,7 @@ impl fn (x: bool) show() -> String {
 }
 
 impl fn (x: *A) show[A]() -> String {
-    String::new(pointer_to_string(x))
+    show(*x)
 }
 
 fn print[A](x: A) -> i32 {
