@@ -62,6 +62,7 @@ reservedWords =
         , "if"
         , "else"
         , "extern"
+        , "is"
         ]
 
 -- | Lexeme parser that consumes whitespace after the lexeme

@@ -17,13 +17,13 @@ import Text.Megaparsec.Char qualified as P
 -- |
 -- | - const <name>: <type> = <expression>
 parseTopConstantDeclaration ::
-    (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "toplevel")
+    (MonadIO m) => P.Parser m (HLIR.Position, [HLIR.HLIR "toplevel"])
 parseTopConstantDeclaration = do
     ((start, _), _) <- Lex.reserved "const"
     idt <- P.parseAnnotation' (snd <$> Typ.parseType)
     ((_, end), expr) <- Lex.symbol "=" *> P.parseExprFull
 
-    pure ((start, end), HLIR.MkTopConstantDeclaration idt expr)
+    pure ((start, end), [HLIR.MkTopConstantDeclaration idt expr])
 
 -- | PARSE FUNCTION DECLARATION NODE
 -- | A function declaration node is a top-level construct that defines a
@@ -32,7 +32,7 @@ parseTopConstantDeclaration = do
 -- |
 -- | - fn <name>[<generic>*](<param>*): <return type> { <body> }
 parseTopFunctionDeclaration ::
-    (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "toplevel")
+    (MonadIO m) => P.Parser m (HLIR.Position, [HLIR.HLIR "toplevel"])
 parseTopFunctionDeclaration = do
     ((start, _), _) <- Lex.reserved "fn"
     (_, idt) <- Lex.identifier
@@ -50,12 +50,12 @@ parseTopFunctionDeclaration = do
 
     pure
         ( (start, end)
-        , HLIR.MkTopFunctionDeclaration
+        , [HLIR.MkTopFunctionDeclaration
             { HLIR.name = HLIR.MkAnnotation idt generics
             , HLIR.parameters = params
             , HLIR.returnType = ret
             , HLIR.body = body
-            }
+        }]
         )
 
 -- | PARSE TYPE ALIAS NODE
@@ -66,7 +66,7 @@ parseTopFunctionDeclaration = do
 -- |
 -- | - type <name>[<generic>*] = <type>
 parseTopTypeAlias ::
-    (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "toplevel")
+    (MonadIO m) => P.Parser m (HLIR.Position, [HLIR.HLIR "toplevel"])
 parseTopTypeAlias = do
     ((start, _), _) <- Lex.reserved "type"
 
@@ -80,10 +80,10 @@ parseTopTypeAlias = do
 
     pure
         ( (start, end)
-        , HLIR.MkTopTypeAlias
+        , [HLIR.MkTopTypeAlias
             { HLIR.name = HLIR.MkAnnotation idt generics
             , HLIR.boundType = aliased
-            }
+        }]
         )
 
 -- | PARSE IMPORT NODE
@@ -95,7 +95,7 @@ parseTopTypeAlias = do
 -- | - import <module>::<submodule>::...::<name>
 -- | - import *::<submodule>::...::<name>
 parseTopImport ::
-    (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "toplevel")
+    (MonadIO m) => P.Parser m (HLIR.Position, [HLIR.HLIR "toplevel"])
 parseTopImport = do
     ((start, _), _) <- Lex.reserved "import"
     modules <-
@@ -104,7 +104,7 @@ parseTopImport = do
     let lastPosition = if null modules then start else List.maximum (map (snd . fst) modules)
     let moduleParts = map snd modules
 
-    pure ((start, lastPosition), HLIR.MkTopImport moduleParts)
+    pure ((start, lastPosition), [HLIR.MkTopImport moduleParts])
 
 -- | PARSE PUBLIC NODE
 -- | A public node is a top-level construct that defines a public
@@ -114,11 +114,11 @@ parseTopImport = do
 -- |
 -- | - pub <declaration>
 parseTopPublic ::
-    (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "toplevel")
+    (MonadIO m) => P.Parser m (HLIR.Position, [HLIR.HLIR "toplevel"])
 parseTopPublic = do
     ((start, _), _) <- Lex.reserved "pub"
     (pos, node) <- parseTopFull
-    pure ((start, snd pos), HLIR.MkTopPublic node)
+    pure ((start, snd pos), HLIR.MkTopPublic <$> node)
 
 -- | PARSE MODULE DECLARATION NODE
 -- | A module declaration node is a top-level construct that defines a
@@ -127,13 +127,13 @@ parseTopPublic = do
 -- |
 -- | - mod <name> { <declaration>* }
 parseTopModuleDeclaration ::
-    (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "toplevel")
+    (MonadIO m) => P.Parser m (HLIR.Position, [HLIR.HLIR "toplevel"])
 parseTopModuleDeclaration = do
     ((start, _), _) <- Lex.reserved "mod"
     (_, idt) <- Lex.identifier
     ((_, end), nodes) <-
         Lex.braces (P.many (snd <$> parseTopFull <* P.optional Lex.semi))
-    pure ((start, end), HLIR.MkTopModuleDeclaration idt nodes)
+    pure ((start, end), [HLIR.MkTopModuleDeclaration idt (concat nodes)])
 
 -- | PARSE STRUCTURE DECLARATION NODE
 -- | A structure declaration node is a top-level construct that defines a
@@ -142,7 +142,7 @@ parseTopModuleDeclaration = do
 -- |
 -- | - struct <name>[<generic>*] { <field>: <type>, ... }
 parseTopStructureDeclaration ::
-    (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "toplevel")
+    (MonadIO m) => P.Parser m (HLIR.Position, [HLIR.HLIR "toplevel"])
 parseTopStructureDeclaration = do
     ((start, _), _) <- Lex.reserved "struct"
 
@@ -155,10 +155,10 @@ parseTopStructureDeclaration = do
         Lex.braces $ Map.fromList <$> P.sepBy parseField Lex.comma
     pure
         ( (start, end)
-        , HLIR.MkTopStructureDeclaration
+        , [HLIR.MkTopStructureDeclaration
             { HLIR.header = HLIR.MkAnnotation idt generics
             , HLIR.fields = fields
-            }
+        }]
         )
   where
     parseField = do
@@ -176,7 +176,7 @@ parseTopStructureDeclaration = do
 -- |
 -- | - extern fn <name>[<generic>*](<param>*): <return type>
 parseTopExternalFunction ::
-    (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "toplevel")
+    (MonadIO m) => P.Parser m (HLIR.Position, [HLIR.HLIR "toplevel"])
 parseTopExternalFunction = do
     ((start, _), _) <- Lex.reserved "extern"
     ((_, end), _) <- Lex.reserved "fn"
@@ -193,11 +193,11 @@ parseTopExternalFunction = do
 
     pure
         ( (start, end)
-        , HLIR.MkTopExternalFunction
+        , [HLIR.MkTopExternalFunction
             { HLIR.name = HLIR.MkAnnotation idt generics
             , HLIR.parameters = params
             , HLIR.returnType = ret
-            }
+        }]
         )
 
 -- | PARSE PROPERTY NODE
@@ -209,7 +209,7 @@ parseTopExternalFunction = do
 -- | Properties are defined as follows:
 -- | - property <name>[<generic>*](<param>*): <return type>
 parseTopProperty ::
-    (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "toplevel")
+    (MonadIO m) => P.Parser m (HLIR.Position, [HLIR.HLIR "toplevel"])
 parseTopProperty = do
     ((start, _), _) <- Lex.reserved "property"
     (_, idt) <- Lex.identifier
@@ -224,12 +224,49 @@ parseTopProperty = do
 
     pure
         ( (start, end)
-        , HLIR.MkTopProperty
+        , [HLIR.MkTopProperty
             { HLIR.header = HLIR.MkAnnotation idt generics
             , HLIR.parameters = params
             , HLIR.returnType = ret
-            }
+        }]
         )
+
+-- | PARSE TOPLEVEL ENUMERATION
+-- | An enumeration node is a top-level construct that defines an
+-- | enumeration. Enumerations are defined using the `enum` keyword.
+-- | Enumerations are similar to enums in Rust. They are defined as follows:
+-- |
+-- | - enum <name>[<generic>*] { <variant>, ... }
+-- |
+-- | Variants can be simple identifiers or can have associated data:
+-- |
+-- | - <variant>
+-- | - <variant>(<type>, ...)
+parseTopEnumeration ::
+    (MonadIO m) => P.Parser m (HLIR.Position, [HLIR.HLIR "toplevel"])
+parseTopEnumeration = do
+    ((start, _), _) <- Lex.reserved "enum"
+    (_, idt) <- Lex.identifier
+    generics <-
+        P.option mempty
+            $ snd <$> Lex.brackets (P.sepBy1 (snd <$> Lex.identifier) Lex.comma)
+
+    ((_, end), variants) <-
+        Lex.braces $ P.sepBy parseVariant Lex.comma
+
+    pure
+        ( (start, end)
+        , [HLIR.MkTopEnumeration
+            { HLIR.name = HLIR.MkAnnotation idt generics
+            , HLIR.constructors = Map.fromList variants
+        }]
+        )
+    where
+        parseVariant = do
+            (_, name) <- Lex.identifier
+            associated <- P.optional $ snd <$> Lex.parens (P.sepBy (snd <$> Typ.parseType) Lex.comma)
+
+            pure (name, associated)
 
 -- | PARSE IMPLEMENTATION NODE
 -- | An implementation node is a top-level construct that defines an
@@ -240,7 +277,7 @@ parseTopProperty = do
 -- | Implementations are defined as follows:
 -- | - impl fn (<for>: <type>) <name>[<generic>*](<param>*): <return type> { <body> }
 parseTopImplementation ::
-    (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "toplevel")
+    (MonadIO m) => P.Parser m (HLIR.Position, [HLIR.HLIR "toplevel"])
 parseTopImplementation = do
     ((start, _), _) <- Lex.reserved "impl"
     void $ Lex.reserved "fn"
@@ -266,14 +303,56 @@ parseTopImplementation = do
 
     pure
         ( (start, end)
-        , HLIR.MkTopImplementation
+        , [HLIR.MkTopImplementation
             { HLIR.forType = forType
             , HLIR.header = HLIR.MkAnnotation idt generics
             , HLIR.parameters = params
             , HLIR.returnType = returnType
             , HLIR.body = body
-            }
+        }]
         )
+
+-- | PARSE ANNOTATION NODE
+-- | An annotation node is a top-level construct that defines an annotation.
+-- | Annotations are defined using the `#` symbol followed by an identifier.
+-- | Annotations are similar to attributes in Rust. They are defined as follows:
+-- | - #<name>
+-- | - #<name>(<arg>, ...)
+parseTopAnnotation ::
+    (MonadIO m) => P.Parser m (HLIR.Position, [HLIR.HLIR "toplevel"])
+parseTopAnnotation = do
+    ((start, _), _) <- Lex.symbol "#"
+    void $ Lex.symbol "["
+
+    args <-
+        P.option mempty
+            $ P.sepBy (snd <$> P.parseExprFull) Lex.comma
+
+    void $ Lex.symbol "]"
+
+    ((_, end), nodes) <- P.choice [
+          Lex.braces (concat <$> P.many (snd <$> parseTopFull <* P.optional Lex.semi))
+        , parseTopFull
+        ]
+
+    pure ((start, end), HLIR.MkTopAnnotation args <$> nodes)
+
+-- | PARSE EXTERN LET
+-- | An extern let node is a top-level construct that defines an external
+-- | variable. External variables are defined using the `extern let` keyword.
+-- | External variables are similar to global variables, but they are defined
+-- | outside of the current module. They are defined as follows:
+-- | - extern let <name>: <type>
+parseTopExternLet ::
+    (MonadIO m) => P.Parser m (HLIR.Position, [HLIR.HLIR "toplevel"])
+parseTopExternLet = do
+    ((start, _), _) <- Lex.reserved "extern"
+    void $ Lex.reserved "let"
+    (_, idt) <- Lex.identifier
+    void Lex.colon
+    ((_, end), ty) <- Typ.parseType
+
+    pure ((start, end), [HLIR.MkTopExternLet (HLIR.MkAnnotation idt ty)])
 
 -- | TOP LEVEL PARSING
 -- | A top-level parser is a parser that parses top-level constructs in a
@@ -291,7 +370,7 @@ parseTopImplementation = do
 -- |
 -- | The top-level parser is responsible for parsing these constructs and
 -- | returning them as a list of top-level nodes.
-parseTopFull :: (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "toplevel")
+parseTopFull :: (MonadIO m) => P.Parser m (HLIR.Position, [HLIR.HLIR "toplevel"])
 parseTopFull =
     Lex.locateWith
         <$> P.choice
@@ -302,13 +381,16 @@ parseTopFull =
             , parseTopPublic
             , parseTopModuleDeclaration
             , parseTopStructureDeclaration
-            , parseTopExternalFunction
+            , P.try parseTopExternalFunction
+            , parseTopExternLet
             , parseTopProperty
             , parseTopImplementation
+            , parseTopAnnotation
+            , parseTopEnumeration
             ]
 
 -- | Parse a complete Bonzai source file.
 -- | A Bonzai source file is a sequence of top-level constructs.
 -- | The parser will return a list of top-level nodes.
 parseProgram :: (MonadIO m) => P.Parser m [HLIR.HLIR "toplevel"]
-parseProgram = P.many (snd <$> parseTopFull <* P.optional Lex.semi) <* P.eof
+parseProgram = concat <$> P.many (snd <$> parseTopFull <* P.optional Lex.semi) <* P.eof

@@ -50,6 +50,36 @@ parseExprLiteral =
                 <&> HLIR.MkExprLiteral
             )
 
+-- | PARSE IF-IS EXPRESSION
+-- | Parse an if-is expression. An if-is expression is an expression that consists
+-- | of a condition, a pattern to match, and a then branch. It is used to conditionally
+-- | evaluate an expression based on a pattern match.
+-- | The syntax of an if-is expression is as follows:
+-- |
+-- | "if" expression "is" pattern "{" statements "}" ("else" "{" statements "}")?
+-- |
+parseExprIfIs ::
+    (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
+parseExprIfIs = do
+    ((start, _), _) <- Lex.reserved "if"
+
+    cond <- snd <$> parseExprTerm
+    void $ Lex.reserved "is"
+    pattern <- snd <$> parsePatternFull
+
+    ((_, firstEnd), thenBranch) <- parseExprBlock
+
+    result <- P.optional $ do
+        void $ Lex.reserved "else"
+
+        ((_, end), elseBranch) <- parseExprFull
+
+        pure (end, elseBranch)
+
+    case result of
+        Nothing -> pure ((start, firstEnd), HLIR.MkExprIfIs cond pattern thenBranch Nothing Nothing)
+        Just (end, elseBranch) -> pure ((start, end), HLIR.MkExprIfIs cond pattern thenBranch (Just elseBranch) Nothing)
+
 -- | PARSE TERNARY
 -- | Parse a ternary expression. A ternary expression is an expression that consists
 -- | of three parts: a condition, a then branch, and an else branch. It is used to
@@ -217,6 +247,39 @@ parseExprSizeOf = do
     ((_, end), ty) <- Lex.parens (snd <$> Typ.parseType)
     pure ((start, end), HLIR.MkExprSizeOf ty)
 
+-- | PARSE PATTERN
+-- | Parse a pattern. A pattern is used in match expressions and let bindings
+-- | to destructure values. The syntax of a pattern is as follows:
+-- |
+-- | - identifier
+-- | - "_" (wildcard)
+-- | - literal
+-- | - identifier "(" (pattern ("," pattern)*)? ")"
+-- | - "let" identifier
+parsePatternFull ::
+    (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "pattern")
+parsePatternFull =
+    Lex.locateWith
+        <$> P.choice
+            [ P.try $ do
+                ((start, _), _) <- Lex.reserved "let"
+                ((_, end), name) <- Lex.identifier
+                pure ((start, end), HLIR.MkPatternLet (HLIR.MkAnnotation name Nothing))
+            , P.try $ do
+                ((start, _), name) <- Lex.identifier
+                ((_, end), args) <- Lex.parens (P.sepBy (snd <$> parsePatternFull) Lex.comma)
+                pure ((start, end), HLIR.MkPatternConstructor name args Nothing)
+            , do
+                (pos, name) <- Lex.identifier
+                pure (pos, HLIR.MkPatternVariable (HLIR.MkAnnotation name Nothing))
+            , do
+                (pos, _) <- Lex.symbol "_"
+                pure (pos, HLIR.MkPatternWildcard)
+            , do
+                Lex.lexeme Lit.parseLiteral
+                    <&> second HLIR.MkPatternLiteral
+            ]
+
 -- | PARSE TERM EXPRESSION
 -- | Parse a term expression. A term expression is the most basic form of an expression
 -- | in Reality. It can be a literal, a variable, a parenthesized expression, a block,
@@ -240,7 +303,8 @@ parseExprTerm =
             , parseExprBlock
             , parseExprLambda
             , parseExprSizeOf
-            , parseExprTernary
+            , P.try parseExprTernary
+            , parseExprIfIs
             , P.try parseExprStructCreation
             , parseExprLetIn
             , parseExprLiteral
@@ -293,81 +357,64 @@ parseExprFull = Lex.locateWith <$> P.makeExprParser parseExprTerm operators
   where
     operators =
         [
+            -- 1. Postfix: function call (), array indexing [], struct access ., -> (highest)
             [ P.Postfix . Lex.makeUnaryOp $ do
                 void $ Lex.symbol "["
                 index <- snd <$> parseExprFull
                 ((_, end), _) <- Lex.symbol "]"
-
                 pure $ \(start, arr) -> ((fst start, end), HLIR.MkExprVarCall "get_index" [arr, index])
             ]
-        ,
-            [ P.Postfix . Lex.makeUnaryOp $ do
+          , [ P.Postfix . Lex.makeUnaryOp $ do
                 ((_, end), field) <- P.string "." *> Lex.nonLexedID <* Lex.scn
                 pure $ \((start, _), e) -> ((start, end), HLIR.MkExprStructureAccess e field)
             ]
-        ,
-            [ P.Postfix . Lex.makeUnaryOp $ do
-                ((_, end), args) <- Lex.parens (P.sepBy (snd <$> parseExprFull) Lex.comma)
-
+          , [ P.Postfix . Lex.makeUnaryOp $ do
+                ((_, end), args) <- Lex.parens (P.sepBy (snd <$> parseExprFull) Lex.comma
+                    )
                 pure $ \((start, _), e) -> ((start, end), HLIR.MkExprApplication e args Nothing)
             ]
-        ,
-            [ P.Prefix . Lex.makeUnaryOp $ do
-                void $ Lex.symbol "*"
-                pure $ second (`HLIR.MkExprDereference` Nothing)
-            , P.Prefix . Lex.makeUnaryOp $ do
-                void $ Lex.symbol "&"
-                pure $ second (`HLIR.MkExprReference` Nothing)
-            , P.Postfix . Lex.makeUnaryOp $ do
+          , [ P.Postfix . Lex.makeUnaryOp $ do
                 void $ Lex.symbol "->"
                 ((_, end), field) <- Lex.nonLexedID <* Lex.scn
-
                 pure $ \((start, _), e) ->
                     ( (start, end)
                     , HLIR.MkExprStructureAccess (HLIR.MkExprDereference e Nothing) field
                     )
             ]
-        ,
-            [ P.Postfix . Lex.makeUnaryOp $ do
+            -- 2. Prefix/unary: *, &, cast, etc.
+          , [ P.Prefix . Lex.makeUnaryOp $ do
+                void $ Lex.symbol "*"
+                pure $ second (`HLIR.MkExprDereference` Nothing)
+            , P.Prefix . Lex.makeUnaryOp $ do
+                void $ Lex.symbol "&"
+                pure $ second (`HLIR.MkExprReference` Nothing)
+            ]
+          , [ P.Postfix . Lex.makeUnaryOp $ do
                 void $ Lex.reserved "as"
                 ((_, end), ty) <- Typ.parseType
-
                 pure $ \((start, _), e) -> ((start, end), HLIR.MkExprCast e ty)
             ]
-        ,
-            [ P.InfixN $ do
-                void $ Lex.symbol "%"
-                pure $ makeOperator "modulo"
-            , P.InfixL $ do
-                void $ Lex.symbol "**"
-                pure $ makeOperator "pow"
-            ]
-        ,
-            [ P.InfixL $ do
+            -- 3. Multiplicative: *, /, %
+          , [ P.InfixL $ do
                 void $ Lex.symbol "*"
                 pure $ makeOperator "mul"
             , P.InfixL $ do
                 void $ Lex.symbol "/"
                 pure $ makeOperator "div"
+            , P.InfixN $ do
+                void $ Lex.symbol "%"
+                pure $ makeOperator "modulo"
             ]
-        ,
-            [ P.InfixL $ do
+            -- 4. Additive: +, -
+          , [ P.InfixL $ do
                 void $ Lex.symbol "+"
                 pure $ makeOperator "add"
             , P.InfixL $ do
                 void $ Lex.symbol "-"
                 pure $ makeOperator "sub"
             ]
-        ,
-            [ P.InfixN $ do
-                void $ Lex.symbol "=="
-                pure $ makeOperator "equals"
-            , P.InfixN $ do
-                void $ Lex.symbol "!="
-                pure $ makeOperator "not_equals"
-            ]
-        ,
-            [ P.InfixN $ do
+            -- 5. Relational: <, >, <=, >=
+          , [ P.InfixN $ do
                 void $ Lex.symbol ">="
                 pure $ makeOperator "great_equals"
             , P.InfixN $ do
@@ -380,21 +427,33 @@ parseExprFull = Lex.locateWith <$> P.makeExprParser parseExprTerm operators
                 void $ Lex.symbol "<"
                 pure $ makeOperator "lesser"
             ]
-        ,
-            [ P.InfixL $ do
-                void $ Lex.symbol "||"
-                pure $ makeOperator "or"
+            -- 6. Equality: ==, !=
+          , [ P.InfixN $ do
+                void $ Lex.symbol "=="
+                pure $ makeOperator "equals"
+            , P.InfixN $ do
+                void $ Lex.symbol "!="
+                pure $ makeOperator "not_equals"
             ]
-        ,
-            [ P.InfixL $ do
+            -- 7. Logical AND: &&
+          , [ P.InfixL $ do
                 void $ Lex.symbol "&&"
                 pure $ makeOperator "and"
             ]
-        , -- Assignment
-
-            [ P.InfixR $ do
+            -- 8. Logical OR: ||
+          , [ P.InfixL $ do
+                void $ Lex.symbol "||"
+                pure $ makeOperator "or"
+            ]
+            -- 9. Assignment: =
+          , [ P.InfixR $ do
                 void $ Lex.symbol "="
                 pure $ \((start, _), a) ((_, end), b) -> ((start, end), HLIR.MkExprUpdate a b Nothing)
+            ]
+            -- 10. (Optional) Exponentiation: **
+          , [ P.InfixL $ do
+                void $ Lex.symbol "**"
+                pure $ makeOperator "pow"
             ]
         ]
 

@@ -1,6 +1,7 @@
 module Language.Reality.Syntax.MLIR (
     Expression (..),
     Toplevel (..),
+    StructureMember (..),
     -- Re-exports
     module Lit,
     module Ann,
@@ -39,9 +40,16 @@ data Expression
 data Toplevel
     = MkTopFunction Text [Ann.Annotation Ty.Type] Ty.Type [Expression]
     | MkTopExternalFunction Text [Text] [Ty.Type] Ty.Type
+    | MkTopExternalVariable Text Ty.Type
     | MkTopGlobal Text Ty.Type (Maybe Expression)
-    | MkTopStructure Text [(Text, Ty.Type)]
+    | MkTopStructure Text [StructureMember]
     | MkTopPublic Toplevel
+    deriving (Eq, Ord, Show, Generic)
+
+data StructureMember
+    = MkStructField Text Ty.Type
+    | MkStructStruct Text [StructureMember]
+    | MkStructUnion Text [StructureMember]
     deriving (Eq, Ord, Show, Generic)
 
 instance ToText Expression where
@@ -148,9 +156,34 @@ instance ToText Toplevel where
             , " {\n"
             , T.intercalate
                 "\n"
-                [ "  " <> field <> ": " <> toText ty <> ";"
-                | (field, ty) <- fields
-                ]
+                (map toText fields)
             , "\n}"
             ]
     toText (MkTopPublic node) = T.concat ["public ", toText node]
+    toText (MkTopExternalVariable name ty) =
+        T.concat ["extern var ", name, ": ", toText ty]
+
+instance ToText StructureMember where
+    toText (MkStructField name ty) =
+        T.concat ["  ", name, ": ", toText ty, ";"]
+    toText (MkStructStruct name fields) =
+        T.concat
+            [ "  struct "
+            , name
+            , " {\n"
+            , T.intercalate
+                "\n"
+                (map (\f -> "    " <> toText f) fields)
+            , "\n  };"
+            ]
+    toText (MkStructUnion name fields) =
+        T.concat
+            [ "  union "
+            , name
+            , " {\n"
+            , T.intercalate
+                "\n"
+                (map (\f -> "    " <> toText f) fields)
+
+            , "\n  };"
+            ]

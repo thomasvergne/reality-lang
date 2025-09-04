@@ -5,6 +5,7 @@
 module Language.Reality.Syntax.HLIR (
     Expression (..),
     Toplevel (..),
+    Pattern(..),
     -- Patterns
     pattern MkExprBinary,
     pattern MkExprString,
@@ -18,6 +19,8 @@ module Language.Reality.Syntax.HLIR (
     -- Type families
     HLIR,
     TLIR,
+    -- Functions
+    getFirstAnnotationArgument,
 )
 where
 
@@ -83,6 +86,13 @@ data Expression f t
         , returnType :: f t
         , inExpr :: Expression f t
         }
+    | MkExprIfIs
+        { expr :: Expression f t
+        , expectedPattern :: Pattern f t
+        , thenBranch :: Expression f t
+        , maybeElseBranch :: Maybe (Expression f t)
+        , returnType :: f t
+        }
     deriving (Eq, Ord, Generic)
 
 data Toplevel f t
@@ -131,6 +141,26 @@ data Toplevel f t
         , returnType :: t
         , body :: Expression f t
         }
+    | MkTopAnnotation [Expression f t] (Toplevel f t)
+    | MkTopExternLet (Ann.Annotation t)
+    | MkTopEnumeration
+        { name :: Ann.Annotation [Text]
+        , constructors :: Map Text (Maybe [t])
+        }
+    deriving (Eq, Ord, Generic)
+
+-- | PATTERN
+data Pattern f t
+    = MkPatternVariable (Ann.Annotation (f t))
+    | MkPatternLet (Ann.Annotation (f t ))
+    | MkPatternLiteral Lit.Literal
+    | MkPatternWildcard
+    | MkPatternStructure t (Map Text (Pattern f t))
+    | MkPatternConstructor Text [Pattern f t] (f t)  -- Constructor name and its associated patterns
+    | MkPatternLocated
+        { span :: Position
+        , patternNode :: Pattern f t
+        }
     deriving (Eq, Ord, Generic)
 
 -- | BINARY EXPRESSION PATTERN
@@ -163,16 +193,26 @@ pattern MkExprTuple a b =
 type family HLIR (s :: Symbol) where
     HLIR "expression" = Expression Maybe Type
     HLIR "toplevel" = Toplevel Maybe Type
+    HLIR "pattern" = Pattern Maybe Type
 
 type family TLIR (s :: Symbol) where
     TLIR "expression" = Expression Identity Type
     TLIR "toplevel" = Toplevel Identity Type
+    TLIR "pattern" = Pattern Identity Type
+
+getFirstAnnotationArgument :: Expression f t -> Maybe Text
+getFirstAnnotationArgument (MkExprVariable ann _) = pure ann.name
+getFirstAnnotationArgument (MkExprLocated _ e) = getFirstAnnotationArgument e
+getFirstAnnotationArgument _ = Nothing
 
 instance Locate (Expression f t) where
     locate e p = MkExprLocated{span = p, expr = e}
 
 instance Locate (Toplevel f t) where
     locate e p = MkTopLocated{span = p, node = e}
+
+instance Locate (Pattern f t) where
+    locate p pos = MkPatternLocated{span = pos, patternNode = p}
 
 instance (ToText (f t), ToText t) => ToText (Expression f t) where
     toText (MkExprApplication callee args _) =
@@ -230,6 +270,23 @@ instance (ToText (f t), ToText t) => ToText (Expression f t) where
             , " } in "
             , toText inExpr
             ]
+    toText (MkExprIfIs expr pat thenB maybeElseB _) =
+        let elseText = case maybeElseB of
+                Just elseB -> " else " <> toText elseB
+                Nothing -> ""
+         in T.concat ["if ", toText expr, " is ", toText pat, " then ", toText thenB, elseText]
+
+instance (ToText (f t), ToText t) => ToText (Pattern f t) where
+    toText (MkPatternVariable ann) = toText ann
+    toText (MkPatternLet ann) = "let " <> toText ann
+    toText (MkPatternLiteral lit) = toText lit
+    toText MkPatternWildcard = "_"
+    toText (MkPatternStructure t fields) =
+        let fieldTexts = map (\(name, pat) -> name <> ": " <> toText pat) (Map.toList fields)
+         in T.concat ["{ ", T.intercalate ", " fieldTexts, " } :: ", toText t]
+    toText (MkPatternConstructor name pats _) =
+        T.concat [name, "(", T.intercalate ", " (map toText pats), ")"]
+    toText (MkPatternLocated _ p) = toText p
 
 instance (ToText (f t), ToText t) => ToText (Toplevel f t) where
     toText (MkTopConstantDeclaration binding value) =
@@ -323,3 +380,28 @@ instance (ToText (f t), ToText t) => ToText (Toplevel f t) where
             , toText body
             , " }"
             ]
+    toText (MkTopAnnotation exprs node) =
+        T.concat
+            [ "#["
+            , T.intercalate ", " (map toText exprs)
+            , "]\n"
+            , toText node
+            ]
+
+    toText (MkTopExternLet binding) =
+        T.concat ["extern let ", toText binding]
+
+    toText (MkTopEnumeration name constructors) =
+        let constructorTexts = map formatConstructor (Map.toList constructors)
+            formatConstructor (cName, Nothing) = cName
+            formatConstructor (cName, Just ty) = cName <> "(" <> T.intercalate ", " (map toText ty) <> ")"
+         in T.concat
+                [ "enum "
+                , name.name
+                , "["
+                , T.intercalate ", " name.typeValue
+                , "]"
+                , " { "
+                , T.intercalate ", " constructorTexts
+                , " }"
+                ]

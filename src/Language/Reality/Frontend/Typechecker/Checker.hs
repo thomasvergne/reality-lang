@@ -217,6 +217,61 @@ checkToplevelSingular (HLIR.MkTopImplementation forType header params returnType
             aliasedReturnType
             newBody
         )
+checkToplevelSingular (HLIR.MkTopAnnotation args node) = do
+    args' <- map (\(_, e, _) -> e) <$> forM args synthesizeE
+
+    typedNode <- checkToplevelSingular node
+
+    pure (HLIR.MkTopAnnotation args' typedNode)
+checkToplevelSingular (HLIR.MkTopExternLet ann) = do
+    -- Removing aliases from the expected type
+    expectedType <- M.performAliasRemoval ann.typeValue
+
+    -- Adding the extern let to the environment
+    modifyIORef' M.defaultCheckerState $ \s ->
+        s
+            { M.environment = Map.insert ann.name (HLIR.Forall [] expectedType) s.environment
+            }
+
+    pure (HLIR.MkTopExternLet ann)
+checkToplevelSingular (HLIR.MkTopEnumeration ann constructors) = do
+    -- Removing aliases from the constructor types
+    constructorTypes <- traverse (\case
+            Just ts -> Just <$> mapM M.performAliasRemoval ts
+            Nothing -> pure Nothing
+        ) constructors
+
+    -- Formatting the enumeration types
+    -- Each constructor type is a function type that takes the
+    -- constructor arguments and returns the enumeration type.
+    -- For example, for `enum Option<T> { Some(T), None }`,
+    -- the constructor `Some` has type `T -> Option<T>`,
+    -- and `None` has type `Option<T>`.
+
+    let enumType
+            | null ann.typeValue = HLIR.MkTyId ann.name
+            | otherwise = HLIR.MkTyApp (HLIR.MkTyId ann.name) (map HLIR.MkTyQuantified ann.typeValue)
+        formatConstructor (cName, Nothing) = (cName, enumType)
+        formatConstructor (cName, Just cType) = (cName, cType HLIR.:->: enumType)
+
+    let formattedConstructors = map formatConstructor (Map.toList constructorTypes)
+
+    -- Adding the enumeration to the environment
+    -- Each constructor is added as a separate entry in the environment
+    -- with its corresponding type.
+
+    modifyIORef' M.defaultCheckerState $ \s ->
+        s
+            { M.environment =
+                foldr
+                    ( \(name, ty) env ->
+                        Map.insert name (HLIR.Forall ann.typeValue ty) env
+                    )
+                    s.environment
+                    formattedConstructors
+            }
+
+    pure (HLIR.MkTopEnumeration ann constructorTypes)
 
 synthesizeE ::
     (MonadIO m, M.MonadError M.Error m) =>
@@ -565,6 +620,166 @@ synthesizeE (HLIR.MkExprWhile cond body _ inExpr) = do
     -- The type of the while expression is the type of the in expression
     pure
         (inTy, HLIR.MkExprWhile condExpr bodyExpr (Identity bodyTy) inExprTyped, cs)
+synthesizeE (HLIR.MkExprIfIs expr pat thenBranch elseBranch _) = do
+    -- Synthesizing the type of the expression to match
+    (exprTy, exprExpr, cs1) <- synthesizeE expr
+
+    -- Checking the pattern against the expression type
+    (typedPat, cs2, bindings) <- checkP exprTy pat
+
+    -- Collecting all constraints
+    let cs = cs1 <> cs2
+
+    -- Extending the environment with the bindings introduced by the pattern
+    -- We use `withEnvironment` to temporarily extend the environment
+    -- while checking the then branch.
+    (thenTy, typedThenBranch, cs3) <- M.withEnvironment bindings $ synthesizeE thenBranch
+    (elseTy, typedElseBranch, cs4) <- case elseBranch of
+        Just e -> do
+            (ty, expr', cs') <- synthesizeE e
+            pure (ty, Just expr', cs')
+        Nothing -> do
+            -- If there is no else branch, we expect the then branch to be of fresh type
+            ty <- M.newType
+
+            pure (ty, Nothing, mempty)
+
+    let cs' = cs3 <> cs4 <> cs
+
+    -- Ensuring that the then and else branches have the same type
+    -- If there is no else branch, we expect the then branch to be of type unit
+    -- and we add a constraint that the then branch type must be a subtype of unit
+    void $ thenTy `M.isSubtypeOf` elseTy
+
+    -- The type of the is expression is bool
+    pure
+        ( thenTy
+        , HLIR.MkExprIfIs exprExpr typedPat typedThenBranch typedElseBranch (Identity thenTy)
+        , cs'
+        )
+
+-- | CHECK PATTERN
+-- | Check a pattern against an expected type.
+-- | This function returns the typed pattern and any constraints generated
+-- | during the checking.
+-- | It also extends the environment with any new bindings introduced by
+-- | the pattern.
+checkP ::
+    (MonadIO m, M.MonadError M.Error m) =>
+    HLIR.Type ->
+    HLIR.HLIR "pattern" ->
+    m (HLIR.TLIR "pattern", M.Constraints, Map Text (HLIR.Scheme HLIR.Type))
+checkP expected (HLIR.MkPatternLocated p pat) = do
+    HLIR.pushPosition p
+
+    (typedPat, cs, bindings) <- checkP expected pat
+
+    void HLIR.popPosition
+
+    pure (HLIR.MkPatternLocated p typedPat, cs, bindings)
+checkP _ HLIR.MkPatternWildcard = do
+    -- Wildcard patterns match any type, so we just return the expected type
+    pure (HLIR.MkPatternWildcard, mempty, mempty)
+checkP expected (HLIR.MkPatternLiteral lit) = do
+    -- Literal patterns have known types, so we just check if the
+    -- literal type is a subtype of the expected type
+    let litType = case lit of
+            HLIR.MkLitInt _ -> HLIR.MkTyInt
+            HLIR.MkLitFloat _ -> HLIR.MkTyFloat
+            HLIR.MkLitBool _ -> HLIR.MkTyBool
+            HLIR.MkLitString _ -> HLIR.MkTyString
+            HLIR.MkLitChar _ -> HLIR.MkTyChar
+
+    void $ litType `M.isSubtypeOf` expected
+
+    pure (HLIR.MkPatternLiteral lit, mempty, mempty)
+checkP expected (HLIR.MkPatternVariable (HLIR.MkAnnotation name _)) = do
+    -- We check if the variable type is a subtype of the expected type
+
+    state' <- readIORef M.defaultCheckerState
+    let env = state'.environment
+
+    case Map.lookup name env of
+        Just scheme -> do
+            varType <- M.instantiate scheme >>= M.performAliasRemoval
+
+            void $ varType `M.isSubtypeOf` expected
+
+            pure (HLIR.MkPatternVariable (HLIR.MkAnnotation name (Identity varType)), mempty, mempty)
+        Nothing -> M.throw (M.VariableNotFound name)
+checkP expected (HLIR.MkPatternStructure ty fields) = do
+    -- Removing aliases from the annotated type
+    aliasedTy <- M.performAliasRemoval ty
+
+    void $ aliasedTy `M.isSubtypeOf` expected
+
+    -- Finding the structure definition by its header, and collecting
+    -- it applied type variables.
+    let annHeader = getHeader aliasedTy
+        annTypes = getTypeArgs aliasedTy
+
+    -- If the structure is not found, we throw an error.
+    -- If found, we do not instantiate it, because we need to
+    -- manually substitute the type variables with the applied types.
+    findStructureMaybeById annHeader >>= \case
+        Nothing -> M.throw M.InvalidHeader
+        Just (HLIR.Forall qvars structType) -> do
+            -- Building a substitution map from the structure's quantified
+            -- variables to the applied types. If there are more quantified
+            -- variables than applied types, we create new type variables
+            -- for the remaining quantified variables.
+            let subst = zip qvars annTypes
+                rest = drop (length annTypes) qvars
+            newVars <- forM rest $ const M.newType
+            let substMap = Map.fromList (subst ++ zip rest newVars)
+
+            -- Applying the substitution to the structure's field types
+            structTy <-
+                Map.traverseWithKey (\_ t -> M.applySubstitution substMap t) structType
+
+            -- Checking each field pattern against the corresponding field type
+            -- and collecting constraints and bindings from each field pattern.
+            checkedFields <- forM (Map.toList fields) $ \(name, pat) -> do
+                case Map.lookup name structTy of
+                    Just fieldTy -> do
+                        (checkedPat, cs, bindings) <- checkP fieldTy pat
+                        pure ((name, checkedPat), cs, bindings)
+                    Nothing -> M.throw (M.FieldNotFound name)
+
+            -- Collecting all constraints and bindings
+            let (unzippedFields, csList, bindingsList) = unzip3 checkedFields
+                cs = mconcat csList
+                bindings = mconcat bindingsList
+
+            pure
+                ( HLIR.MkPatternStructure aliasedTy (Map.fromList unzippedFields)
+                , cs
+                , bindings
+                )
+checkP expected (HLIR.MkPatternConstructor name constructors _) = do
+    -- Pattern constructors acts like function calls in patterns.
+    -- We find the constructor in the environment, instantiate its type,
+    -- and check if the resulting type is a subtype of the expected type.
+
+    state' <- readIORef M.defaultCheckerState
+    let env = state'.environment
+
+    case Map.lookup name env of
+        Just scheme -> do
+            ctorType <- M.instantiate scheme >>= M.performAliasRemoval
+
+            case ctorType of
+                HLIR.MkTyFun paramTypes retType -> do
+                    (pats, cs, bindings) <- unzip3 <$> zipWithM checkP paramTypes constructors
+
+                    void $ retType `M.isSubtypeOf` expected
+
+                    pure (HLIR.MkPatternConstructor name pats (Identity ctorType), concat cs, Map.unions bindings)
+                _ -> M.throw M.InvalidHeader
+        Nothing -> M.throw (M.VariableNotFound name)
+checkP expected (HLIR.MkPatternLet (HLIR.MkAnnotation name _)) = do
+    -- We treat let patterns as variable declaring patterns.
+    pure (HLIR.MkPatternLet (HLIR.MkAnnotation name (Identity expected)), mempty, Map.singleton name (HLIR.Forall [] expected))
 
 -- | CHECK EXPRESSION
 -- | Check an expression against an expected type.

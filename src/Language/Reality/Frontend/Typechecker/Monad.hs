@@ -197,10 +197,10 @@ applySubstitution s (HLIR.MkTyQuantified name) =
     case Map.lookup name s of
         Just ty -> pure ty
         Nothing -> pure $ HLIR.MkTyQuantified name
-applySubstitution s (HLIR.MkTyAnonymousStructure n fields) = do
+applySubstitution s (HLIR.MkTyAnonymousStructure b n fields) = do
     n' <- applySubstitution s n
     fields' <-
         Map.traverseWithKey
             (\_ ty -> applySubstitution s ty)
             fields
-    pure $ HLIR.MkTyAnonymousStructure n' fields'
+    pure $ HLIR.MkTyAnonymousStructure b n' fields'

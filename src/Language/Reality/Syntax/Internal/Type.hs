@@ -19,6 +19,13 @@ type Level = Int
 -- | the following example: "fn id<A>(x: A): A => x".
 type QuVar = Text
 
+-- | IS UNION OR STRUCTURE TYPE
+-- | A type is either a union or a structure if it is an anonymous structure
+-- | type. This is used to determine if a type is a union or a structure.
+-- | A union type is a type that can be one of several types. A structure type
+-- | is a type that has a fixed set of fields.
+type IsUnion = Bool
+
 -- | BONZAI TYPE TYPE
 -- | A type is an abstract representation of a value in Bonzai. It is used to check
 -- | values correctness at compile time and to infer types when the type is not
@@ -34,7 +41,7 @@ data Type
     | MkTyApp Type [Type]
     | MkTyVar (IORef TyVar)
     | MkTyQuantified Text
-    | MkTyAnonymousStructure Type (Map Text Type)
+    | MkTyAnonymousStructure IsUnion Type (Map Text Type)
     deriving (Ord, Generic)
 
 -- | ORD INSTANCE FOR TYPE
@@ -75,7 +82,7 @@ instance Eq Type where
         let b' = IO.unsafePerformIO $ readIORef b
         a' == b'
     MkTyApp a b == MkTyApp c d = a == c && b == d
-    MkTyAnonymousStructure _ f1 == MkTyAnonymousStructure _ f2 = f1 == f2
+    MkTyAnonymousStructure b1 _ f1 == MkTyAnonymousStructure b2 _ f2 = f1 == f2 && b1 == b2
     _ == _ = False
 
 -- | FUNCTION TYPE
@@ -136,7 +143,7 @@ instance ToText Type where
         let a' = IO.unsafePerformIO $ readIORef a
         toText a'
     toText (MkTyQuantified a) = a
-    toText (MkTyAnonymousStructure h a) =
+    toText (MkTyAnonymousStructure _ h a) =
         let fields = Map.toList a
             fieldTexts = map (\(name, ty) -> name <> ": " <> toText ty) fields
          in T.concat [toText h, " { ", T.intercalate ", " fieldTexts, " }"]
