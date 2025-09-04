@@ -2,15 +2,38 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include "../dependencies/gc/src/gc.h"
+
+//typedef struct GarbageCollector GarbageCollector;
 
 GarbageCollector* get_gc() {
     return &gc;
 }
 
+/*void* gc_malloc(GarbageCollector* gc, uint64_t size) {
+    return malloc(size);
+}
+
+void* gc_realloc(GarbageCollector* gc, void* ptr, uint64_t size) {
+    return realloc(ptr, size);
+}
+
+void gc_start(void* a, void* b) {}
+
+void gc_stop(GarbageCollector* gc) {}
+
+void gc_free(GarbageCollector* gc, void* ptr) {
+    free(ptr);
+    }*/
+
+bool string_eq(char* a, char* b) {
+    return strcmp(a, b) == 0;
+}
+
 char* malloc_string(const char* content) {
     size_t length = strlen(content);
-    char* copy = (char*)gc_malloc(&gc, length + 1);
+    char* copy = (char*)gc_malloc(get_gc(), length + 1);
     if (copy) {
         strcpy(copy, content);
     }
@@ -20,7 +43,7 @@ char* malloc_string(const char* content) {
 char* number_to_string(int number) {
     size_t length = snprintf(NULL, 0, "%d", number);
 
-    char* result = (char*)gc_malloc(&gc, length + 1);
+    char* result = (char*)gc_malloc(get_gc(), length + 1);
     if (result) {
         snprintf(result, length + 1, "%d", number);
     }
@@ -30,7 +53,7 @@ char* number_to_string(int number) {
 char* pointer_to_string(void* ptr) {
     size_t length = snprintf(NULL, 0, "%p", ptr);
 
-    char* result = (char*)gc_malloc(&gc, length + 1);
+    char* result = (char*)gc_malloc(get_gc(), length + 1);
     if (result) {
         snprintf(result, length + 1, "%p", ptr);
     }
@@ -87,7 +110,7 @@ int mod_number(int a, int b) {
 
 char* concat_strings(char* a, char* b) {
     size_t length = strlen(a) + strlen(b);
-    char* result = (char*)gc_malloc(&gc, length + 1);
+    char* result = (char*)gc_malloc(get_gc(), length + 1);
     if (result) {
         strcpy(result, a);
         strcat(result, b);
