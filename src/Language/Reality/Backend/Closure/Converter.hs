@@ -434,20 +434,37 @@ convertExpression (HLIR.MkExprApplication callee arguments retType) = do
                 , retType'
                 )
 convertExpression (HLIR.MkExprLocated _ e) = convertExpression e
-convertExpression e@(HLIR.MkExprVariable ann@(HLIR.MkAnnotation name (Identity ty)) _) = do
+convertExpression e@(HLIR.MkExprVariable (HLIR.MkAnnotation name (Identity ty)) _) = do
     -- Reading the local and global environments to find the variable type
     -- and convert it to its closure-converted form
     locals' <- readIORef locals
     globals' <- readIORef globals
+    natives' <- readIORef natives
 
     let variables = locals' <> globals'
+
+    (expr, ns', exprTy) <- case Map.lookup name (globals' <> natives') of
+        Just (HLIR.MkTyFun args retTy) -> do
+            let function = HLIR.MkExprLambda
+                    { HLIR.parameters = zipWith (\i ty' -> HLIR.MkAnnotation ("arg" <> show i) (Identity ty')) [(0 :: Int)..] args
+                    , HLIR.returnType = Identity retTy
+                    , HLIR.body = HLIR.MkExprApplication
+                        { HLIR.callee = HLIR.MkExprVariable (HLIR.MkAnnotation name (Identity (HLIR.MkTyFun args retTy))) []
+                        , HLIR.arguments = zipWith (\i ty' -> HLIR.MkExprVariable (HLIR.MkAnnotation ("arg" <> show i) (Identity ty')) []) [(0 :: Int)..] args
+                        , HLIR.returnType = Identity retTy
+                        }
+                    }
+
+            convertExpression function
+
+        _ -> pure (e, [], ty)
 
     case Map.lookup name variables of
         -- If the variable is found, we convert its type and return it
         Just varTy -> do
             (varTy', ns) <- convertType varTy
             pure
-                (HLIR.MkExprVariable ann{HLIR.typeValue = Identity varTy'} [], ns, varTy')
+                (expr, ns <> ns', varTy')
 
         -- If the variable is not found, we assume it's a native variable
         --
@@ -460,7 +477,7 @@ convertExpression e@(HLIR.MkExprVariable ann@(HLIR.MkAnnotation name (Identity t
         --
         -- This permits native functions to be used in function calls
         -- as function call arguments
-        Nothing -> pure (e, [], ty)
+        Nothing -> pure (expr, ns', exprTy)
 convertExpression e@(HLIR.MkExprLiteral lit) =
     pure
         ( e
