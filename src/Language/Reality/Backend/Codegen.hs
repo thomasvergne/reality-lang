@@ -47,7 +47,7 @@ codegenToplevel (MLIR.MkTopFunction name params ret body) = do
     paramList <-
         Text.intercalate ", "
             <$> mapM
-                (\(MLIR.MkAnnotation paramName ty) -> codegenType True (Just paramName) [] ty)
+                (\(MLIR.MkAnnotation paramName ty) -> codegenType True (Just (varify paramName)) [] ty)
                 params
     retType <- codegenType True Nothing [] ret
     let funcHeader = Text.concat [retType, " ", varify name, "(", paramList, ") {"]
@@ -275,9 +275,59 @@ isIdent :: Char -> Bool
 isIdent x = Char.isAlphaNum x || x == '_' || x == '$'
 
 varify :: Text -> Text
-varify =
+varify n | n `Set.member` cKeywords = Text.concat ["_", n]
+varify n =
     Text.concatMap
-        (\x' -> if isIdent x' then toText [x'] else fromString (show (ord x')))
+        (\x' -> if isIdent x' then toText [x'] else fromString (show (ord x'))) n
+
+cKeywords :: Set Text
+cKeywords =
+    Set.fromList
+    [ "auto"
+    , "break"
+    , "case"
+    , "char"
+    , "const"
+    , "continue"
+    , "default"
+    , "do"
+    , "double"
+    , "else"
+    , "enum"
+    , "extern"
+    , "float"
+    , "for"
+    , "goto"
+    , "if"
+    , "inline"
+    , "int"
+    , "long"
+    , "register"
+    , "restrict"
+    , "return"
+    , "short"
+    , "signed"
+    , "sizeof"
+    , "static"
+    , "struct"
+    , "switch"
+    , "typedef"
+    , "union"
+    , "unsigned"
+    , "void"
+    , "volatile"
+    , "while"
+    , "_Alignas"
+    , "_Alignof"
+    , "_Atomic"
+    , "_Bool"
+    , "_Complex"
+    , "_Generic"
+    , "_Imaginary"
+    , "_Noreturn"
+    , "_Static_assert"
+    , "_Thread_local"
+    ]
 
 getMultipleTimesPointer :: MLIR.Type -> (MLIR.Type, Int)
 getMultipleTimesPointer (MLIR.MkTyPointer ty) =
