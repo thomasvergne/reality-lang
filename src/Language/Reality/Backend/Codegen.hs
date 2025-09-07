@@ -85,7 +85,7 @@ codegenToplevel (MLIR.MkTopExternalVariable name ty) = do
 
 codegenField :: MonadIO m => MLIR.StructureMember -> m Text
 codegenField (MLIR.MkStructField name ty) = do
-    tyStr <- codegenType False (Just name) [] ty
+    tyStr <- codegenType False (Just (varify name)) [] ty
     pure $ Text.concat [tyStr, ";"]
 codegenField (MLIR.MkStructStruct name fields) = do
     fieldLines <- mapM codegenField fields
