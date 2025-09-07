@@ -126,35 +126,39 @@ impl fn (x: String) add(y: String) -> String {
 
 extern fn printf(s: string) -> i32;
 
-property show[A](x: A) -> String;
+property show_prec[A](x: A, i: i32) -> String;
 
-impl fn (x: String) show() -> String {
-    x
+impl fn (x: String) show_prec(i: i32) -> String {
+    if i > 0 {
+        String::new("\"" + x.data + "\"")
+    } else {
+        x
+    }
 }
 
-impl fn (x: i32) show() -> String {
+impl fn (x: i32) show_prec(_: i32) -> String {
     String::new(number_to_string(x))
 }
 
 
-impl fn (x: string) show() -> String {
-    String::new(x)
-}
-
-impl fn (x: *A) show[A]() -> String {
-    String::new("pointer")
+impl fn (x: string) show_prec(i: i32) -> String {
+    String::new(if i > 0 { "\"" } else { "" } + x + if i > 0 { "\"" } else { "" })
 }
 
 impl fn (x: string) add(y: string) -> string {
     (String::new(x) + String::new(y)).data
 }
 
-impl fn (x: bool) show() -> String {
+impl fn (x: bool) show_prec(_: i32) -> String {
     String::new(if (x) { "true" } else { "false" })
 }
 
-impl fn (x: *A) show[A]() -> String {
-    show(*x)
+impl fn (x: *A) show_prec[A](i: i32) -> String {
+    show_prec(*x, i)
+}
+
+fn show[A](x: A) -> String {
+    show_prec(x, 0)
 }
 
 fn print[A](x: A) -> i32 {

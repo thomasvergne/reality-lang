@@ -111,14 +111,14 @@ mod List {
     }
 }
 
-impl fn (list: List[A]) show[A]() -> String {
+impl fn (list: List[A]) show_prec[A](prec: i32) -> String {
     let result = String::new("[");
 
     let i = 0 as u64;
 
     while i < list.length {
         let value = list[i];
-        result = result + show(value);
+        result = result + show_prec(value, prec + 1);
 
         if i < list.length - 1 {
             result = result + String::new(", ");
