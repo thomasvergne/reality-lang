@@ -408,6 +408,25 @@ resolveSpecializationInExpr (HLIR.MkExprIfIs expr pat thenBr elseBr ty) = do
         ( HLIR.MkExprIfIs typedExpr typedPat typedThenBr typedElseBr specTy
         , newDefs1 ++ newDefs2 ++ newDefs3 ++ newDefs4 ++ newDefs5
         )
+resolveSpecializationInExpr (HLIR.MkExprFunctionAccess {}) = M.compilerError "Function access should have been desugared before specialization resolution."
+resolveSpecializationInExpr (HLIR.MkExprWhileIs expr pat body ret inExpr) = do
+    (typedExpr, newDefs1) <- resolveSpecializationInExpr expr
+    (typedPat, newDefs2, bindings) <- resolveSpecializationInPattern pat
+    (typedBody, newDefs3) <-
+        withLocals bindings $ resolveSpecializationInExpr body
+    (specRet, newDefs4) <-
+        first Identity <$> resolveSpecializationInType ret.runIdentity
+    (typedInExpr, newDefs5) <- resolveSpecializationInExpr inExpr
+
+    pure
+        ( HLIR.MkExprWhileIs typedExpr typedPat typedBody specRet typedInExpr
+        , newDefs1 ++ newDefs2 ++ newDefs3 ++ newDefs4 ++ newDefs5
+        )
+resolveSpecializationInExpr (HLIR.MkExprReturn e) = do
+    (typedE, newDefs) <- resolveSpecializationInExpr e
+    pure (HLIR.MkExprReturn typedE, newDefs)
+resolveSpecializationInExpr HLIR.MkExprBreak = pure (HLIR.MkExprBreak, [])
+resolveSpecializationInExpr HLIR.MkExprContinue = pure (HLIR.MkExprContinue, [])
 
 resolveSpecializationInPattern ::
     (MonadIO m, M.MonadError M.Error m) =>
@@ -554,6 +573,23 @@ applySubstInExpr subst (HLIR.MkExprIfIs expr pat thenBr elseBr ty) = do
     newTy <- M.applySubstitution subst ty.runIdentity
 
     pure (HLIR.MkExprIfIs newExpr newPat newThenBr newElseBr (Identity newTy))
+applySubstInExpr subst (HLIR.MkExprFunctionAccess f this args) = do
+    newThis <- applySubstInExpr subst this
+    newArgs <- mapM (applySubstInExpr subst) args
+    pure (HLIR.MkExprFunctionAccess f newThis newArgs)
+applySubstInExpr subst (HLIR.MkExprWhileIs expr pat body ret inExpr) = do
+    newExpr <- applySubstInExpr subst expr
+    newPat <- applySubstInPattern subst pat
+    newBody <- applySubstInExpr subst body
+    newRet <- M.applySubstitution subst ret.runIdentity
+    newInExpr <- applySubstInExpr subst inExpr
+
+    pure (HLIR.MkExprWhileIs newExpr newPat newBody (Identity newRet) newInExpr)
+applySubstInExpr subst (HLIR.MkExprReturn e) = do
+    newE <- applySubstInExpr subst e
+    pure (HLIR.MkExprReturn newE)
+applySubstInExpr _ HLIR.MkExprBreak = pure HLIR.MkExprBreak
+applySubstInExpr _ HLIR.MkExprContinue = pure HLIR.MkExprContinue
 
 applySubstInPattern ::
     (MonadIO m) =>
@@ -763,12 +799,14 @@ resolveSpecializationForImplementation name ty = do
 
     -- Combining both results to get the final result
     let result = case (result1, result2) of
-            (Just (node, subst, scheme), Just propScheme) ->
-                Just (node, subst, scheme, propScheme)
+            (Just (node, subst, _), Just propScheme) ->
+                Just (node, subst, propScheme)
+            (Just (node, subst, scheme), Nothing) ->
+                Just (node, subst, scheme)
             _ -> Nothing
 
     case result of
-        Just (node, implSubst, _, propScheme@(HLIR.Forall qvars _)) -> do
+        Just (node, implSubst, propScheme@(HLIR.Forall qvars _)) -> do
             -- Creating the final substitution by instantiating the property scheme
             -- and ensuring that the implementation type is a subtype of the property type
             (propTy, subst) <- M.instantiateAndSub propScheme
@@ -889,13 +927,13 @@ resolveSpecializationForImplementation name ty = do
             -- without performing any unification.
             -- This is done to ensure that the implementation can be used
             -- for the specialized function call.
-            result <- runExceptT $ M.applySubtypeRelation False aliasedImplTy ty'
+            result <- runExceptT $ M.applySubtypeRelation False ty' aliasedImplTy
 
             case result of
                 Right _ -> do
                     -- If it is a subtype, we have found a matching implementation.
                     -- We can fully apply subtype relation to get the final substitution.
-                    void $ aliasedImplTy `M.isSubtypeOf` ty'
+                    void $ ty' `M.isSubtypeOf` aliasedImplTy
                     pure $ Just (toplevel, sub, implScheme)
                 Left _ -> findImplementationMatching xs name ty'
         | otherwise = findImplementationMatching xs name ty'
