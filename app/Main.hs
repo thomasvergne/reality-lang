@@ -1,15 +1,15 @@
 module Main where
 
 import Control.Monad.Result
+import Language.Reality.Backend.ANF.Converter qualified as ANF
 import Language.Reality.Backend.Closure.Converter qualified as CC
+import Language.Reality.Backend.Codegen qualified as CG
 import Language.Reality.Backend.Specialization.Resolver qualified as SR
 import Language.Reality.Frontend.Import.Resolver qualified as IR
 import Language.Reality.Frontend.Module.Resolver qualified as MR
 import Language.Reality.Frontend.Parser hiding (parseError)
 import Language.Reality.Frontend.Parser.Toplevel qualified as T
 import Language.Reality.Frontend.Typechecker.Checker qualified as TC
-import Language.Reality.Backend.ANF.Converter qualified as ANF
-import Language.Reality.Backend.Codegen qualified as CG
 import System.Directory
 import System.FilePath
 
