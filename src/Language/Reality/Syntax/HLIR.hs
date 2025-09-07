@@ -5,7 +5,7 @@
 module Language.Reality.Syntax.HLIR (
     Expression (..),
     Toplevel (..),
-    Pattern(..),
+    Pattern (..),
     -- Patterns
     pattern MkExprBinary,
     pattern MkExprString,
@@ -152,11 +152,11 @@ data Toplevel f t
 -- | PATTERN
 data Pattern f t
     = MkPatternVariable (Ann.Annotation (f t))
-    | MkPatternLet (Ann.Annotation (f t ))
+    | MkPatternLet (Ann.Annotation (f t))
     | MkPatternLiteral Lit.Literal
     | MkPatternWildcard
     | MkPatternStructure t (Map Text (Pattern f t))
-    | MkPatternConstructor Text [Pattern f t] (f t)  -- Constructor name and its associated patterns
+    | MkPatternConstructor Text [Pattern f t] (f t) -- Constructor name and its associated patterns
     | MkPatternLocated
         { span :: Position
         , patternNode :: Pattern f t
@@ -274,7 +274,8 @@ instance (ToText (f t), ToText t) => ToText (Expression f t) where
         let elseText = case maybeElseB of
                 Just elseB -> " else " <> toText elseB
                 Nothing -> ""
-         in T.concat ["if ", toText expr, " is ", toText pat, " then ", toText thenB, elseText]
+         in T.concat
+                ["if ", toText expr, " is ", toText pat, " then ", toText thenB, elseText]
 
 instance (ToText (f t), ToText t) => ToText (Pattern f t) where
     toText (MkPatternVariable ann) = toText ann
@@ -387,10 +388,8 @@ instance (ToText (f t), ToText t) => ToText (Toplevel f t) where
             , "]\n"
             , toText node
             ]
-
     toText (MkTopExternLet binding) =
         T.concat ["extern let ", toText binding]
-
     toText (MkTopEnumeration name constructors) =
         let constructorTexts = map formatConstructor (Map.toList constructors)
             formatConstructor (cName, Nothing) = cName

@@ -50,12 +50,14 @@ parseTopFunctionDeclaration = do
 
     pure
         ( (start, end)
-        , [HLIR.MkTopFunctionDeclaration
-            { HLIR.name = HLIR.MkAnnotation idt generics
-            , HLIR.parameters = params
-            , HLIR.returnType = ret
-            , HLIR.body = body
-        }]
+        ,
+            [ HLIR.MkTopFunctionDeclaration
+                { HLIR.name = HLIR.MkAnnotation idt generics
+                , HLIR.parameters = params
+                , HLIR.returnType = ret
+                , HLIR.body = body
+                }
+            ]
         )
 
 -- | PARSE TYPE ALIAS NODE
@@ -80,10 +82,12 @@ parseTopTypeAlias = do
 
     pure
         ( (start, end)
-        , [HLIR.MkTopTypeAlias
-            { HLIR.name = HLIR.MkAnnotation idt generics
-            , HLIR.boundType = aliased
-        }]
+        ,
+            [ HLIR.MkTopTypeAlias
+                { HLIR.name = HLIR.MkAnnotation idt generics
+                , HLIR.boundType = aliased
+                }
+            ]
         )
 
 -- | PARSE IMPORT NODE
@@ -155,10 +159,12 @@ parseTopStructureDeclaration = do
         Lex.braces $ Map.fromList <$> P.sepBy parseField Lex.comma
     pure
         ( (start, end)
-        , [HLIR.MkTopStructureDeclaration
-            { HLIR.header = HLIR.MkAnnotation idt generics
-            , HLIR.fields = fields
-        }]
+        ,
+            [ HLIR.MkTopStructureDeclaration
+                { HLIR.header = HLIR.MkAnnotation idt generics
+                , HLIR.fields = fields
+                }
+            ]
         )
   where
     parseField = do
@@ -193,11 +199,13 @@ parseTopExternalFunction = do
 
     pure
         ( (start, end)
-        , [HLIR.MkTopExternalFunction
-            { HLIR.name = HLIR.MkAnnotation idt generics
-            , HLIR.parameters = params
-            , HLIR.returnType = ret
-        }]
+        ,
+            [ HLIR.MkTopExternalFunction
+                { HLIR.name = HLIR.MkAnnotation idt generics
+                , HLIR.parameters = params
+                , HLIR.returnType = ret
+                }
+            ]
         )
 
 -- | PARSE PROPERTY NODE
@@ -224,11 +232,13 @@ parseTopProperty = do
 
     pure
         ( (start, end)
-        , [HLIR.MkTopProperty
-            { HLIR.header = HLIR.MkAnnotation idt generics
-            , HLIR.parameters = params
-            , HLIR.returnType = ret
-        }]
+        ,
+            [ HLIR.MkTopProperty
+                { HLIR.header = HLIR.MkAnnotation idt generics
+                , HLIR.parameters = params
+                , HLIR.returnType = ret
+                }
+            ]
         )
 
 -- | PARSE TOPLEVEL ENUMERATION
@@ -256,17 +266,20 @@ parseTopEnumeration = do
 
     pure
         ( (start, end)
-        , [HLIR.MkTopEnumeration
-            { HLIR.name = HLIR.MkAnnotation idt generics
-            , HLIR.constructors = Map.fromList variants
-        }]
+        ,
+            [ HLIR.MkTopEnumeration
+                { HLIR.name = HLIR.MkAnnotation idt generics
+                , HLIR.constructors = Map.fromList variants
+                }
+            ]
         )
-    where
-        parseVariant = do
-            (_, name) <- Lex.identifier
-            associated <- P.optional $ snd <$> Lex.parens (P.sepBy (snd <$> Typ.parseType) Lex.comma)
+  where
+    parseVariant = do
+        (_, name) <- Lex.identifier
+        associated <-
+            P.optional $ snd <$> Lex.parens (P.sepBy (snd <$> Typ.parseType) Lex.comma)
 
-            pure (name, associated)
+        pure (name, associated)
 
 -- | PARSE IMPLEMENTATION NODE
 -- | An implementation node is a top-level construct that defines an
@@ -303,13 +316,15 @@ parseTopImplementation = do
 
     pure
         ( (start, end)
-        , [HLIR.MkTopImplementation
-            { HLIR.forType = forType
-            , HLIR.header = HLIR.MkAnnotation idt generics
-            , HLIR.parameters = params
-            , HLIR.returnType = returnType
-            , HLIR.body = body
-        }]
+        ,
+            [ HLIR.MkTopImplementation
+                { HLIR.forType = forType
+                , HLIR.header = HLIR.MkAnnotation idt generics
+                , HLIR.parameters = params
+                , HLIR.returnType = returnType
+                , HLIR.body = body
+                }
+            ]
         )
 
 -- | PARSE ANNOTATION NODE
@@ -330,10 +345,11 @@ parseTopAnnotation = do
 
     void $ Lex.symbol "]"
 
-    ((_, end), nodes) <- P.choice [
-          Lex.braces (concat <$> P.many (snd <$> parseTopFull <* P.optional Lex.semi))
-        , parseTopFull
-        ]
+    ((_, end), nodes) <-
+        P.choice
+            [ Lex.braces (concat <$> P.many (snd <$> parseTopFull <* P.optional Lex.semi))
+            , parseTopFull
+            ]
 
     pure ((start, end), HLIR.MkTopAnnotation args <$> nodes)
 
@@ -370,7 +386,8 @@ parseTopExternLet = do
 -- |
 -- | The top-level parser is responsible for parsing these constructs and
 -- | returning them as a list of top-level nodes.
-parseTopFull :: (MonadIO m) => P.Parser m (HLIR.Position, [HLIR.HLIR "toplevel"])
+parseTopFull ::
+    (MonadIO m) => P.Parser m (HLIR.Position, [HLIR.HLIR "toplevel"])
 parseTopFull =
     Lex.locateWith
         <$> P.choice

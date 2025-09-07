@@ -142,9 +142,14 @@ hoistLambdasInExpr (HLIR.MkExprWhile cond body loopType inExpr) = do
 hoistLambdasInExpr (HLIR.MkExprIfIs expr ty thenB elseB branchType) = do
     (newExpr, hoistedExpr) <- hoistLambdasInExpr expr
     (newThenB, hoistedThenB) <- hoistLambdasInExpr thenB
-    (newElseB, hoistedElseB) <- maybe (pure (Nothing, [])) (\e -> do
-        (ne, he) <- hoistLambdasInExpr e
-        pure (Just ne, he)) elseB
+    (newElseB, hoistedElseB) <-
+        maybe
+            (pure (Nothing, []))
+            ( \e -> do
+                (ne, he) <- hoistLambdasInExpr e
+                pure (Just ne, he)
+            )
+            elseB
 
     pure
         ( HLIR.MkExprIfIs newExpr ty newThenB newElseB branchType

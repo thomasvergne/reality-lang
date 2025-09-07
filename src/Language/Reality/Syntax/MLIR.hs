@@ -184,6 +184,5 @@ instance ToText StructureMember where
             , T.intercalate
                 "\n"
                 (map (\f -> "    " <> toText f) fields)
-
             , "\n  };"
             ]

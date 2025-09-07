@@ -236,10 +236,13 @@ checkToplevelSingular (HLIR.MkTopExternLet ann) = do
     pure (HLIR.MkTopExternLet ann)
 checkToplevelSingular (HLIR.MkTopEnumeration ann constructors) = do
     -- Removing aliases from the constructor types
-    constructorTypes <- traverse (\case
-            Just ts -> Just <$> mapM M.performAliasRemoval ts
-            Nothing -> pure Nothing
-        ) constructors
+    constructorTypes <-
+        traverse
+            ( \case
+                Just ts -> Just <$> mapM M.performAliasRemoval ts
+                Nothing -> pure Nothing
+            )
+            constructors
 
     -- Formatting the enumeration types
     -- Each constructor type is a function type that takes the
@@ -250,7 +253,8 @@ checkToplevelSingular (HLIR.MkTopEnumeration ann constructors) = do
 
     let enumType
             | null ann.typeValue = HLIR.MkTyId ann.name
-            | otherwise = HLIR.MkTyApp (HLIR.MkTyId ann.name) (map HLIR.MkTyQuantified ann.typeValue)
+            | otherwise =
+                HLIR.MkTyApp (HLIR.MkTyId ann.name) (map HLIR.MkTyQuantified ann.typeValue)
         formatConstructor (cName, Nothing) = (cName, enumType)
         formatConstructor (cName, Just cType) = (cName, cType HLIR.:->: enumType)
 
@@ -633,7 +637,8 @@ synthesizeE (HLIR.MkExprIfIs expr pat thenBranch elseBranch _) = do
     -- Extending the environment with the bindings introduced by the pattern
     -- We use `withEnvironment` to temporarily extend the environment
     -- while checking the then branch.
-    (thenTy, typedThenBranch, cs3) <- M.withEnvironment bindings $ synthesizeE thenBranch
+    (thenTy, typedThenBranch, cs3) <-
+        M.withEnvironment bindings $ synthesizeE thenBranch
     (elseTy, typedElseBranch, cs4) <- case elseBranch of
         Just e -> do
             (ty, expr', cs') <- synthesizeE e
@@ -654,7 +659,12 @@ synthesizeE (HLIR.MkExprIfIs expr pat thenBranch elseBranch _) = do
     -- The type of the is expression is bool
     pure
         ( thenTy
-        , HLIR.MkExprIfIs exprExpr typedPat typedThenBranch typedElseBranch (Identity thenTy)
+        , HLIR.MkExprIfIs
+            exprExpr
+            typedPat
+            typedThenBranch
+            typedElseBranch
+            (Identity thenTy)
         , cs'
         )
 
@@ -705,7 +715,11 @@ checkP expected (HLIR.MkPatternVariable (HLIR.MkAnnotation name _)) = do
 
             void $ varType `M.isSubtypeOf` expected
 
-            pure (HLIR.MkPatternVariable (HLIR.MkAnnotation name (Identity varType)), mempty, mempty)
+            pure
+                ( HLIR.MkPatternVariable (HLIR.MkAnnotation name (Identity varType))
+                , mempty
+                , mempty
+                )
         Nothing -> M.throw (M.VariableNotFound name)
 checkP expected (HLIR.MkPatternStructure ty fields) = do
     -- Removing aliases from the annotated type
@@ -774,12 +788,20 @@ checkP expected (HLIR.MkPatternConstructor name constructors _) = do
 
                     void $ retType `M.isSubtypeOf` expected
 
-                    pure (HLIR.MkPatternConstructor name pats (Identity ctorType), concat cs, Map.unions bindings)
+                    pure
+                        ( HLIR.MkPatternConstructor name pats (Identity ctorType)
+                        , concat cs
+                        , Map.unions bindings
+                        )
                 _ -> M.throw M.InvalidHeader
         Nothing -> M.throw (M.VariableNotFound name)
 checkP expected (HLIR.MkPatternLet (HLIR.MkAnnotation name _)) = do
     -- We treat let patterns as variable declaring patterns.
-    pure (HLIR.MkPatternLet (HLIR.MkAnnotation name (Identity expected)), mempty, Map.singleton name (HLIR.Forall [] expected))
+    pure
+        ( HLIR.MkPatternLet (HLIR.MkAnnotation name (Identity expected))
+        , mempty
+        , Map.singleton name (HLIR.Forall [] expected)
+        )
 
 -- | CHECK EXPRESSION
 -- | Check an expression against an expected type.

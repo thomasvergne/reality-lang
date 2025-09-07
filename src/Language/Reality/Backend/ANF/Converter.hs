@@ -1,12 +1,12 @@
 module Language.Reality.Backend.ANF.Converter where
 
 import Control.Monad.Result qualified as Err
+import Data.List qualified as List
 import Data.Map qualified as Map
 import Data.Text qualified as Text
 import GHC.IO qualified as IO
 import Language.Reality.Syntax.HLIR qualified as HLIR
 import Language.Reality.Syntax.MLIR qualified as MLIR
-import Data.List qualified as List
 
 -- | ANF CONVERTER
 -- | Convert a HLIR expression to ANF (MLIR).
@@ -98,62 +98,78 @@ convertToplevel (HLIR.MkTopPublic node) = do
     pure $ MLIR.MkTopPublic <$> node'
 convertToplevel (HLIR.MkTopExternalFunction name parameters returnType) =
     pure
-        [MLIR.MkTopExternalFunction
+        [ MLIR.MkTopExternalFunction
             name.name
             name.typeValue
             (map (.typeValue) parameters)
-            returnType]
+            returnType
+        ]
 convertToplevel (HLIR.MkTopImplementation{}) =
     Err.compilerError
         "Implementations should have been resolved before ANF conversion."
 convertToplevel (HLIR.MkTopProperty{}) =
     Err.compilerError "Properties should have been resolved before ANF conversion."
-convertToplevel (HLIR.MkTopAnnotation {}) =
+convertToplevel (HLIR.MkTopAnnotation{}) =
     Err.compilerError "Annotations should have been resolved before ANF conversion."
 convertToplevel (HLIR.MkTopEnumeration header constructors) = do
     enum <- createEnumStructure (header.name, constructors)
     functions <- mapM (createFunction header.name) (Map.toList constructors)
 
-    pure (enum: functions)
+    pure (enum : functions)
+  where
+    createEnumStructure ::
+        (MonadIO m) => (Text, Map Text (Maybe [MLIR.Type])) -> m MLIR.Toplevel
+    createEnumStructure (enumName, constructors') = do
+        let fields = Map.map (fromMaybe []) constructors'
 
-    where
-        createEnumStructure :: MonadIO m => (Text, Map Text (Maybe [MLIR.Type])) -> m MLIR.Toplevel
-        createEnumStructure (enumName, constructors') = do
-            let fields = Map.map (fromMaybe []) constructors'
+        namedFields <- forM (Map.toList fields) $ \(name, fieldTypes) -> do
+            fieldNames <- forM (zip fieldTypes [(1 :: Int) ..]) $ \(ty, idx) ->
+                pure (MLIR.MkStructField (name <> "_field" <> Text.pack (show idx)) ty)
+            pure $ MLIR.MkStructStruct name fieldNames
 
-            namedFields <- forM (Map.toList fields) $ \(name, fieldTypes) -> do
-                fieldNames <- forM (zip fieldTypes [(1 :: Int)..]) $ \(ty, idx) ->
-                    pure (MLIR.MkStructField (name <> "_field" <> Text.pack (show idx)) ty)
-                pure $ MLIR.MkStructStruct name fieldNames
-
-            let enumStructure = MLIR.MkTopStructure enumName
+        let enumStructure =
+                MLIR.MkTopStructure
+                    enumName
                     [ MLIR.MkStructField "_tag" MLIR.MkTyString
                     , MLIR.MkStructUnion "_data" namedFields
                     ]
 
-            pure enumStructure
+        pure enumStructure
 
-        createFunction :: MonadIO m => Text -> (Text, Maybe [MLIR.Type]) -> m MLIR.Toplevel
-        createFunction enumName (consName, maybeFieldTypes) = do
-            let arguments = case maybeFieldTypes of
-                    Just fieldTypes -> zipWith (\ty idx -> MLIR.MkAnnotation ("arg" <> Text.pack (show idx)) ty) fieldTypes [(1 :: Int)..]
-                    Nothing -> []
+    createFunction ::
+        (MonadIO m) => Text -> (Text, Maybe [MLIR.Type]) -> m MLIR.Toplevel
+    createFunction enumName (consName, maybeFieldTypes) = do
+        let arguments = case maybeFieldTypes of
+                Just fieldTypes ->
+                    zipWith
+                        (\ty idx -> MLIR.MkAnnotation ("arg" <> Text.pack (show idx)) ty)
+                        fieldTypes
+                        [(1 :: Int) ..]
+                Nothing -> []
 
-                structType = MLIR.MkTyId enumName
+            structType = MLIR.MkTyId enumName
 
-                bodyExpr = [
-                      MLIR.MkExprLet "result" structType Nothing
-                    , MLIR.MkExprUpdate (MLIR.MkExprStructureAccess (MLIR.MkExprVariable "result") "_tag")
-                        (MLIR.MkExprLiteral (MLIR.MkLitString consName))
-                    ] <>
-                    [ MLIR.MkExprUpdate
-                        (MLIR.MkExprStructureAccess (MLIR.MkExprStructureAccess (MLIR.MkExprStructureAccess (MLIR.MkExprVariable "result") "_data") consName) (consName <> "_field" <> Text.pack (show idx)))
-                        (MLIR.MkExprVariable arg.name)
-                    | (arg, idx) <- zip arguments [(1 :: Int)..]
-                    ] ++
-                    [MLIR.MkExprVariable "result"]
+            bodyExpr =
+                [ MLIR.MkExprLet "result" structType Nothing
+                , MLIR.MkExprUpdate
+                    (MLIR.MkExprStructureAccess (MLIR.MkExprVariable "result") "_tag")
+                    (MLIR.MkExprLiteral (MLIR.MkLitString consName))
+                ]
+                    <> [ MLIR.MkExprUpdate
+                            ( MLIR.MkExprStructureAccess
+                                ( MLIR.MkExprStructureAccess
+                                    (MLIR.MkExprStructureAccess (MLIR.MkExprVariable "result") "_data")
+                                    consName
+                                )
+                                (consName <> "_field" <> Text.pack (show idx))
+                            )
+                            (MLIR.MkExprVariable arg.name)
+                       | (arg, idx) <- zip arguments [(1 :: Int) ..]
+                       ]
+                    ++ [MLIR.MkExprVariable "result"]
 
-            pure $ MLIR.MkTopFunction
+        pure
+            $ MLIR.MkTopFunction
                 consName
                 arguments
                 structType
@@ -246,7 +262,6 @@ convertExpression (HLIR.MkExprReference e ret) = do
     -- Creating a reference requires creating a let-binding for the inner expression,
     (e', l1) <- convertExpression e
 
-
     newVariable <- freshSymbol
     newRefVariable <- freshSymbol
 
@@ -325,9 +340,17 @@ convertExpression (HLIR.MkExprIfIs expr pat thenB elseB branchTy) = do
 
     (lets, conds) <- generateCondition expr' pat
 
-    let cond = List.foldr1 (\a b -> MLIR.MkExprApplication (MLIR.MkExprVariable "&&") [a, b]) conds
+    let cond =
+            List.foldr1
+                (\a b -> MLIR.MkExprApplication (MLIR.MkExprVariable "&&") [a, b])
+                conds
 
-    let bl1 = MLIR.MkExprBlock (map (\(name, ty, v) -> MLIR.MkExprLet name ty (Just v)) lets ++ l2 ++ [MLIR.MkExprUpdate var thenB'])
+    let bl1 =
+            MLIR.MkExprBlock
+                ( map (\(name, ty, v) -> MLIR.MkExprLet name ty (Just v)) lets
+                    ++ l2
+                    ++ [MLIR.MkExprUpdate var thenB']
+                )
 
     let ifExpr = MLIR.MkExprCondition cond bl1 $ case result of
             Just (elseB', l3) -> MLIR.MkExprBlock (l3 ++ [MLIR.MkExprUpdate var elseB'])
@@ -348,20 +371,30 @@ generateCondition e (HLIR.MkPatternLet ann) = do
     pure ([(ann.name, ann.typeValue.runIdentity, e)], [])
 generateCondition e (HLIR.MkPatternVariable ann) = do
     let tag = MLIR.MkExprStructureAccess e "_tag"
-        cond = MLIR.MkExprApplication
+        cond =
+            MLIR.MkExprApplication
                 (MLIR.MkExprVariable "string_eq")
                 [tag, MLIR.MkExprLiteral (MLIR.MkLitString ann.name)]
 
     pure ([], [cond])
 generateCondition e (HLIR.MkPatternConstructor name patterns _) = do
     let tag = MLIR.MkExprStructureAccess e "_tag"
-        cond = MLIR.MkExprApplication
+        cond =
+            MLIR.MkExprApplication
                 (MLIR.MkExprVariable "string_eq")
                 [tag, MLIR.MkExprLiteral (MLIR.MkLitString name)]
 
-    (patternsLets, patternsConds) <- mapAndUnzipM
-        (\(p, idx) -> generateCondition (MLIR.MkExprStructureAccess (MLIR.MkExprStructureAccess (MLIR.MkExprStructureAccess e "_data") name) (name <> "_field" <> show idx)) p)
-        (zip patterns [(1 :: Int)..])
+    (patternsLets, patternsConds) <-
+        mapAndUnzipM
+            ( \(p, idx) ->
+                generateCondition
+                    ( MLIR.MkExprStructureAccess
+                        (MLIR.MkExprStructureAccess (MLIR.MkExprStructureAccess e "_data") name)
+                        (name <> "_field" <> show idx)
+                    )
+                    p
+            )
+            (zip patterns [(1 :: Int) ..])
 
     pure (concat patternsLets, cond : concat patternsConds)
 generateCondition _ HLIR.MkPatternWildcard = pure ([], [])
@@ -373,14 +406,16 @@ generateCondition x (HLIR.MkPatternLiteral l) = do
             HLIR.MkLitBool{} -> "=="
             HLIR.MkLitFloat{} -> "=="
 
-        cond = MLIR.MkExprApplication
+        cond =
+            MLIR.MkExprApplication
                 (MLIR.MkExprVariable fun)
                 [x, MLIR.MkExprLiteral l]
     pure ([], [cond])
 generateCondition x (HLIR.MkPatternStructure _ fields) = do
-    (fieldsLets, fieldsConds) <-  mapAndUnzipM
-        (\(name, p) -> generateCondition (MLIR.MkExprStructureAccess x name) p)
-        (Map.toList fields)
+    (fieldsLets, fieldsConds) <-
+        mapAndUnzipM
+            (\(name, p) -> generateCondition (MLIR.MkExprStructureAccess x name) p)
+            (Map.toList fields)
     pure (concat fieldsLets, concat fieldsConds)
 
 {-# NOINLINE symbolCounter #-}

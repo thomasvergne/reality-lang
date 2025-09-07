@@ -47,7 +47,8 @@ codegenToplevel (MLIR.MkTopFunction name params ret body) = do
     paramList <-
         Text.intercalate ", "
             <$> mapM
-                (\(MLIR.MkAnnotation paramName ty) -> codegenType True (Just (varify paramName)) [] ty)
+                ( \(MLIR.MkAnnotation paramName ty) -> codegenType True (Just (varify paramName)) [] ty
+                )
                 params
     retType <- codegenType True Nothing [] ret
     let funcHeader = Text.concat [retType, " ", varify name, "(", paramList, ") {"]
@@ -75,15 +76,15 @@ codegenToplevel (MLIR.MkTopStructure name fields) = do
     pure $ Text.unlines ([structHeader] ++ fieldLines ++ [structFooter])
 codegenToplevel (MLIR.MkTopExternalFunction name generics params ret) = do
     paramList <-
-        Text.intercalate ", " <$>
-            mapM (codegenType True Nothing generics) params
+        Text.intercalate ", "
+            <$> mapM (codegenType True Nothing generics) params
     retType <- codegenType True (Just name) generics ret
     pure $ Text.concat ["extern ", retType, "(", paramList, ");"]
 codegenToplevel (MLIR.MkTopExternalVariable name ty) = do
     varType <- codegenType True (Just name) [] ty
     pure $ Text.concat ["extern ", varType, ";"]
 
-codegenField :: MonadIO m => MLIR.StructureMember -> m Text
+codegenField :: (MonadIO m) => MLIR.StructureMember -> m Text
 codegenField (MLIR.MkStructField name ty) = do
     tyStr <- codegenType False (Just (varify name)) [] ty
     pure $ Text.concat [tyStr, ";"]
@@ -91,12 +92,14 @@ codegenField (MLIR.MkStructStruct name fields) = do
     fieldLines <- mapM codegenField fields
     let structHeader = "struct {"
     let structFooter = "} " <> varify name <> ";"
-    pure $ Text.unlines ([structHeader] ++ map ("    " <>) fieldLines ++ [structFooter])
+    pure
+        $ Text.unlines ([structHeader] ++ map ("    " <>) fieldLines ++ [structFooter])
 codegenField (MLIR.MkStructUnion name fields) = do
     fieldLines <- mapM codegenField fields
     let unionHeader = "union {"
     let unionFooter = "} " <> varify name <> ";"
-    pure $ Text.unlines ([unionHeader] ++ map ("    " <>) fieldLines ++ [unionFooter])
+    pure
+        $ Text.unlines ([unionHeader] ++ map ("    " <>) fieldLines ++ [unionFooter])
 
 -- | Convert a single MLIR expression to C code lines.
 -- | This function takes an expression, and returns a list of C code lines.
@@ -222,7 +225,13 @@ codegenType _ def _ (MLIR.MkTyId n) = do
     when (typeName `Set.member` userTypes && typedef `notElem` typedefs') $ do
         modifyIORef' typedefs (<> [typedef])
 
-    pure $ Text.concat [if typeName `Set.member` userTypes then "struct " else "", typeName, " ", fromMaybe "" def]
+    pure
+        $ Text.concat
+            [ if typeName `Set.member` userTypes then "struct " else ""
+            , typeName
+            , " "
+            , fromMaybe "" def
+            ]
 codegenType shouldPutEnv def _ (MLIR.MkTyVar tv) = do
     let tvr = IO.unsafePerformIO $ readIORef tv
 
@@ -264,7 +273,10 @@ codegenType shouldPutEnv def generics (MLIR.MkTyAnonymousStructure _ n _) = do
 
     pure $ Text.concat [n', " ", fromMaybe "" def]
 codegenType _ _ _ (MLIR.MkTyQuantified _) = pure "void*"
-codegenType _ _ _ t@(MLIR.MkTyApp _ _) = Err.compilerError $ "Type applications are not directly supported in C codegen: " <> Text.pack (show t)
+codegenType _ _ _ t@(MLIR.MkTyApp _ _) =
+    Err.compilerError
+        $ "Type applications are not directly supported in C codegen: "
+            <> Text.pack (show t)
 
 isLambdaEnv :: MLIR.Type -> Bool
 isLambdaEnv (MLIR.MkTyId n) | "closure" `Text.isPrefixOf` n = True
@@ -278,56 +290,57 @@ varify :: Text -> Text
 varify n | n `Set.member` cKeywords = Text.concat ["_", n]
 varify n =
     Text.concatMap
-        (\x' -> if isIdent x' then toText [x'] else fromString (show (ord x'))) n
+        (\x' -> if isIdent x' then toText [x'] else fromString (show (ord x')))
+        n
 
 cKeywords :: Set Text
 cKeywords =
     Set.fromList
-    [ "auto"
-    , "break"
-    , "case"
-    , "char"
-    , "const"
-    , "continue"
-    , "default"
-    , "do"
-    , "double"
-    , "else"
-    , "enum"
-    , "extern"
-    , "float"
-    , "for"
-    , "goto"
-    , "if"
-    , "inline"
-    , "int"
-    , "long"
-    , "register"
-    , "restrict"
-    , "return"
-    , "short"
-    , "signed"
-    , "sizeof"
-    , "static"
-    , "struct"
-    , "switch"
-    , "typedef"
-    , "union"
-    , "unsigned"
-    , "void"
-    , "volatile"
-    , "while"
-    , "_Alignas"
-    , "_Alignof"
-    , "_Atomic"
-    , "_Bool"
-    , "_Complex"
-    , "_Generic"
-    , "_Imaginary"
-    , "_Noreturn"
-    , "_Static_assert"
-    , "_Thread_local"
-    ]
+        [ "auto"
+        , "break"
+        , "case"
+        , "char"
+        , "const"
+        , "continue"
+        , "default"
+        , "do"
+        , "double"
+        , "else"
+        , "enum"
+        , "extern"
+        , "float"
+        , "for"
+        , "goto"
+        , "if"
+        , "inline"
+        , "int"
+        , "long"
+        , "register"
+        , "restrict"
+        , "return"
+        , "short"
+        , "signed"
+        , "sizeof"
+        , "static"
+        , "struct"
+        , "switch"
+        , "typedef"
+        , "union"
+        , "unsigned"
+        , "void"
+        , "volatile"
+        , "while"
+        , "_Alignas"
+        , "_Alignof"
+        , "_Atomic"
+        , "_Bool"
+        , "_Complex"
+        , "_Generic"
+        , "_Imaginary"
+        , "_Noreturn"
+        , "_Static_assert"
+        , "_Thread_local"
+        ]
 
 getMultipleTimesPointer :: MLIR.Type -> (MLIR.Type, Int)
 getMultipleTimesPointer (MLIR.MkTyPointer ty) =

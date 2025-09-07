@@ -273,7 +273,7 @@ convertSingularNode (HLIR.MkTopAnnotation exprs node) = do
     ns <- convertSingularNode node
 
     case exprs of
-        (x:_) | Just "intrinsic" <- HLIR.getFirstAnnotationArgument x -> pure []
+        (x : _) | Just "intrinsic" <- HLIR.getFirstAnnotationArgument x -> pure []
         _ -> pure ns
 convertSingularNode (HLIR.MkTopEnumeration header constructors) = do
     let typeHeader = HLIR.MkTyId header.name
@@ -445,18 +445,31 @@ convertExpression e@(HLIR.MkExprVariable (HLIR.MkAnnotation name (Identity ty)) 
 
     (expr, ns', exprTy) <- case Map.lookup name (globals' <> natives') of
         Just (HLIR.MkTyFun args retTy) -> do
-            let function = HLIR.MkExprLambda
-                    { HLIR.parameters = zipWith (\i ty' -> HLIR.MkAnnotation ("arg" <> show i) (Identity ty')) [(0 :: Int)..] args
-                    , HLIR.returnType = Identity retTy
-                    , HLIR.body = HLIR.MkExprApplication
-                        { HLIR.callee = HLIR.MkExprVariable (HLIR.MkAnnotation name (Identity (HLIR.MkTyFun args retTy))) []
-                        , HLIR.arguments = zipWith (\i ty' -> HLIR.MkExprVariable (HLIR.MkAnnotation ("arg" <> show i) (Identity ty')) []) [(0 :: Int)..] args
+            let function =
+                    HLIR.MkExprLambda
+                        { HLIR.parameters =
+                            zipWith
+                                (\i ty' -> HLIR.MkAnnotation ("arg" <> show i) (Identity ty'))
+                                [(0 :: Int) ..]
+                                args
                         , HLIR.returnType = Identity retTy
+                        , HLIR.body =
+                            HLIR.MkExprApplication
+                                { HLIR.callee =
+                                    HLIR.MkExprVariable
+                                        (HLIR.MkAnnotation name (Identity (HLIR.MkTyFun args retTy)))
+                                        []
+                                , HLIR.arguments =
+                                    zipWith
+                                        ( \i ty' -> HLIR.MkExprVariable (HLIR.MkAnnotation ("arg" <> show i) (Identity ty')) []
+                                        )
+                                        [(0 :: Int) ..]
+                                        args
+                                , HLIR.returnType = Identity retTy
+                                }
                         }
-                    }
 
             convertExpression function
-
         _ -> pure (e, [], ty)
 
     case Map.lookup name variables of
@@ -521,12 +534,10 @@ convertExpression (HLIR.MkExprStructureAccess struct field) = do
             Just structName | Just fields <- Map.lookup structName structures' ->
                 case Map.lookup field fields of
                     Just ty -> pure (HLIR.MkExprStructureAccess newStruct field, ns, ty)
-
                     -- If the field is not found, we raise a compiler error
                     Nothing ->
                         M.compilerError
                             $ "Field " <> field <> " does not exist in structure " <> structName
-
             -- If the structure is not found, we raise a compiler error
             _ -> M.compilerError $ "Expected a structure type: " <> show structTy
 convertExpression (HLIR.MkExprStructureCreation ann fields) = do
@@ -587,10 +598,14 @@ convertExpression (HLIR.MkExprWhile cond body _ inExpr) = do
 convertExpression (HLIR.MkExprIfIs expr pat thenB elseB _) = do
     (newExpr, ns1, _) <- convertExpression expr
     (newThen, ns2, thenTy) <- convertExpression thenB
-    (newElse, ns3, _) <- maybe (pure (Nothing, [], thenTy)) (\x -> do
-        (e, nse, ety) <- convertExpression x
-        pure (Just e, nse, ety)
-        ) elseB
+    (newElse, ns3, _) <-
+        maybe
+            (pure (Nothing, [], thenTy))
+            ( \x -> do
+                (e, nse, ety) <- convertExpression x
+                pure (Just e, nse, ety)
+            )
+            elseB
 
     pure
         ( HLIR.MkExprIfIs newExpr pat newThen newElse (Identity thenTy)
@@ -699,7 +714,6 @@ convertLambda (HLIR.MkExprLambda args _ body) reserved = do
                 )
                 newBody
                 (Map.toList environment)
-
 
     -- Converting the argument types to their closure-converted form
     (ns1, typedArguments) <-

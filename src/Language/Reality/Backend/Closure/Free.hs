@@ -22,12 +22,10 @@ instance Free (HLIR.Expression Identity HLIR.Type) where
     free (HLIR.MkExprApplication f args _) = free f <> free args
     free (HLIR.MkExprVariable ann _) = Map.singleton ann.name ann.typeValue.runIdentity
     free (HLIR.MkExprLiteral _) = Map.empty
-
     -- We exclude parameters from the free variables of a lambda
     -- because they are bound variables.
     free (HLIR.MkExprLambda params _ body) =
         free body Map.\\ Map.fromList (map HLIR.unannotate params)
-
     -- Same rule applies for let-in bindings as name is a bound variable.
     free (HLIR.MkExprLetIn binding value inExpr _) =
         (free value <> free inExpr)
