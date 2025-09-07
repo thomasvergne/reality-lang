@@ -612,6 +612,23 @@ convertExpression (HLIR.MkExprIfIs expr pat thenB elseB _) = do
         , ns1 <> ns2 <> ns3
         , thenTy
         )
+convertExpression (HLIR.MkExprFunctionAccess{}) =
+    M.compilerError
+        "Function access should have been inlined before closure conversion"
+convertExpression (HLIR.MkExprWhileIs expr pat body _ inExpr) = do
+    (newExpr, ns1, _) <- convertExpression expr
+    (newBody, ns2, _) <- convertExpression body
+    (newInExpr, ns3, inTy) <- convertExpression inExpr
+    pure
+        ( HLIR.MkExprWhileIs newExpr pat newBody (Identity inTy) newInExpr
+        , ns1 <> ns2 <> ns3
+        , inTy
+        )
+convertExpression (HLIR.MkExprReturn e) = do
+    (newE, ns, eTy) <- convertExpression e
+    pure (HLIR.MkExprReturn newE, ns, eTy)
+convertExpression HLIR.MkExprContinue = pure (HLIR.MkExprContinue, [], HLIR.MkTyId "void")
+convertExpression HLIR.MkExprBreak = pure (HLIR.MkExprBreak, [], HLIR.MkTyId "void")
 
 -- | Convert a lambda expression to a closure-converted expression.
 -- | This function takes a lambda expression, and returns an expression with closures

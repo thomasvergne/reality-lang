@@ -44,6 +44,12 @@ instance Free (HLIR.Expression Identity HLIR.Type) where
     free (HLIR.MkExprWhile cond body _ inExpr) = free cond <> free body <> free inExpr
     free (HLIR.MkExprIfIs expr pat thenBr elseBr _) =
         (free expr <> free thenBr <> free elseBr) Map.\\ free pat
+    free (HLIR.MkExprFunctionAccess _ this exprs) = free this <> free exprs
+    free (HLIR.MkExprWhileIs expr pat body _ inExpr) =
+        (free expr <> free body <> free inExpr) Map.\\ free pat
+    free (HLIR.MkExprReturn e) = free e
+    free HLIR.MkExprBreak = Map.empty
+    free HLIR.MkExprContinue = Map.empty
 
 instance Free (HLIR.Pattern Identity HLIR.Type) where
     free (HLIR.MkPatternVariable _) = mempty

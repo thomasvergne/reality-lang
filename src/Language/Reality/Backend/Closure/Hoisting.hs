@@ -155,6 +155,21 @@ hoistLambdasInExpr (HLIR.MkExprIfIs expr ty thenB elseB branchType) = do
         ( HLIR.MkExprIfIs newExpr ty newThenB newElseB branchType
         , hoistedExpr ++ hoistedThenB ++ hoistedElseB
         )
+hoistLambdasInExpr (HLIR.MkExprWhileIs expr pat body loopType inExpr) = do
+    (newExpr, hoistedExpr) <- hoistLambdasInExpr expr
+    (newBody, hoistedBody) <- hoistLambdasInExpr body
+    (newInExpr, hoistedInExpr) <- hoistLambdasInExpr inExpr
+
+    pure
+        ( HLIR.MkExprWhileIs newExpr pat newBody loopType newInExpr
+        , hoistedExpr ++ hoistedBody ++ hoistedInExpr
+        )
+hoistLambdasInExpr (HLIR.MkExprReturn e) = do
+    (newE, hoistedE) <- hoistLambdasInExpr e
+    pure (HLIR.MkExprReturn newE, hoistedE)
+hoistLambdasInExpr HLIR.MkExprBreak = pure (HLIR.MkExprBreak, [])
+hoistLambdasInExpr HLIR.MkExprContinue = pure (HLIR.MkExprContinue, [])
+hoistLambdasInExpr expr = pure (expr, [])
 
 {-# NOINLINE symbolCounter #-}
 symbolCounter :: IORef Int
