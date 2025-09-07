@@ -175,6 +175,13 @@ convertToplevel (HLIR.MkTopEnumeration header constructors) = do
                 structType
                 bodyExpr
 
+isCFStatement :: HLIR.TLIR "expression" -> Bool
+isCFStatement (HLIR.MkExprReturn _) = True
+isCFStatement HLIR.MkExprBreak = True
+isCFStatement HLIR.MkExprContinue = True
+isCFStatement (HLIR.MkExprLocated _ e) = isCFStatement e
+isCFStatement _ = False
+
 -- | Convert a HLIR expression to a MLIR expression in ANF.
 -- | This function takes a HLIR expression, and returns a MLIR expression.
 convertExpression ::
@@ -191,36 +198,19 @@ convertExpression (HLIR.MkExprApplication f args _) = do
 
 -- If encountering empty let-binding (used for sequencing), ignore the name
 -- and just convert the value and inExpr.
-convertExpression (HLIR.MkExprLetIn (HLIR.MkAnnotation "_" _) value inExpr ret) = do
+convertExpression (HLIR.MkExprLetIn (HLIR.MkAnnotation "_" _) value inExpr _) = do
     (value', l1) <- convertExpression value
     (inExpr', l2) <- convertExpression inExpr
 
-    newVariable <- freshSymbol
-
-    let newLet = MLIR.MkExprLet newVariable ret.runIdentity (Just inExpr')
-
-    pure (MLIR.MkExprVariable newVariable, l1 ++ [value'] ++ l2 ++ [newLet])
-convertExpression (HLIR.MkExprLetIn binding value inExpr ret) = do
+    pure (inExpr', l1 ++ [value'] ++ l2)
+convertExpression (HLIR.MkExprLetIn binding value inExpr _) = do
     (value', l1) <- convertExpression value
     (inExpr', l2) <- convertExpression inExpr
 
-    -- Creating a fresh symbol for storing the result of the inExpr.
-    -- This is necessary to ensure that the variable name is unique
-    -- and does not clash with any other variable names in the scope.
-    newVariable <- freshSymbol
-
-    -- Creating the let bindings.
-    -- The first let binding is for the inExpr, which binds the result
-    -- of the inExpr to the new variable.
-    -- The second let binding is for the original binding, which binds
-    -- the value to the original variable name.
-    let newLet = MLIR.MkExprLet newVariable ret.runIdentity (Just inExpr')
-        letBinding = MLIR.MkExprLet binding.name binding.typeValue.runIdentity (Just value')
-
-    -- Returning the new variable and the list of let bindings.
-    -- The order of the let bindings is important, as the inExpr
-    -- must be evaluated after the value.
-    pure (MLIR.MkExprVariable newVariable, l1 ++ [letBinding] ++ l2 ++ [newLet])
+    -- If the inExpr is a control flow statement (return, break, continue),
+    -- we don't need to create a new variable for it, as it will not be used.
+    let letBinding = MLIR.MkExprLet binding.name binding.typeValue.runIdentity (Just value')
+    pure (inExpr', l1 ++ [letBinding] ++ l2)
 convertExpression (HLIR.MkExprCondition cond thenB elseB branchTy) = do
     -- Converting the condition, then branch and else branch.
     (cond', l1) <- convertExpression cond
@@ -250,10 +240,14 @@ convertExpression (HLIR.MkExprStructureAccess struct field) = do
     pure (access, l1)
 convertExpression (HLIR.MkExprStructureCreation ann fields) = do
     (fieldExprs, l2s) <- mapAndUnzipM convertExpression (Map.elems fields)
+
     let fieldNames = Map.keys fields
+
     newVariable <- freshSymbol
+
     let structCreation = MLIR.MkExprStructureCreation ann (Map.fromList (zip fieldNames fieldExprs))
         letBinding = MLIR.MkExprLet newVariable ann (Just structCreation)
+
     pure (MLIR.MkExprVariable newVariable, concat l2s ++ [letBinding])
 convertExpression (HLIR.MkExprDereference e _) = do
     (e', l1) <- convertExpression e
@@ -318,17 +312,15 @@ convertExpression (HLIR.MkExprLambda{}) =
 convertExpression (HLIR.MkExprCast e t) = do
     (e', l1) <- convertExpression e
     pure (MLIR.MkExprCast t e', l1)
-convertExpression (HLIR.MkExprWhile cond body inTy inExpr) = do
+convertExpression (HLIR.MkExprWhile cond body _ inExpr) = do
     (cond', l1) <- convertExpression cond
     (body', l2) <- convertExpression body
     (inExpr', l3) <- convertExpression inExpr
 
-    newVariable <- freshSymbol
-    let var = MLIR.MkExprVariable newVariable
     let bl = MLIR.MkExprBlock (l2 ++ [body'])
-    let def = MLIR.MkExprLet newVariable inTy.runIdentity (Just inExpr')
-    let whileExpr = MLIR.MkExprWhile cond' bl
-    pure (var, l1 ++ [whileExpr] ++ l3 ++ [def])
+        whileExpr = MLIR.MkExprWhile cond' bl
+
+    pure (inExpr', l1 ++ [whileExpr] ++ l3)
 convertExpression (HLIR.MkExprIfIs expr pat thenB elseB branchTy) = do
     (expr', l1) <- convertExpression expr
     (thenB', l2) <- convertExpression thenB
@@ -357,6 +349,32 @@ convertExpression (HLIR.MkExprIfIs expr pat thenB elseB branchTy) = do
             Nothing -> MLIR.MkExprBlock []
 
     pure (var, l1 ++ [def, ifExpr])
+convertExpression (HLIR.MkExprFunctionAccess{}) =
+    Err.compilerError
+        "Method calls should have been converted to function calls before ANF conversion."
+convertExpression (HLIR.MkExprWhileIs expr pat body _ inExpr) = do
+    (expr', l1) <- convertExpression expr
+    (body', l2) <- convertExpression body
+    (inExpr', l3) <- convertExpression inExpr
+
+    (lets, conds) <- generateCondition expr' pat
+
+    let cond =
+            List.foldr1
+                (\a b -> MLIR.MkExprApplication (MLIR.MkExprVariable "&&") [a, b])
+                conds
+
+    let bl =
+            MLIR.MkExprBlock
+                (map (\(name, ty, v) -> MLIR.MkExprLet name ty (Just v)) lets ++ l2 ++ [body'])
+    let whileExpr = MLIR.MkExprWhile cond bl
+
+    pure (inExpr', l1 ++ [whileExpr] ++ l3)
+convertExpression (HLIR.MkExprReturn e) = do
+    (e', l1) <- convertExpression e
+    pure (MLIR.MkExprReturn e', l1)
+convertExpression HLIR.MkExprBreak = pure (MLIR.MkExprBreak, [])
+convertExpression HLIR.MkExprContinue = pure (MLIR.MkExprContinue, [])
 
 type Lets = [(Text, MLIR.Type, MLIR.Expression)]
 type Conditions = [MLIR.Expression]
