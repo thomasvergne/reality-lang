@@ -151,6 +151,9 @@ resolveSpecializationSingular (HLIR.MkTopStructureDeclaration ann fields)
         if Set.member ann.name rememberedStructs
             then pure (Nothing, [])
             else do
+                modifyIORef' defaultSpecializer $ \s ->
+                    s{rememberedStructures = Set.insert ann.name s.rememberedStructures}
+
                 (specFields, newDefs) <-
                     mapAndUnzipM
                         ( \(name, ty) -> do
@@ -161,9 +164,6 @@ resolveSpecializationSingular (HLIR.MkTopStructureDeclaration ann fields)
 
                 let fieldMap = Map.fromList specFields
                     allNewDefs = concat newDefs
-
-                modifyIORef' defaultSpecializer $ \s ->
-                    s{rememberedStructures = Set.insert ann.name s.rememberedStructures}
 
                 pure (Just $ HLIR.MkTopStructureDeclaration ann fieldMap, allNewDefs)
     | otherwise = do
@@ -682,7 +682,7 @@ resolveSpecializationForIdentifier (HLIR.MkAnnotation name (Identity ty)) = do
                         else do
                             -- Marking this specialization as created
                             modifyIORef' defaultSpecializer $ \s ->
-                                s{rememberedEnumerations = Set.insert newEnumName s.rememberedVariables}
+                                s{rememberedEnumerations = Set.insert newEnumName s.rememberedEnumerations}
 
                             let header' = HLIR.MkAnnotation newEnumName []
 
@@ -701,7 +701,6 @@ resolveSpecializationForIdentifier (HLIR.MkAnnotation name (Identity ty)) = do
                             let ns = concat nss <> [newEnum]
 
                             pure (HLIR.MkAnnotation newVarName (Identity schemeType), ns, True)
-
 
                 _ -> M.throw (M.VariableNotFound name)
         Nothing -> resolveSpecializationForImplementation name ty
@@ -930,7 +929,7 @@ maybeResolveStructure name args = do
     -- If found, we proceed to specialize it
     -- If not found, we assume it's a regular type and return it as is
     case Map.lookup name specState.structures of
-        Just scheme@(HLIR.Forall _ instMap) -> do
+        Just scheme@(HLIR.Forall qvars instMap) -> do
             -- Instantiating the scheme to get a concrete type and a substitution
             -- that maps the quantified variables to concrete types.
             (_, sub) <- M.instantiateMapAndSub scheme
@@ -944,21 +943,11 @@ maybeResolveStructure name args = do
             -- to the provided type arguments
             let s = Map.fromList (zip (Map.keys sub) args) <> sub
 
-            -- Applying the substitution to each field type in the structure
-            -- and recursively resolving specializations in those types
-            -- This ensures that nested specializations are also handled correctly
-            -- The result is a list of specialized fields and any new toplevel definitions
-            -- that were created during the specialization process
-            (ns, specializedFields) <-
-                sequence
-                    <$> Map.traverseWithKey
-                        (\_ ty -> swap <$> (resolveSpecializationInType =<< M.applySubstitution s ty))
-                        instMap
-
             -- Creating a unique name for the specialized structure
             -- This is done by appending the type arguments to the original name
             -- (e.g., MyStruct_Int_Bool for MyStruct<Int, Bool>)
-            let specName = name <> "_" <> Text.intercalate "_" (map toText args)
+            let orderedVars = flip map qvars $ \var -> Map.findWithDefault (HLIR.MkTyQuantified var) var s
+            let specName = name <> "_" <> Text.intercalate "_" (map toText orderedVars)
 
             -- Checking if we have already created this specialization
             -- to avoid duplicating work
@@ -968,6 +957,22 @@ maybeResolveStructure name args = do
             if Set.member specName specState.rememberedStructures
                 then pure (HLIR.MkTyId specName, [])
                 else do
+                    modifyIORef' defaultSpecializer $ \s' ->
+                        s'{ rememberedStructures = Set.insert specName s'.rememberedStructures
+                          , structures = Map.insert specName (HLIR.Forall [] Map.empty) s'.structures
+                          }
+
+                    -- Applying the substitution to each field type in the structure
+                    -- and recursively resolving specializations in those types
+                    -- This ensures that nested specializations are also handled correctly
+                    -- The result is a list of specialized fields and any new toplevel definitions
+                    -- that were created during the specialization process
+                    (ns, specializedFields) <-
+                        sequence
+                            <$> Map.traverseWithKey
+                                (\_ ty -> swap <$> (resolveSpecializationInType =<< M.applySubstitution s ty))
+                                instMap
+
                     -- Creating the new specialized structure declaration
                     -- with the new name and specialized fields
                     -- This declaration is added to the list of new toplevel definitions
@@ -983,14 +988,11 @@ maybeResolveStructure name args = do
                     -- This is crucial for maintaining the integrity of the specialization process
                     -- and ensuring that subsequent requests for the same specialization
                     -- are handled efficiently
-                    let newSpecializer =
-                            specState
-                                { structures =
-                                    Map.insert specName (HLIR.Forall [] specializedFields) specState.structures
-                                , rememberedStructures = Set.insert specName specState.rememberedStructures
-                                }
-
-                    writeIORef defaultSpecializer newSpecializer
+                    modifyIORef' defaultSpecializer $ \s' ->
+                        s'
+                            { structures =
+                                Map.insert specName (HLIR.Forall [] specializedFields) s'.structures
+                            }
 
                     pure (HLIR.MkTyId specName, ns ++ [newStruct])
         Nothing -> maybeResolveEnumeration name args
@@ -1005,11 +1007,6 @@ maybeResolveEnumeration name args = do
 
     case Map.lookup name specState.enumerations of
         Just scheme@(HLIR.Forall _ instMap) -> do
-            (typedArgs, nss) <-
-                mapAndUnzipM
-                    resolveSpecializationInType
-                    args
-
             -- Instantiating the scheme to get a concrete type and a substitution
             -- that maps the quantified variables to concrete types.
             (_, sub) <- M.instantiateMapAndSub scheme
@@ -1021,13 +1018,14 @@ maybeResolveEnumeration name args = do
 
             -- Creating a substitution map that maps the enumeration's type variables
             -- to the provided type arguments
-            let s = Map.fromList (zip (Map.keys sub) typedArgs) <> sub
-
+            let s = Map.fromList (zip (Map.keys sub) args) <> sub
 
             -- Creating a unique name for the specialized enumeration
-            -- This is done by appending the type arguments to the original name
-            -- (e.g., MyEnum_Int_Bool for MyEnum<Int, Bool>)
-            let specName = name <> "_" <> Text.intercalate "_" (map toText typedArgs)
+            -- This is done by re-ordering the scheme variables and using the
+            -- substitution `s` so the naming is consistent with other places
+            -- that generate specialization names (avoids mismatched naming)
+            let orderedVars = flip map (Map.keys sub) $ \var -> Map.findWithDefault (HLIR.MkTyQuantified var) var s
+                specName = name <> "_" <> Text.intercalate "_" (map toText orderedVars)
 
             -- Checking if we have already created this specialization
             -- to avoid duplicating work
@@ -1035,7 +1033,7 @@ maybeResolveEnumeration name args = do
             -- If it does not exist, we create a new enumeration declaration
             -- and update the specializer state accordingly
             if Set.member specName specState.rememberedEnumerations
-                then pure (HLIR.MkTyId specName, concat nss)
+                then pure (HLIR.MkTyId specName, [])
                 else do
                     modifyIORef' defaultSpecializer $ \s' ->
                         s'{rememberedEnumerations = Set.insert specName s'.rememberedEnumerations}
@@ -1052,12 +1050,13 @@ maybeResolveEnumeration name args = do
                                 ( \(n, ty') -> do
                                     sTy <- M.applySubstitution s ty'
                                     (finalTy, ns') <- resolveSpecializationInType sTy
-                                    pure (ns', (n <> "_" <> Text.intercalate "_" (map toText typedArgs), finalTy))
+                                    pure (ns', (n <> "_" <> Text.intercalate "_" (map toText orderedVars), finalTy))
                                 )
 
                     let fieldsWithTypeAsArray = flip Map.map (Map.fromList specializedConstructors) $ \case
                             (tys HLIR.:->: _) -> Just tys
                             _ -> Nothing
+
 
                     -- Creating the new specialized enumeration declaration
                     -- with the new name and specialized constructors
@@ -1076,10 +1075,10 @@ maybeResolveEnumeration name args = do
                     -- are handled efficiently
 
                     modifyIORef' defaultSpecializer $ \s' -> s' { enumerations =
-                        Map.insert specName (HLIR.Forall [] (Map.fromList specializedConstructors)) specState.enumerations
+                        Map.insert specName (HLIR.Forall [] (Map.fromList specializedConstructors)) s'.enumerations
                     }
 
-                    pure (HLIR.MkTyId specName, ns ++ concat nss ++ [newEnum])
+                    pure (HLIR.MkTyId specName, ns ++ [newEnum])
         Nothing -> do
             -- Creating the type header based on whether there are arguments or not
             -- (e.g., MyStruct or MyStruct<T1, T2>)
