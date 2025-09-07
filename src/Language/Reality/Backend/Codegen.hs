@@ -54,9 +54,10 @@ codegenToplevel (MLIR.MkTopFunction name params ret body) = do
     let funcHeader = Text.concat [retType, " ", varify name, "(", paramList, ") {"]
     funcBody <- mapM codegenExpression body
     let funcFooter = ["}"]
-    let insertedReturn = case unsnoc funcBody of
-            Just (initLines, lastLine) -> map (<> ";") initLines <> [Text.concat ["    return ", lastLine, ";"]]
-            Nothing -> []
+    let insertedReturn = case (unsnoc funcBody, unsnoc body) of
+            (Just (initLines, lastLine), Just (_, MLIR.MkExprReturn _)) -> map (<> ";") initLines <> [Text.concat ["    ", lastLine, ";"]]
+            (Just (initLines, lastLine), _) -> map (<> ";") initLines <> [Text.concat ["    return ", lastLine, ";"]]
+            (Nothing, _) -> []
     pure $ Text.concat ([funcHeader] ++ insertedReturn ++ funcFooter)
 codegenToplevel (MLIR.MkTopGlobal name ty (Just expr)) = do
     constType <- codegenType True (Just name) [] ty
@@ -168,6 +169,11 @@ codegenExpression (MLIR.MkExprWhile cond body) = do
     condExpr <- codegenExpression cond
     bodyExpr <- codegenExpression body
     pure $ Text.concat ["while (", condExpr, ") { ", bodyExpr, " } "]
+codegenExpression (MLIR.MkExprReturn e) = do
+    eStr <- codegenExpression e
+    pure $ Text.concat ["return ", eStr]
+codegenExpression MLIR.MkExprBreak = pure "break"
+codegenExpression MLIR.MkExprContinue = pure "continue"
 
 -- | Convert a single MLIR literal to a C code string.
 -- | This function takes a literal, and returns a C code string.
