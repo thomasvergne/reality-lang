@@ -183,6 +183,34 @@ handle (Left (err, pos@(p1, _))) _ = liftIO $ do
                 , pos
                 )
                 "Resolution"
+        NoFunctionInStructure name ty ->
+            printErrorFromString
+                Nothing
+                ( "Functions are not permitted in structures (got field "
+                    <> show name
+                    <> ": "
+                    <> show (toText ty)
+                    <> ")"
+                , Just "use instead properties or functions outside structures"
+                , pos
+                )
+                "Resolution"
+        ReturnOutsideFunction ->
+            printErrorFromString
+                Nothing
+                ( "Return statement outside of a function"
+                , Just "ensure the return statement is inside a function body"
+                , pos
+                )
+                "Resolution"
+        BreakOutsideLoop ->
+            printErrorFromString
+                Nothing
+                ( "Break or continue statement outside of a loop"
+                , Just "ensure the break statement is inside a loop body"
+                , pos
+                )
+                "Resolution"
 
 type ImportStack = [FilePath]
 
@@ -214,6 +242,9 @@ data BonzaiError
     | PropertyNotFound Text
     | UnsolvedConstraints TC.Constraints
     | ImplementationNotFound Text HLIR.Type
+    | NoFunctionInStructure Text HLIR.Type
+    | ReturnOutsideFunction
+    | BreakOutsideLoop
     deriving (Eq, Generic)
 
 instance Show BonzaiError where
@@ -267,6 +298,14 @@ instance Show BonzaiError where
             <> " and type "
             <> show (toText ty)
             <> " not found"
+    show (NoFunctionInStructure name ty) =
+        "Functions are not permitted in structures (got field "
+            <> show name
+            <> ": "
+            <> show (toText ty)
+            <> ")"
+    show ReturnOutsideFunction = "Return statement outside of a function"
+    show BreakOutsideLoop = "Break or continue statement outside of a loop"
 
 showError :: P.ParseError -> String
 showError = P.errorBundlePretty
