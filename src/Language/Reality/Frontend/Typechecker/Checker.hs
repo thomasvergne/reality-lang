@@ -70,7 +70,7 @@ checkToplevelSingular (HLIR.MkTopFunctionDeclaration ann params ret body) = do
             }
 
     -- Collecting old environment to restore it later
-    oldEnv <- readIORef M.defaultCheckerState <&> M.environment
+    oldEnv <- readIORef M.defaultCheckerState
 
     -- Adding parameters to the environment
     modifyIORef' M.defaultCheckerState $ \s ->
@@ -82,6 +82,7 @@ checkToplevelSingular (HLIR.MkTopFunctionDeclaration ann params ret body) = do
                     )
                     s.environment
                     newParams
+            , M.returnType = Just retType
             }
 
     -- Checking the function body against the return type
@@ -93,7 +94,8 @@ checkToplevelSingular (HLIR.MkTopFunctionDeclaration ann params ret body) = do
     -- Restoring the old environment
     modifyIORef' M.defaultCheckerState $ \s ->
         s
-            { M.environment = oldEnv
+            { M.environment = oldEnv.environment
+            , M.returnType = oldEnv.returnType
             }
 
     pure (HLIR.MkTopFunctionDeclaration ann newParams retType typedBody)
@@ -121,6 +123,10 @@ checkToplevelSingular (HLIR.MkTopModuleDeclaration{}) = M.throw (M.CompilerError
 checkToplevelSingular (HLIR.MkTopStructureDeclaration ann fields) = do
     -- Removing aliases from the field types
     fieldTypes <- traverse M.performAliasRemoval fields
+
+    forM_ fieldTypes $ \ty -> do
+        isFunction <- isFunctionType ty
+        when isFunction $ M.throw (M.NoFunctionInStructure ann.name ty)
 
     -- Adding the structure to the environment
     modifyIORef' M.defaultCheckerState $ \s ->
@@ -183,7 +189,7 @@ checkToplevelSingular (HLIR.MkTopImplementation forType header params returnType
     expectedPropType <- M.instantiate scheme >>= M.performAliasRemoval
     expectedImplType <- M.instantiate implScheme >>= M.performAliasRemoval
 
-    void $ expectedPropType `M.isSubtypeOf` expectedImplType
+    void $ expectedImplType `M.isSubtypeOf` expectedPropType
 
     -- Adding the implementation to the environment
     modifyIORef' M.defaultCheckerState $ \s ->
@@ -201,10 +207,23 @@ checkToplevelSingular (HLIR.MkTopImplementation forType header params returnType
             Map.fromList (map ((HLIR.Forall [] <$>) . HLIR.unannotate) newParams)
                 <> Map.singleton forType.name (HLIR.Forall [] aliasedForType)
 
+    oldEnv <- readIORef M.defaultCheckerState
+    modifyIORef' M.defaultCheckerState $ \s ->
+        s
+            { M.environment = env <> s.environment
+            , M.returnType = Just aliasedReturnType
+            }
+
     -- Checking the function body against the return type
     -- We use `withEnvironment` to temporarily extend the environment
     -- with the parameters and for type while checking the body.
-    (newBody, cs) <- M.withEnvironment env $ checkE aliasedReturnType body
+    (newBody, cs) <- checkE aliasedReturnType body
+
+    modifyIORef' M.defaultCheckerState $ \s ->
+        s
+            { M.environment = oldEnv.environment
+            , M.returnType = oldEnv.returnType
+            }
 
     -- Solving constraints generated during the body checking
     solveConstraints cs
@@ -396,7 +415,7 @@ synthesizeE (HLIR.MkExprLambda params ret body) = do
     let paramAnnotations = zipWith (\p ty -> p{HLIR.typeValue = Identity ty}) params paramTypes
 
     -- Collecting old environment to restore it later
-    oldEnv <- readIORef M.defaultCheckerState <&> M.environment
+    oldEnv <- readIORef M.defaultCheckerState
 
     -- Adding parameters to the environment
     modifyIORef' M.defaultCheckerState $ \s ->
@@ -408,6 +427,7 @@ synthesizeE (HLIR.MkExprLambda params ret body) = do
                     )
                     s.environment
                     paramAnnotations
+            , M.returnType = Just retType
             }
 
     -- Checking the body against the return type
@@ -416,7 +436,8 @@ synthesizeE (HLIR.MkExprLambda params ret body) = do
     -- Restoring the old environment
     modifyIORef' M.defaultCheckerState $ \s ->
         s
-            { M.environment = oldEnv
+            { M.environment = oldEnv.environment
+            , M.returnType = oldEnv.returnType
             }
 
     -- Building the function type
@@ -624,6 +645,31 @@ synthesizeE (HLIR.MkExprWhile cond body _ inExpr) = do
     -- The type of the while expression is the type of the in expression
     pure
         (inTy, HLIR.MkExprWhile condExpr bodyExpr (Identity bodyTy) inExprTyped, cs)
+synthesizeE (HLIR.MkExprWhileIs expr pat body _ inExpr) = do
+    -- Synthesizing the type of the expression to match
+    (exprTy, exprExpr, cs1) <- synthesizeE expr
+
+    -- Checking the pattern against the expression type
+    (typedPat, cs2, bindings) <- checkP exprTy pat
+
+    -- Collecting all constraints
+    let cs = cs1 <> cs2
+
+    -- Extending the environment with the bindings introduced by the pattern
+    -- We use `withEnvironment` to temporarily extend the environment
+    -- while checking the body.
+    (_, typedBody, cs3) <-
+        M.withEnvironment bindings $ synthesizeE body
+    (inTy, typedInExpr, cs4) <- synthesizeE inExpr
+
+    let cs' = cs3 <> cs4 <> cs
+
+    -- The type of the while-is expression is the type of the in expression
+    pure
+        ( inTy
+        , HLIR.MkExprWhileIs exprExpr typedPat typedBody (Identity inTy) typedInExpr
+        , cs'
+        )
 synthesizeE (HLIR.MkExprIfIs expr pat thenBranch elseBranch _) = do
     -- Synthesizing the type of the expression to match
     (exprTy, exprExpr, cs1) <- synthesizeE expr
@@ -667,6 +713,66 @@ synthesizeE (HLIR.MkExprIfIs expr pat thenBranch elseBranch _) = do
             (Identity thenTy)
         , cs'
         )
+synthesizeE (HLIR.MkExprFunctionAccess field thisExpr args) = do
+    -- Synthesizing the type of the `this` expression
+    (thisTy, thisExprTyped, cs1) <- synthesizeE thisExpr
+    (argTys, typedArgs, cs2) <- unzip3 <$> mapM synthesizeE args
+
+    retType <- M.newType
+
+    -- Looking up the function in the environment
+    state' <- readIORef M.defaultCheckerState
+    let env = Map.toList state'.implementations
+
+    pos <- HLIR.peekPosition'
+
+    funcType <-
+        findImplementationMatching env field ((thisTy : argTys) HLIR.:->: retType) pos
+
+    case funcType of
+        Just func@(HLIR.MkTyFun (_ : fParamTypes) fRetType) -> do
+            if length fParamTypes /= length args
+                then M.throw (M.InvalidArgumentQuantity (length fParamTypes) (length args))
+                else do
+                    -- Collecting all constraints
+                    let cs = cs1 <> mconcat cs2
+
+                    void $ func `M.isSubtypeOf` ((thisTy : argTys) HLIR.:->: retType)
+
+                    pure
+                        ( fRetType
+                        , HLIR.MkExprApplication
+                            (HLIR.MkExprVariable (HLIR.MkAnnotation field (Identity func)) [])
+                            (thisExprTyped : typedArgs)
+                            (Identity fRetType)
+                        , cs <> [M.MkImplConstraint field func pos]
+                        )
+        Just ty -> M.throw (M.ExpectedFunction ty)
+        Nothing -> M.throw (M.VariableNotFound field)
+synthesizeE (HLIR.MkExprReturn e) = do
+    -- Synthesizing the type of the return expression
+    (eTy, eExpr, cs) <- synthesizeE e
+
+    -- Finding the expected return type from the environment
+    state' <- readIORef M.defaultCheckerState
+    let expectedRetTy = state'.returnType
+
+    case expectedRetTy of
+        Just retTy -> do
+            -- Adding a constraint that the return expression type must be
+            -- a subtype of the expected return type.
+            void $ eTy `M.isSubtypeOf` retTy
+
+            pure (retTy, HLIR.MkExprReturn eExpr, cs)
+        Nothing -> M.throw M.ReturnOutsideFunction
+synthesizeE HLIR.MkExprBreak = do
+    -- Break expressions have type unit
+    -- We just return unit type and no constraints
+    pure (HLIR.MkTyId "unit", HLIR.MkExprBreak, mempty)
+synthesizeE HLIR.MkExprContinue = do
+    -- Continue expressions have type unit
+    -- We just return unit type and no constraints
+    pure (HLIR.MkTyId "unit", HLIR.MkExprContinue, mempty)
 
 -- | CHECK PATTERN
 -- | Check a pattern against an expected type.
@@ -887,28 +993,28 @@ solveConstraints constraints = do
             pure (Just structTy)
         | otherwise = findStructureMatching xs name pos
 
-    findImplementationMatching ::
-        (MonadIO m, M.MonadError M.Error m) =>
-        [((Text, HLIR.Type), HLIR.Scheme HLIR.Type)] ->
-        Text ->
-        HLIR.Type ->
-        HLIR.Position ->
-        m (Maybe HLIR.Type)
-    findImplementationMatching [] _ _ _ = pure Nothing
-    findImplementationMatching (((implName, _), scheme) : xs) name ty pos
-        | implName == name = do
-            -- We instantiate the implementation scheme to get a concrete type
-            -- and remove aliases from it.
-            implTy <- M.instantiate scheme >>= M.performAliasRemoval
+findImplementationMatching ::
+    (MonadIO m, M.MonadError M.Error m) =>
+    [((Text, HLIR.Type), HLIR.Scheme HLIR.Type)] ->
+    Text ->
+    HLIR.Type ->
+    HLIR.Position ->
+    m (Maybe HLIR.Type)
+findImplementationMatching [] _ _ _ = pure Nothing
+findImplementationMatching (((implName, _), scheme) : xs) name ty pos
+    | implName == name = do
+        -- We instantiate the implementation scheme to get a concrete type
+        -- and remove aliases from it.
+        implTy <- M.instantiate scheme >>= M.performAliasRemoval
 
-            -- We check if the implementation type is a subtype of the required type
-            -- If it is, we return it as a matching implementation.
-            result <- runExceptT $ M.applySubtypeRelation False implTy ty
+        -- We check if the implementation type is a subtype of the required type
+        -- If it is, we return it as a matching implementation.
+        result <- runExceptT $ M.applySubtypeRelation False ty implTy
 
-            case result of
-                Right _ -> pure (Just implTy)
-                Left _ -> findImplementationMatching xs name ty pos
-        | otherwise = findImplementationMatching xs name ty pos
+        case result of
+            Right _ -> pure (Just implTy)
+            Left _ -> findImplementationMatching xs name ty pos
+    | otherwise = findImplementationMatching xs name ty pos
 
 -- | Extract the header (base type) from a type.
 -- | For example, for `MyStruct[i32, bool]`, it returns `Just "MyStruct"`.
@@ -943,10 +1049,22 @@ findPropertyByName name = do
     -- Throwing an error if the property is not found
     case Map.lookup name properties of
         Just scheme -> pure scheme
-        Nothing -> M.throw (M.PropertyNotFound name)
+        Nothing -> M.newType >>= \ty -> pure (HLIR.Forall [] ty)
 
 -- | Remove the third element from a triple.
 -- | This is used to convert constraints from (name, type, position)
 -- | to (name, type).
 removeThird :: (a, b, c) -> (a, b)
 removeThird (x, y, _) = (x, y)
+
+-- | Check if the following type is a function type.
+-- | If it is, return True, otherwise return False.
+isFunctionType :: (MonadIO m) => HLIR.Type -> m Bool
+isFunctionType (HLIR.MkTyFun _ _) = pure True
+isFunctionType (HLIR.MkTyVar ref) = do
+    ty <- readIORef ref
+
+    case ty of
+        HLIR.Link t -> isFunctionType t
+        HLIR.Unbound _ _ -> pure False
+isFunctionType _ = pure False

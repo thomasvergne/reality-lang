@@ -35,6 +35,9 @@ data Expression
     | MkExprCast Ty.Type Expression
     | MkExprBlock [Expression]
     | MkExprWhile Expression Expression
+    | MkExprReturn Expression
+    | MkExprBreak
+    | MkExprContinue
     deriving (Eq, Ord, Show, Generic)
 
 data Toplevel
@@ -109,6 +112,10 @@ instance ToText Expression where
             , toText body
             , "\n}"
             ]
+    toText (MkExprReturn expr) =
+        T.concat ["return ", toText expr]
+    toText MkExprBreak = "break"
+    toText MkExprContinue = "continue"
 
 instance ToText Toplevel where
     toText (MkTopFunction name params ret body) =

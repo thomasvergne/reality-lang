@@ -25,6 +25,8 @@ data CheckerState = CheckerState
     , structures :: Map Text (HLIR.Scheme (Map Text HLIR.Type))
     , implementations :: Map (Text, HLIR.Type) (HLIR.Scheme HLIR.Type)
     , properties :: Map Text (HLIR.Scheme HLIR.Type)
+    , returnType :: Maybe HLIR.Type
+    , isInLoop :: Bool
     }
     deriving (Eq, Ord, Generic)
 
@@ -73,6 +75,8 @@ defaultCheckerState = IO.unsafePerformIO $ do
             , structures = Map.empty
             , implementations = Map.empty
             , properties = Map.empty
+            , returnType = Nothing
+            , isInLoop = False
             }
 
 -- | NEW SYMBOL
@@ -118,6 +122,8 @@ resetState = do
                 , structures = Map.empty
                 , implementations = Map.empty
                 , properties = Map.empty
+                , returnType = Nothing
+                , isInLoop = False
                 }
 
 -- | INSTANTIATE AND SUB

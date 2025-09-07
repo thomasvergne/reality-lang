@@ -45,10 +45,28 @@ parseExprLiteral ::
     (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
 parseExprLiteral =
     Lex.locateWith
-        <$> Lex.lexeme
-            ( Lit.parseLiteral
-                <&> HLIR.MkExprLiteral
-            )
+        <$> parseLiteralSuffix
+
+    where
+        parseLiteralSuffix :: (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
+        parseLiteralSuffix = Lex.lexeme $ do
+            lit <- Lit.parseLiteral
+            suffix <- P.optional $ P.choice [
+                  P.string "u8"
+                , P.string "u16"
+                , P.string "u32"
+                , P.string "u64"
+                , P.string "i8"
+                , P.string "i16"
+                , P.string "i32"
+                , P.string "i64"
+                , P.string "f32"
+                , P.string "f64"
+                ]
+
+            case suffix of
+                Nothing -> pure (HLIR.MkExprLiteral lit)
+                Just s -> pure (HLIR.MkExprCast (HLIR.MkExprLiteral lit) (HLIR.MkTyId s))
 
 -- | PARSE IF-IS EXPRESSION
 -- | Parse an if-is expression. An if-is expression is an expression that consists
@@ -169,15 +187,22 @@ parseExprBlock = do
   where
     buildBlockFromList :: [HLIR.HLIR "expression"] -> HLIR.HLIR "expression"
     buildBlockFromList [] = HLIR.MkExprVariable (HLIR.MkAnnotation "unit" Nothing) []
+    buildBlockFromList (HLIR.MkExprLocated p e : xs) =
+        HLIR.MkExprLocated p (buildBlockFromList (e : xs))
     buildBlockFromList [x] = x
     buildBlockFromList (HLIR.MkExprLetIn ann v b _ : xs)
         | isUnit b = HLIR.MkExprLetIn ann v (buildBlockFromList xs) Nothing
         | otherwise = HLIR.MkExprLetIn ann v (buildBlockFromList (b : xs)) Nothing
-    buildBlockFromList (HLIR.MkExprLocated p e : xs) =
-        HLIR.MkExprLocated p (buildBlockFromList (e : xs))
     buildBlockFromList (HLIR.MkExprWhile cond body ty inE : xs)
         | isUnit inE = HLIR.MkExprWhile cond body ty (buildBlockFromList xs)
         | otherwise = HLIR.MkExprWhile cond body ty (buildBlockFromList (inE : xs))
+    buildBlockFromList (HLIR.MkExprWhileIs cond pat body ty inE : xs)
+        | isUnit inE = HLIR.MkExprWhileIs cond pat body ty (buildBlockFromList xs)
+        | otherwise =
+            HLIR.MkExprWhileIs cond pat body ty (buildBlockFromList (inE : xs))
+    buildBlockFromList (HLIR.MkExprReturn e : _) = HLIR.MkExprReturn e
+    buildBlockFromList (HLIR.MkExprBreak : _) = HLIR.MkExprBreak
+    buildBlockFromList (HLIR.MkExprContinue : _) = HLIR.MkExprContinue
     buildBlockFromList (x : xs) =
         HLIR.MkExprLetIn
             (HLIR.MkAnnotation "_" Nothing)
@@ -373,7 +398,12 @@ parseExprFull = Lex.locateWith <$> P.makeExprParser parseExprTerm operators
         ,
             [ P.Postfix . Lex.makeUnaryOp $ do
                 ((_, end), field) <- P.string "." *> Lex.nonLexedID <* Lex.scn
-                pure $ \((start, _), e) -> ((start, end), HLIR.MkExprStructureAccess e field)
+
+                optArgs <- P.optional $ Lex.parens (P.sepBy (snd <$> parseExprFull) Lex.comma)
+
+                pure $ \((start, _), e) -> case optArgs of
+                    Nothing -> ((start, end), HLIR.MkExprStructureAccess e field)
+                    Just ((_, end'), args) -> ((start, end'), HLIR.MkExprFunctionAccess field e args)
             ]
         ,
             [ P.Postfix . Lex.makeUnaryOp $ do
@@ -386,10 +416,19 @@ parseExprFull = Lex.locateWith <$> P.makeExprParser parseExprTerm operators
             [ P.Postfix . Lex.makeUnaryOp $ do
                 void $ Lex.symbol "->"
                 ((_, end), field) <- Lex.nonLexedID <* Lex.scn
+
+                optArgs <- P.optional $ Lex.parens (P.sepBy (snd <$> parseExprFull) Lex.comma)
+
                 pure $ \((start, _), e) ->
-                    ( (start, end)
-                    , HLIR.MkExprStructureAccess (HLIR.MkExprDereference e Nothing) field
-                    )
+                    case optArgs of
+                        Nothing ->
+                            ( (start, end)
+                            , HLIR.MkExprStructureAccess (HLIR.MkExprDereference e Nothing) field
+                            )
+                        Just ((_, end'), args) ->
+                            ( (start, end')
+                            , HLIR.MkExprFunctionAccess field (HLIR.MkExprDereference e Nothing) args
+                            )
             ]
         , -- 2. Prefix/unary: *, &, cast, etc.
 
@@ -480,11 +519,84 @@ parseExprFull = Lex.locateWith <$> P.makeExprParser parseExprTerm operators
 parseStmtFull ::
     (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
 parseStmtFull = do
-    P.choice
-        [ parseStmtLet
-        , parseStmtWhile
-        , parseExprFull
-        ]
+    Lex.locateWith
+        <$> P.choice
+            [ parseStmtLet
+            , P.try parseStmtWhile
+            , parseStmtWhileIs
+            , parseStmtReturn
+            , parseStmtBreak
+            , parseStmtContinue
+            , parseExprFull
+            ]
+
+-- | PARSE RETURN STATEMENT
+-- | Parse a return statement. A return statement is a statement that consists
+-- | of the keyword "return" followed by an expression. It is used to return a value
+-- | from a function in Reality. The syntax of a return statement is as follows:
+-- |
+-- | "return" expression
+parseStmtReturn ::
+    (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
+parseStmtReturn = do
+    ((start, _), _) <- Lex.reserved "return"
+
+    ((_, end), expr) <- parseExprFull
+
+    pure ((start, end), HLIR.MkExprReturn expr)
+
+-- | PARSE BREAK STATEMENT
+-- | Parse a break statement. A break expression is a statement that consists
+-- | of the keyword "break". It is used to exit a loop in Reality. The syntax of
+-- | a break statement is as follows:
+-- |
+-- | "break"
+parseStmtBreak ::
+    (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
+parseStmtBreak = do
+    ((start, end), _) <- Lex.reserved "break"
+    pure ((start, end), HLIR.MkExprBreak)
+
+-- | PARSE CONTINUE EXPRESSION
+-- | Parse a continue statement. A continue statement is a statement that consists
+-- | of the keyword "continue". It is used to skip the current iteration of a loop
+-- | in Reality. The syntax of a continue statement is as follows:
+-- |
+-- | "continue"
+parseStmtContinue ::
+    (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
+parseStmtContinue = do
+    ((start, end), _) <- Lex.reserved "continue"
+    pure ((start, end), HLIR.MkExprContinue)
+
+-- | PARSE WHILE-IS STATEMENT
+-- | Parse a while-is statement. A while-is expression is an expression that consists
+-- | of a condition, a pattern to match, and a body. It is used to repeatedly evaluate
+-- | an expression based on a pattern match.
+-- | The syntax of a while-is expression is as follows:
+-- |
+-- | "while" expression "is" pattern "{" statements "}"
+-- |
+parseStmtWhileIs ::
+    (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
+parseStmtWhileIs = do
+    ((start, _), _) <- Lex.reserved "while"
+
+    cond <- snd <$> parseExprTerm
+    void $ Lex.reserved "is"
+    pattern <- snd <$> parsePatternFull
+
+    ((_, end), body) <- parseExprBlock
+
+    pure
+        ( (start, end)
+        , HLIR.MkExprWhileIs
+            cond
+            pattern
+            body
+            Nothing
+            (HLIR.MkExprVariable (HLIR.MkAnnotation "unit" Nothing) [])
+        )
 
 parseStmtWhile ::
     (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")

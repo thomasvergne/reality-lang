@@ -93,6 +93,21 @@ data Expression f t
         , maybeElseBranch :: Maybe (Expression f t)
         , returnType :: f t
         }
+    | MkExprWhileIs
+        { expr :: Expression f t
+        , expectedPattern :: Pattern f t
+        , body :: Expression f t
+        , returnType :: f t
+        , inExpr :: Expression f t
+        }
+    | MkExprFunctionAccess
+        { field :: Text
+        , fieldExpr :: Expression f t
+        , arguments :: [Expression f t]
+        }
+    | MkExprReturn (Expression f t)
+    | MkExprBreak
+    | MkExprContinue
     deriving (Eq, Ord, Generic)
 
 data Toplevel f t
@@ -276,6 +291,29 @@ instance (ToText (f t), ToText t) => ToText (Expression f t) where
                 Nothing -> ""
          in T.concat
                 ["if ", toText expr, " is ", toText pat, " then ", toText thenB, elseText]
+    toText (MkExprFunctionAccess func fieldExpr args) =
+        T.concat
+            [ toText func
+            , "("
+            , toText fieldExpr
+            , ")("
+            , T.intercalate ", " (map toText args)
+            , ")"
+            ]
+    toText (MkExprWhileIs expr pat body _ inExpr) =
+        T.concat
+            [ "while "
+            , toText expr
+            , " is "
+            , toText pat
+            , " { "
+            , toText body
+            , " } in "
+            , toText inExpr
+            ]
+    toText (MkExprReturn expr) = "return " <> toText expr
+    toText MkExprBreak = "break"
+    toText MkExprContinue = "continue"
 
 instance (ToText (f t), ToText t) => ToText (Pattern f t) where
     toText (MkPatternVariable ann) = toText ann

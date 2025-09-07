@@ -20,7 +20,17 @@ decimal = do
 -- | INTEGER
 -- | Parse an integer literal.
 parseInteger :: (MonadIO m) => P.Parser m Integer
-parseInteger = P.signed (pure ()) decimal
+parseInteger =
+    P.choice [
+      MC.char '0' >> P.choice [
+          MC.char' 'x' >> P.hexadecimal
+        , MC.char' 'b' >> P.binary
+        , MC.char' 'o' >> P.octal
+        , P.signed (pure ()) decimal
+        , pure 0
+        ]
+    , P.signed (pure ()) decimal
+    ]
 
 -- | FLOAT
 -- | Parse a floating-point number with optional underscores as separators.
