@@ -36,6 +36,9 @@ hoistLambdaSingular (HLIR.MkTopFunctionDeclaration name params ret body) = do
 hoistLambdaSingular (HLIR.MkTopModuleDeclaration name body) = do
     hoistedBody <- hoistLambdas body
     pure [HLIR.MkTopModuleDeclaration name hoistedBody]
+hoistLambdaSingular (HLIR.MkTopPublic node) = do
+    hoisted <- hoistLambdaSingular node
+    pure (map HLIR.MkTopPublic hoisted)
 hoistLambdaSingular node = pure [node]
 
 -- | Hoist lambda expressions in a HLIR expression.
@@ -104,10 +107,12 @@ hoistLambdasInExpr (HLIR.MkExprStructureAccess struct field) = do
     (newStruct, hoistedStruct) <- hoistLambdasInExpr struct
     pure (HLIR.MkExprStructureAccess newStruct field, hoistedStruct)
 hoistLambdasInExpr (HLIR.MkExprStructureCreation ann fields) = do
-    (newFields, hoistedFields) <- mapAndUnzipM hoistLambdasInExpr (Map.elems fields)
+    (newFields, hoistedFields) <- unzip <$> traverse (\(k, e) -> do
+        (ne, he) <- hoistLambdasInExpr e
+        pure ((k, ne), he)
+        ) (Map.toList fields)
 
-    let newFieldMap = Map.fromList $ zip (Map.keys fields) newFields
-    pure (HLIR.MkExprStructureCreation ann newFieldMap, concat hoistedFields)
+    pure (HLIR.MkExprStructureCreation ann (Map.fromList newFields), concat hoistedFields)
 hoistLambdasInExpr (HLIR.MkExprDereference e targetType) = do
     (newE, hoistedE) <- hoistLambdasInExpr e
     pure (HLIR.MkExprDereference newE targetType, hoistedE)
@@ -169,7 +174,13 @@ hoistLambdasInExpr (HLIR.MkExprReturn e) = do
     pure (HLIR.MkExprReturn newE, hoistedE)
 hoistLambdasInExpr HLIR.MkExprBreak = pure (HLIR.MkExprBreak, [])
 hoistLambdasInExpr HLIR.MkExprContinue = pure (HLIR.MkExprContinue, [])
-hoistLambdasInExpr expr = pure (expr, [])
+hoistLambdasInExpr (HLIR.MkExprFunctionAccess ann this exprs) = do
+    (newThis, hoistedThis) <- hoistLambdasInExpr this
+    (newExprs, hoistedExprs) <- mapAndUnzipM hoistLambdasInExpr exprs
+    pure
+        ( HLIR.MkExprFunctionAccess ann newThis newExprs
+        , hoistedThis ++ concat hoistedExprs
+        )
 
 {-# NOINLINE symbolCounter #-}
 symbolCounter :: IORef Int

@@ -612,9 +612,7 @@ convertExpression (HLIR.MkExprIfIs expr pat thenB elseB _) = do
         , ns1 <> ns2 <> ns3
         , thenTy
         )
-convertExpression (HLIR.MkExprFunctionAccess{}) =
-    M.compilerError
-        "Function access should have been inlined before closure conversion"
+convertExpression (HLIR.MkExprFunctionAccess {}) = M.compilerError "Function access should have been inlined before closure conversion"
 convertExpression (HLIR.MkExprWhileIs expr pat body _ inExpr) = do
     (newExpr, ns1, _) <- convertExpression expr
     (newBody, ns2, _) <- convertExpression body
