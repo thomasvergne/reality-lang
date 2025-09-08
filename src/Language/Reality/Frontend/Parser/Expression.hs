@@ -46,27 +46,29 @@ parseExprLiteral ::
 parseExprLiteral =
     Lex.locateWith
         <$> parseLiteralSuffix
+  where
+    parseLiteralSuffix ::
+        (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
+    parseLiteralSuffix = Lex.lexeme $ do
+        lit <- Lit.parseLiteral
+        suffix <-
+            P.optional
+                $ P.choice
+                    [ P.string "u8"
+                    , P.string "u16"
+                    , P.string "u32"
+                    , P.string "u64"
+                    , P.string "i8"
+                    , P.string "i16"
+                    , P.string "i32"
+                    , P.string "i64"
+                    , P.string "f32"
+                    , P.string "f64"
+                    ]
 
-    where
-        parseLiteralSuffix :: (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
-        parseLiteralSuffix = Lex.lexeme $ do
-            lit <- Lit.parseLiteral
-            suffix <- P.optional $ P.choice [
-                  P.string "u8"
-                , P.string "u16"
-                , P.string "u32"
-                , P.string "u64"
-                , P.string "i8"
-                , P.string "i16"
-                , P.string "i32"
-                , P.string "i64"
-                , P.string "f32"
-                , P.string "f64"
-                ]
-
-            case suffix of
-                Nothing -> pure (HLIR.MkExprLiteral lit)
-                Just s -> pure (HLIR.MkExprCast (HLIR.MkExprLiteral lit) (HLIR.MkTyId s))
+        case suffix of
+            Nothing -> pure (HLIR.MkExprLiteral lit)
+            Just s -> pure (HLIR.MkExprCast (HLIR.MkExprLiteral lit) (HLIR.MkTyId s))
 
 -- | PARSE IF-IS EXPRESSION
 -- | Parse an if-is expression. An if-is expression is an expression that consists
@@ -395,16 +397,7 @@ parseExprFull = Lex.locateWith <$> P.makeExprParser parseExprTerm operators
                 ((_, end), _) <- Lex.symbol "]"
                 pure $ \(start, arr) -> ((fst start, end), HLIR.MkExprVarCall "get_index" [arr, index])
             ]
-        ,
-            [ P.Postfix . Lex.makeUnaryOp $ do
-                ((_, end), field) <- P.string "." *> Lex.nonLexedID <* Lex.scn
-
-                optArgs <- P.optional $ Lex.parens (P.sepBy (snd <$> parseExprFull) Lex.comma)
-
-                pure $ \((start, _), e) -> case optArgs of
-                    Nothing -> ((start, end), HLIR.MkExprStructureAccess e field)
-                    Just ((_, end'), args) -> ((start, end'), HLIR.MkExprFunctionAccess field e args)
-            ]
+        , []
         ,
             [ P.Postfix . Lex.makeUnaryOp $ do
                 ((_, end), args) <-
@@ -414,20 +407,24 @@ parseExprFull = Lex.locateWith <$> P.makeExprParser parseExprTerm operators
             ]
         ,
             [ P.Postfix . Lex.makeUnaryOp $ do
-                void $ Lex.symbol "->"
+                (_, sym) <- Lex.symbol "->" <|> Lex.symbol "."
                 ((_, end), field) <- Lex.nonLexedID <* Lex.scn
 
                 optArgs <- P.optional $ Lex.parens (P.sepBy (snd <$> parseExprFull) Lex.comma)
 
-                pure $ \((start, _), e) ->
+                pure $ \((start, _), e) -> do
+                    let e' = case sym of
+                            "->" -> HLIR.MkExprDereference e Nothing
+                            _ -> e
+
                     case optArgs of
                         Nothing ->
                             ( (start, end)
-                            , HLIR.MkExprStructureAccess (HLIR.MkExprDereference e Nothing) field
+                            , HLIR.MkExprStructureAccess e' field
                             )
                         Just ((_, end'), args) ->
                             ( (start, end')
-                            , HLIR.MkExprFunctionAccess field (HLIR.MkExprDereference e Nothing) args
+                            , HLIR.MkExprFunctionAccess field e' args
                             )
             ]
         , -- 2. Prefix/unary: *, &, cast, etc.
