@@ -95,7 +95,7 @@ resolveSpecializationSingular node@(HLIR.MkTopFunctionDeclaration ann params ret
                         , variables =
                             Map.insert
                                 ann.name
-                                (HLIR.Forall [] (map (.typeValue) specParams HLIR.:->: specRet), node)
+                                (HLIR.Forall [] (map (.typeValue) params HLIR.:->: ret), node)
                                 s.variables
                         }
 
@@ -408,7 +408,9 @@ resolveSpecializationInExpr (HLIR.MkExprIfIs expr pat thenBr elseBr ty) = do
         ( HLIR.MkExprIfIs typedExpr typedPat typedThenBr typedElseBr specTy
         , newDefs1 ++ newDefs2 ++ newDefs3 ++ newDefs4 ++ newDefs5
         )
-resolveSpecializationInExpr (HLIR.MkExprFunctionAccess {}) = M.compilerError "Function access should have been desugared before specialization resolution."
+resolveSpecializationInExpr (HLIR.MkExprFunctionAccess{}) =
+    M.compilerError
+        "Function access should have been desugared before specialization resolution."
 resolveSpecializationInExpr (HLIR.MkExprWhileIs expr pat body ret inExpr) = do
     (typedExpr, newDefs1) <- resolveSpecializationInExpr expr
     (typedPat, newDefs2, bindings) <- resolveSpecializationInPattern pat
@@ -663,7 +665,9 @@ resolveSpecializationForIdentifier (HLIR.MkAnnotation name (Identity ty)) = do
                         -- This is important to avoid duplicating work and creating
                         -- wrong specializations.
                         let orderedVars = flip map qvars $ \var -> Map.findWithDefault (HLIR.MkTyQuantified var) var subst
-                            newName = name <> "_" <> Text.intercalate "_" (map toText orderedVars)
+                            newName
+                                | null orderedVars = name
+                                | otherwise = name <> "_" <> Text.intercalate "_" (map toText orderedVars)
 
                         -- Checking if we already created this specialization
                         -- to avoid duplicating work.
@@ -815,7 +819,9 @@ resolveSpecializationForImplementation name ty = do
             -- Re-ordering the resolved types according to the property scheme quantified
             -- variables to create a consistent name
             let orderedVars = flip map qvars $ \var -> Map.findWithDefault (HLIR.MkTyQuantified var) var subst
-                newName = name <> "_" <> Text.intercalate "_" (map toText orderedVars)
+                newName
+                    | null orderedVars = name
+                    | otherwise = name <> "_" <> Text.intercalate "_" (map toText orderedVars)
 
             -- Checking if the node is a function declaration, otherwise there must
             -- be an error somewhere else. We just handle it gracefully here.
@@ -894,7 +900,7 @@ resolveSpecializationForImplementation name ty = do
 
             if name `Set.member` (specState.rememberedNatives <> specState.rememberedLocals)
                 then pure (HLIR.MkAnnotation name (Identity newTy), ns, False)
-                else M.throw (M.ImplementationNotFound name ty)
+                else M.throw (M.VariableNotFound name)
   where
     -- The actual implementation matching algorithm
     -- as described above.
