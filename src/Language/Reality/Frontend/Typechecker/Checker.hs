@@ -22,6 +22,10 @@ runTypechecker toplevels = do
 
     mapM checkToplevelSingular toplevels
 
+isArgsAnnotation :: [HLIR.Annotation HLIR.Type] -> Bool
+isArgsAnnotation [x] | x.name == "args" && x.typeValue == HLIR.MkTyList (HLIR.MkTyId "String") = True
+isArgsAnnotation _ = False
+
 -- | Typecheck a singular HLIR toplevel node.
 -- | This function takes a toplevel node, and returns a toplevel node with types
 -- | checked.
@@ -57,8 +61,45 @@ checkToplevelSingular (HLIR.MkTopFunctionDeclaration ann params ret body) = do
     retType <- M.performAliasRemoval ret
 
     -- Building new parameters and function type
-    let newParams = zipWith (\p ty -> p{HLIR.typeValue = ty}) params paramTypes
+    let newParams =
+            if ann.name == "main"
+                then
+                    [ HLIR.MkAnnotation "argc" HLIR.MkTyInt
+                    , HLIR.MkAnnotation
+                        "argv"
+                        (HLIR.MkTyPointer (HLIR.MkTyPointer HLIR.MkTyChar))
+                    ]
+                else zipWith (\p ty -> p{HLIR.typeValue = ty}) params paramTypes
         funcType = paramTypes HLIR.:->: retType
+
+    let argListType = HLIR.MkTyList (HLIR.MkTyId "String")
+        argc = HLIR.MkExprVariable (HLIR.MkAnnotation "argc" (Just HLIR.MkTyInt)) []
+        argv =
+            HLIR.MkExprVariable
+                ( HLIR.MkAnnotation
+                    "argv"
+                    (Just (HLIR.MkTyPointer (HLIR.MkTyPointer HLIR.MkTyChar)))
+                )
+                []
+        getArgsType =
+            [HLIR.MkTyInt, HLIR.MkTyPointer (HLIR.MkTyPointer HLIR.MkTyChar)]
+                HLIR.:->: argListType
+
+    let body'
+            | ann.name == "main" && isArgsAnnotation params =
+                HLIR.MkExprLetIn
+                    (HLIR.MkAnnotation "args" (Just argListType))
+                    ( HLIR.MkExprApplication
+                        ( HLIR.MkExprVariable
+                            (HLIR.MkAnnotation "getArgs" (Just getArgsType))
+                            []
+                        )
+                        [argc, argv]
+                        (Just argListType)
+                    )
+                    body
+                    Nothing
+            | otherwise = body
 
     -- Adding the function to the environment, before adding arguments,
     -- to allow for restoration of the environment without deleting the
@@ -86,7 +127,7 @@ checkToplevelSingular (HLIR.MkTopFunctionDeclaration ann params ret body) = do
             }
 
     -- Checking the function body against the return type
-    (typedBody, cs) <- checkE retType body
+    (typedBody, cs) <- checkE retType body'
 
     -- Solving constraints generated during the body checking
     solveConstraints cs
@@ -729,14 +770,14 @@ synthesizeE (HLIR.MkExprFunctionAccess field thisExpr args) = do
     funcType <-
         findImplementationMatching env field ((thisTy : argTys) HLIR.:->: retType) pos
 
+    -- Collecting all constraints
+    let cs = cs1 <> mconcat cs2
+
     case funcType of
         Just func@(HLIR.MkTyFun (_ : fParamTypes) fRetType) -> do
             if length fParamTypes /= length args
                 then M.throw (M.InvalidArgumentQuantity (length fParamTypes) (length args))
                 else do
-                    -- Collecting all constraints
-                    let cs = cs1 <> mconcat cs2
-
                     void $ func `M.isSubtypeOf` ((thisTy : argTys) HLIR.:->: retType)
 
                     pure
@@ -748,7 +789,17 @@ synthesizeE (HLIR.MkExprFunctionAccess field thisExpr args) = do
                         , cs <> [M.MkImplConstraint field func pos]
                         )
         Just ty -> M.throw (M.ExpectedFunction ty)
-        Nothing -> M.throw (M.VariableNotFound field)
+        Nothing -> do
+            let func = (thisTy : argTys) HLIR.:->: retType
+
+            pure
+                ( retType
+                , HLIR.MkExprApplication
+                    (HLIR.MkExprVariable (HLIR.MkAnnotation field (Identity func)) [])
+                    (thisExprTyped : typedArgs)
+                    (Identity retType)
+                , cs <> [M.MkImplConstraint field func pos]
+                )
 synthesizeE (HLIR.MkExprReturn e) = do
     -- Synthesizing the type of the return expression
     (eTy, eExpr, cs) <- synthesizeE e

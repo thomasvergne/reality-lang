@@ -232,7 +232,7 @@ instance Locate (Pattern f t) where
 instance (ToText (f t), ToText t) => ToText (Expression f t) where
     toText (MkExprApplication callee args _) =
         T.concat [toText callee, "(", T.intercalate ", " (map toText args), ")"]
-    toText (MkExprVariable ann vars) = toText ann <> "::[" <> T.intercalate ", " (map toText vars) <> "]"
+    toText (MkExprVariable ann _) = toText ann.name
     toText (MkExprLiteral lit) = toText lit
     toText (MkExprLambda params ret body) =
         T.concat

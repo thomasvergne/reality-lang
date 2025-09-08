@@ -120,7 +120,7 @@ pattern MkTyUnit = MkTyId "unit"
 -- | List type is a type that represents a list of values in Bonzai. It is used
 -- | to represent a sequence of values of the same type.
 pattern MkTyList :: Type -> Type
-pattern MkTyList a = MkTyApp (MkTyId "list") [a]
+pattern MkTyList a = MkTyApp (MkTyId "List") [a]
 
 -- | POINTER TYPE
 -- | Pointer type is a type that represents a pointer to a value in Bonzai.
