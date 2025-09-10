@@ -82,6 +82,41 @@ impl fn (x: i32) modulo(y: i32) -> i32 {
     mod_number(x, y)
 }
 
+extern fn add_u64_ext(a: u64, b: u64) -> u64;
+extern fn sub_u64_ext(a: u64, b: u64) -> u64;
+extern fn mul_u64_ext(a: u64, b: u64) -> u64;
+extern fn div_u64_ext(a: u64, b: u64) -> u64;
+extern fn equals_u64_ext(a: u64, b: u64) -> bool;
+extern fn greater_u64_ext(a: u64, b: u64) -> bool;
+extern fn less_u64_ext(a: u64, b: u64) -> bool;
+extern fn mod_u64_ext(a: u64, b: u64) -> u64;
+extern fn u64_to_string(n: u64) -> string;
+
+impl fn (x: u64) add(y: u64) -> u64 {
+    add_u64_ext(x, y)
+}
+impl fn (x: u64) sub(y: u64) -> u64 {
+    sub_u64_ext(x, y)
+}
+impl fn (x: u64) mul(y: u64) -> u64 {
+    mul_u64_ext(x, y)
+}
+impl fn (x: u64) div(y: u64) -> u64 {
+    div_u64_ext(x, y)
+}
+impl fn (x: u64) equals(y: u64) -> bool {
+    equals_u64_ext(x, y)
+}
+impl fn (x: u64) greater(y: u64) -> bool {
+    greater_u64_ext(x, y)
+}
+impl fn (x: u64) lesser(y: u64) -> bool {
+    less_u64_ext(x, y)
+}
+impl fn (x: u64) modulo(y: u64) -> u64 {
+    mod_u64_ext(x, y)
+}
+
 fn great_equals[A](x: A, y: A) -> bool {
     or(greater(x, y), equals(x, y))
 }
@@ -136,10 +171,9 @@ impl fn (x: String) show_prec(i: i32) -> String {
     }
 }
 
-impl fn (x: i32) show_prec(_: i32) -> String {
-    String::new(number_to_string(x))
+impl fn (x: u64) show_prec(_: i32) -> String {
+    String::new(u64_to_string(x))
 }
-
 
 impl fn (x: string) show_prec(i: i32) -> String {
     String::new(if i > 0 { "\"" } else { "" } + x + if i > 0 { "\"" } else { "" })
