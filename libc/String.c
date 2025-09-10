@@ -5,27 +5,9 @@
 #include <stdbool.h>
 #include "../dependencies/gc/src/gc.h"
 
-//typedef struct GarbageCollector GarbageCollector;
-
 GarbageCollector* get_gc() {
     return &gc;
 }
-
-/*void* gc_malloc(GarbageCollector* gc, uint64_t size) {
-    return malloc(size);
-}
-
-void* gc_realloc(GarbageCollector* gc, void* ptr, uint64_t size) {
-    return realloc(ptr, size);
-}
-
-void gc_start(void* a, void* b) {}
-
-void gc_stop(GarbageCollector* gc) {}
-
-void gc_free(GarbageCollector* gc, void* ptr) {
-    free(ptr);
-    }*/
 
 bool string_eq(char* a, char* b) {
     return strcmp(a, b) == 0;
@@ -38,6 +20,16 @@ char* malloc_string(const char* content) {
         strcpy(copy, content);
     }
     return copy;
+}
+
+char* u64_to_string(uint64_t number) {
+    size_t length = snprintf(NULL, 0, "%llu", number);
+
+    char* result = (char*)gc_malloc(get_gc(), length + 1);
+    if (result) {
+        snprintf(result, length + 1, "%llu", number);
+    }
+    return result;
 }
 
 char* number_to_string(int number) {
@@ -84,6 +76,30 @@ bool equals_number(int a, int b) {
     return a == b;
 }
 
+uint64_t add_u64_ext(uint64_t a, uint64_t b) {
+    return a + b;
+}
+
+uint64_t sub_u64_ext(uint64_t a, uint64_t b) {
+    return a - b;
+}
+
+uint64_t mul_u64_ext(uint64_t a, uint64_t b) {
+    return a * b;
+}
+
+uint64_t div_u64_ext(uint64_t a, uint64_t b) {
+    if (b != 0) {
+        return a / b;
+    }
+    // Handle division by zero case
+    return 0;
+}
+
+bool equals_u64_ext(uint64_t a, uint64_t b) {
+    return a == b;
+}
+
 char* fetch_ptr(char* container, uint32_t index) {
     return &container[index];
 }
@@ -108,6 +124,22 @@ int mod_number(int a, int b) {
     return 0;
 }
 
+bool greater_u64_ext(uint64_t a, uint64_t b) {
+    return a > b;
+}
+
+bool less_u64_ext(uint64_t a, uint64_t b) {
+    return a < b;
+}
+
+uint64_t mod_u64_ext(uint64_t a, uint64_t b) {
+    if (b != 0) {
+        return a % b;
+    }
+    // Handle division by zero case
+    return 0;
+}
+
 char* concat_strings(char* a, char* b) {
     size_t length = strlen(a) + strlen(b);
     char* result = (char*)gc_malloc(get_gc(), length + 1);
@@ -116,4 +148,17 @@ char* concat_strings(char* a, char* b) {
         strcat(result, b);
     }
     return result;
+}
+
+void* malloc_ext(uint64_t size) {
+    return malloc(size);
+}
+
+int free_ext(void* ptr) {
+    free(ptr);
+    return 0;
+}
+
+void* realloc_ext(void* ptr, uint64_t size) {
+    return realloc(ptr, size);
 }
