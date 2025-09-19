@@ -8,6 +8,11 @@ import GHC.IO qualified as IO
 import Language.Reality.Syntax.HLIR qualified as HLIR
 import Language.Reality.Syntax.MLIR qualified as MLIR
 
+isReturnExpr :: HLIR.TLIR "expression" -> Bool
+isReturnExpr (HLIR.MkExprReturn _) = True
+isReturnExpr (HLIR.MkExprLocated _ e) = isReturnExpr e
+isReturnExpr _ = False
+
 -- | ANF CONVERTER
 -- | Convert a HLIR expression to ANF (MLIR).
 -- | This function takes a HLIR expression, and returns a MLIR expression.
@@ -217,22 +222,31 @@ convertExpression (HLIR.MkExprCondition cond thenB elseB branchTy) = do
     (thenB', l2) <- convertExpression thenB
     (elseB', l3) <- convertExpression elseB
 
-    -- Creating a fresh symbol for storing the result of the condition.
-    newVariable <- freshSymbol
-    let var = MLIR.MkExprVariable newVariable
+    let isCF = isCFStatement thenB || isCFStatement elseB
 
-    -- Converting condition can be tricky because both branches need
-    -- to include lets-generated variables and update the same variable.
-    --
-    -- This permits to have conditions as expressions as well as conditions
-    -- as statements.
-    let bl1 = MLIR.MkExprBlock (l2 ++ [MLIR.MkExprUpdate var thenB'])
-    let bl2 = MLIR.MkExprBlock (l3 ++ [MLIR.MkExprUpdate var elseB'])
+    if isCF then do
+        -- If one of the branches is a control flow statement,
+        -- we don't need to create a new variable for it, as it will not be used.
+        let ifExpr = MLIR.MkExprCondition cond' (MLIR.MkExprBlock (l2 ++ [thenB'])) (MLIR.MkExprBlock (l3 ++ [elseB']))
 
-    let def = MLIR.MkExprLet newVariable branchTy.runIdentity Nothing
-        ifExpr = MLIR.MkExprCondition cond' bl1 bl2
+        pure (ifExpr, l1)
+    else do
+        -- Creating a fresh symbol for storing the result of the condition.
+        newVariable <- freshSymbol
+        let var = MLIR.MkExprVariable newVariable
 
-    pure (MLIR.MkExprVariable newVariable, l1 ++ [def, ifExpr])
+        -- Converting condition can be tricky because both branches need
+        -- to include lets-generated variables and update the same variable.
+        --
+        -- This permits to have conditions as expressions as well as conditions
+        -- as statements.
+        let bl1 = MLIR.MkExprBlock (l2 ++ [MLIR.MkExprUpdate var thenB'])
+        let bl2 = MLIR.MkExprBlock (l3 ++ [MLIR.MkExprUpdate var elseB'])
+
+        let def = MLIR.MkExprLet newVariable branchTy.runIdentity Nothing
+            ifExpr = MLIR.MkExprCondition cond' bl1 bl2
+
+        pure (MLIR.MkExprVariable newVariable, l1 ++ [def] ++ [ifExpr])
 convertExpression (HLIR.MkExprLocated _ e) = convertExpression e
 convertExpression (HLIR.MkExprStructureAccess struct field) = do
     (struct', l1) <- convertExpression struct
@@ -292,15 +306,24 @@ convertExpression (HLIR.MkExprSingleIf cond thenB branchTy) = do
     (cond', l1) <- convertExpression cond
     (thenB', l2) <- convertExpression thenB
 
-    newVariable <- freshSymbol
-    let var = MLIR.MkExprVariable newVariable
+    let isCF = isCFStatement thenB
 
-    let bl1 = MLIR.MkExprBlock (l2 ++ [MLIR.MkExprUpdate var thenB'])
+    if isCF then do
+        -- If the then branch is a control flow statement,
+        -- we don't need to create a new variable for it, as it will not be used.
+        let ifExpr = MLIR.MkExprCondition cond' (MLIR.MkExprBlock (l2 ++ [thenB'])) (MLIR.MkExprBlock [])
 
-    let def = MLIR.MkExprLet newVariable branchTy.runIdentity Nothing
+        pure (ifExpr, l1)
+    else do
+        newVariable <- freshSymbol
+        let var = MLIR.MkExprVariable newVariable
 
-    let ifExpr = MLIR.MkExprSingleIf cond' bl1
-    pure (MLIR.MkExprVariable newVariable, l1 ++ [def, ifExpr])
+        let bl1 = MLIR.MkExprBlock (l2 ++ [MLIR.MkExprUpdate var thenB'])
+
+        let def = MLIR.MkExprLet newVariable branchTy.runIdentity Nothing
+
+        let ifExpr = MLIR.MkExprSingleIf cond' bl1
+        pure (MLIR.MkExprVariable newVariable, l1 ++ [def, ifExpr])
 convertExpression (HLIR.MkExprUpdate update value _) = do
     (update', l1) <- convertExpression update
     (value', l2) <- convertExpression value
@@ -337,15 +360,18 @@ convertExpression (HLIR.MkExprIfIs expr pat thenB elseB branchTy) = do
                 (\a b -> MLIR.MkExprApplication (MLIR.MkExprVariable "&&") [a, b])
                 conds
 
-    let bl1 =
-            MLIR.MkExprBlock
+    let bl1
+            | isCFStatement thenB = MLIR.MkExprBlock (l2 ++ [thenB'])
+            | otherwise = MLIR.MkExprBlock
                 ( map (\(name, ty, v) -> MLIR.MkExprLet name ty (Just v)) lets
                     ++ l2
                     ++ [MLIR.MkExprUpdate var thenB']
                 )
 
+    let isCF' = maybe False isCFStatement elseB
+
     let ifExpr = MLIR.MkExprCondition cond bl1 $ case result of
-            Just (elseB', l3) -> MLIR.MkExprBlock (l3 ++ [MLIR.MkExprUpdate var elseB'])
+            Just (elseB', l3) -> MLIR.MkExprBlock (l3 ++ if isCF' then [elseB'] else [MLIR.MkExprUpdate var elseB'])
             Nothing -> MLIR.MkExprBlock []
 
     pure (var, l1 ++ [def, ifExpr])
