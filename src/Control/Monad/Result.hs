@@ -211,6 +211,14 @@ handle (Left (err, pos@(p1, _))) _ = liftIO $ do
                 , pos
                 )
                 "Resolution"
+        RecursionLimitExceeded _ ->
+            printErrorFromString
+                Nothing
+                ( "Infinite recursion detected"
+                , Just "you may have written some infinitely recursive data-type"
+                , pos
+                )
+                "Resolution"
 
 type ImportStack = [FilePath]
 
@@ -245,6 +253,7 @@ data BonzaiError
     | NoFunctionInStructure Text HLIR.Type
     | ReturnOutsideFunction
     | BreakOutsideLoop
+    | RecursionLimitExceeded Integer
     deriving (Eq, Generic)
 
 instance Show BonzaiError where
@@ -306,6 +315,8 @@ instance Show BonzaiError where
             <> ")"
     show ReturnOutsideFunction = "Return statement outside of a function"
     show BreakOutsideLoop = "Break or continue statement outside of a loop"
+    show (RecursionLimitExceeded _) =
+        "Recursion limit exceeded"
 
 showError :: P.ParseError -> String
 showError = P.errorBundlePretty

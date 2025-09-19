@@ -58,7 +58,7 @@ resolveSpecializationSingular (HLIR.MkTopAnnotation exprs ret) = do
 
     pure (HLIR.MkTopAnnotation specExprs <$> specRet, allNewDefs)
 resolveSpecializationSingular (HLIR.MkTopExternLet ann) = do
-    (specTy, newDefs) <- resolveSpecializationInType ann.typeValue
+    (specTy, newDefs) <- resolveSpecializationInType 0 ann.typeValue
 
     modifyIORef' defaultSpecializer $ \s ->
         s{rememberedNatives = Set.insert ann.name s.rememberedNatives}
@@ -81,11 +81,11 @@ resolveSpecializationSingular node@(HLIR.MkTopFunctionDeclaration ann params ret
                     mapAndUnzipM
                         ( \case
                             HLIR.MkAnnotation name ty -> do
-                                (specTy, newDefs) <- resolveSpecializationInType ty
+                                (specTy, newDefs) <- resolveSpecializationInType 0 ty
                                 pure (HLIR.MkAnnotation name specTy, newDefs)
                         )
                         params
-                (specRet, newDefs2) <- resolveSpecializationInType ret
+                (specRet, newDefs2) <- resolveSpecializationInType 0 ret
 
                 let arguments = Set.fromList (map (.name) specParams)
 
@@ -162,7 +162,7 @@ resolveSpecializationSingular (HLIR.MkTopStructureDeclaration ann fields)
                 (specFields, newDefs) <-
                     mapAndUnzipM
                         ( \(name, ty) -> do
-                            (specTy, newDefs) <- resolveSpecializationInType ty
+                            (specTy, newDefs) <- resolveSpecializationInType 0 ty
                             pure ((name, specTy), newDefs)
                         )
                         (Map.toList fields)
@@ -193,10 +193,10 @@ resolveSpecializationSingular (HLIR.MkTopExternalFunction ann params ret) = do
                     <$> forM
                         params
                         ( \(HLIR.MkAnnotation name ty) -> do
-                            (specTy, ns) <- resolveSpecializationInType ty
+                            (specTy, ns) <- resolveSpecializationInType 0 ty
                             pure (HLIR.MkAnnotation name specTy, ns)
                         )
-            (specRet, ns) <- resolveSpecializationInType ret
+            (specRet, ns) <- resolveSpecializationInType 0 ret
 
             let allNewDefs = concat nss ++ ns
 
@@ -270,12 +270,12 @@ resolveSpecializationInExpr (HLIR.MkExprLambda params ret body) = do
         mapAndUnzipM
             ( \case
                 HLIR.MkAnnotation name ty -> do
-                    (specTy, newDefs) <- resolveSpecializationInType ty.runIdentity
+                    (specTy, newDefs) <- resolveSpecializationInType 0 ty.runIdentity
                     pure (HLIR.MkAnnotation name (Identity specTy), newDefs)
             )
             params
     (specRet, newDefs2) <-
-        first Identity <$> resolveSpecializationInType ret.runIdentity
+        first Identity <$> resolveSpecializationInType 0 ret.runIdentity
 
     let arguments = Set.fromList (map (.name) specParams)
 
@@ -287,14 +287,14 @@ resolveSpecializationInExpr (HLIR.MkExprLambda params ret body) = do
 resolveSpecializationInExpr (HLIR.MkExprLetIn binding value inExpr ret) = do
     (specBinding, newDefs) <- case binding of
         HLIR.MkAnnotation name ty -> do
-            (specTy, newDefs) <- resolveSpecializationInType ty.runIdentity
+            (specTy, newDefs) <- resolveSpecializationInType 0 ty.runIdentity
             pure (HLIR.MkAnnotation name (Identity specTy), newDefs)
     (typedValue, newDefs1) <-
         withLocals (Set.singleton specBinding.name) $ resolveSpecializationInExpr value
     (typedInExpr, newDefs2) <-
         withLocals (Set.singleton specBinding.name) $ resolveSpecializationInExpr inExpr
     (specRet, newDefs3) <-
-        first Identity <$> resolveSpecializationInType ret.runIdentity
+        first Identity <$> resolveSpecializationInType 0 ret.runIdentity
 
     let allNewDefs = newDefs ++ newDefs1 ++ newDefs2 ++ newDefs3
 
@@ -304,7 +304,7 @@ resolveSpecializationInExpr (HLIR.MkExprCondition cond thenB elseB branchTy) = d
     (typedThen, newDefs2) <- resolveSpecializationInExpr thenB
     (typedElse, newDefs3) <- resolveSpecializationInExpr elseB
     (specBranchTy, newDefs4) <-
-        first Identity <$> resolveSpecializationInType branchTy.runIdentity
+        first Identity <$> resolveSpecializationInType 0 branchTy.runIdentity
 
     pure
         ( HLIR.MkExprCondition typedCond typedThen typedElse specBranchTy
@@ -313,7 +313,7 @@ resolveSpecializationInExpr (HLIR.MkExprCondition cond thenB elseB branchTy) = d
 resolveSpecializationInExpr (HLIR.MkExprApplication callee args retTy) = do
     (typedCallee, newDefs1) <- resolveSpecializationInExpr callee
     (typedArgs, newDefs2) <- mapAndUnzipM resolveSpecializationInExpr args
-    (specRetTy, newDefs3) <- resolveSpecializationInType retTy.runIdentity
+    (specRetTy, newDefs3) <- resolveSpecializationInType 0 retTy.runIdentity
 
     pure
         ( HLIR.MkExprApplication typedCallee typedArgs (Identity specRetTy)
@@ -323,7 +323,7 @@ resolveSpecializationInExpr (HLIR.MkExprStructureAccess struct field) = do
     (typedStruct, newDefs) <- resolveSpecializationInExpr struct
     pure (HLIR.MkExprStructureAccess typedStruct field, newDefs)
 resolveSpecializationInExpr (HLIR.MkExprStructureCreation ann fields) = do
-    (specAnn, newDefs) <- resolveSpecializationInType ann
+    (specAnn, newDefs) <- resolveSpecializationInType 0 ann
     (typedFields, newDefs2) <-
         mapAndUnzipM
             ( \(name, expr) -> do
@@ -340,33 +340,33 @@ resolveSpecializationInExpr (HLIR.MkExprStructureCreation ann fields) = do
 resolveSpecializationInExpr (HLIR.MkExprDereference e targetType) = do
     (typedE, newDefs) <- resolveSpecializationInExpr e
     (specTargetType, newDefs2) <-
-        first Identity <$> resolveSpecializationInType targetType.runIdentity
+        first Identity <$> resolveSpecializationInType 0 targetType.runIdentity
 
     pure (HLIR.MkExprDereference typedE specTargetType, newDefs ++ newDefs2)
 resolveSpecializationInExpr (HLIR.MkExprReference e targetType) = do
     (typedE, newDefs) <- resolveSpecializationInExpr e
     (specTargetType, newDefs2) <-
-        first Identity <$> resolveSpecializationInType targetType.runIdentity
+        first Identity <$> resolveSpecializationInType 0 targetType.runIdentity
 
     pure (HLIR.MkExprReference typedE specTargetType, newDefs ++ newDefs2)
 resolveSpecializationInExpr (HLIR.MkExprUpdate update value updateType) = do
     (typedUpdate, newDefs1) <- resolveSpecializationInExpr update
     (typedValue, newDefs2) <- resolveSpecializationInExpr value
     (typedUpdateType, newDefs3) <-
-        first Identity <$> resolveSpecializationInType updateType.runIdentity
+        first Identity <$> resolveSpecializationInType 0 updateType.runIdentity
 
     pure
         ( HLIR.MkExprUpdate typedUpdate typedValue typedUpdateType
         , newDefs1 ++ newDefs2 ++ newDefs3
         )
 resolveSpecializationInExpr (HLIR.MkExprSizeOf t) = do
-    (specTy, newDefs) <- resolveSpecializationInType t
+    (specTy, newDefs) <- resolveSpecializationInType 0 t
     pure (HLIR.MkExprSizeOf specTy, newDefs)
 resolveSpecializationInExpr (HLIR.MkExprSingleIf cond thenB ret) = do
     (typedCond, newDefs1) <- resolveSpecializationInExpr cond
     (typedThen, newDefs2) <- resolveSpecializationInExpr thenB
     (specRet, newDefs3) <-
-        first Identity <$> resolveSpecializationInType ret.runIdentity
+        first Identity <$> resolveSpecializationInType 0 ret.runIdentity
 
     pure
         ( HLIR.MkExprSingleIf typedCond typedThen specRet
@@ -374,14 +374,14 @@ resolveSpecializationInExpr (HLIR.MkExprSingleIf cond thenB ret) = do
         )
 resolveSpecializationInExpr (HLIR.MkExprCast e t) = do
     (typedE, newDefs1) <- resolveSpecializationInExpr e
-    (specT, newDefs2) <- resolveSpecializationInType t
+    (specT, newDefs2) <- resolveSpecializationInType 0 t
 
     pure (HLIR.MkExprCast typedE specT, newDefs1 ++ newDefs2)
 resolveSpecializationInExpr (HLIR.MkExprWhile cond body ret inExpr) = do
     (typedCond, newDefs1) <- resolveSpecializationInExpr cond
     (typedBody, newDefs2) <- resolveSpecializationInExpr body
     (specRet, newDefs3) <-
-        first Identity <$> resolveSpecializationInType ret.runIdentity
+        first Identity <$> resolveSpecializationInType 0 ret.runIdentity
     (typedInExpr, newDefs4) <- resolveSpecializationInExpr inExpr
 
     pure
@@ -402,7 +402,7 @@ resolveSpecializationInExpr (HLIR.MkExprIfIs expr pat thenBr elseBr ty) = do
             )
             elseBr
     (specTy, newDefs5) <-
-        first Identity <$> resolveSpecializationInType ty.runIdentity
+        first Identity <$> resolveSpecializationInType 0 ty.runIdentity
 
     pure
         ( HLIR.MkExprIfIs typedExpr typedPat typedThenBr typedElseBr specTy
@@ -417,7 +417,7 @@ resolveSpecializationInExpr (HLIR.MkExprWhileIs expr pat body ret inExpr) = do
     (typedBody, newDefs3) <-
         withLocals bindings $ resolveSpecializationInExpr body
     (specRet, newDefs4) <-
-        first Identity <$> resolveSpecializationInType ret.runIdentity
+        first Identity <$> resolveSpecializationInType 0 ret.runIdentity
     (typedInExpr, newDefs5) <- resolveSpecializationInExpr inExpr
 
     pure
@@ -445,7 +445,7 @@ resolveSpecializationInPattern (HLIR.MkPatternVariable ann) = do
 resolveSpecializationInPattern (HLIR.MkPatternLiteral lit) = do
     pure (HLIR.MkPatternLiteral lit, [], mempty)
 resolveSpecializationInPattern (HLIR.MkPatternStructure ann fields) = do
-    (specAnn, newDefs) <- resolveSpecializationInType ann
+    (specAnn, newDefs) <- resolveSpecializationInType 0 ann
     (typedFields, newDefs2, bindings) <-
         unzip3
             <$> mapM
@@ -475,7 +475,7 @@ resolveSpecializationInPattern (HLIR.MkPatternConstructor name patterns ty) = do
 resolveSpecializationInPattern (HLIR.MkPatternLet binding) = do
     (specBinding, newDefs) <- case binding of
         HLIR.MkAnnotation name ty -> do
-            (specTy, newDefs) <- resolveSpecializationInType ty.runIdentity
+            (specTy, newDefs) <- resolveSpecializationInType 0 ty.runIdentity
             pure (HLIR.MkAnnotation name (Identity specTy), newDefs)
     pure (HLIR.MkPatternLet specBinding, newDefs, Set.singleton binding.name)
 
@@ -673,7 +673,7 @@ resolveSpecializationForIdentifier (HLIR.MkAnnotation name (Identity ty)) = do
                         -- to avoid duplicating work.
                         if Set.member newName specState.rememberedVariables
                             then do
-                                (newTy, ns) <- resolveSpecializationInType =<< M.applySubstitution subst ty
+                                (newTy, ns) <- resolveSpecializationInType 0 =<< M.applySubstitution subst ty
                                 let newAnn = HLIR.MkAnnotation newName (Identity newTy)
                                 pure (newAnn, ns, False)
                             else do
@@ -693,12 +693,12 @@ resolveSpecializationForIdentifier (HLIR.MkAnnotation name (Identity ty)) = do
                                             parameters
                                             ( \(HLIR.MkAnnotation paramName paramType) -> do
                                                 (newParamType, ns) <-
-                                                    resolveSpecializationInType =<< M.applySubstitution subst paramType
+                                                    resolveSpecializationInType 0 =<< M.applySubstitution subst paramType
                                                 pure (HLIR.MkAnnotation paramName newParamType, ns)
                                             )
 
                                 (specReturnType, ns) <-
-                                    resolveSpecializationInType =<< M.applySubstitution subst returnType
+                                    resolveSpecializationInType 0 =<< M.applySubstitution subst returnType
 
                                 let arguments = Set.fromList (map (.name) specParameters)
 
@@ -739,7 +739,7 @@ resolveSpecializationForIdentifier (HLIR.MkAnnotation name (Identity ty)) = do
                     -- to avoid duplicating work.
                     if Set.member newEnumName specState.rememberedEnumerations
                         then do
-                            (newTy, ns) <- resolveSpecializationInType =<< M.applySubstitution subst ty
+                            (newTy, ns) <- resolveSpecializationInType 0 =<< M.applySubstitution subst ty
 
                             let newAnn = HLIR.MkAnnotation newVarName (Identity newTy)
                             pure (newAnn, ns, True)
@@ -761,7 +761,7 @@ resolveSpecializationForIdentifier (HLIR.MkAnnotation name (Identity ty)) = do
                                                         mapAndUnzipM
                                                             ( \ty' -> do
                                                                 sTy <- M.applySubstitution subst ty'
-                                                                resolveSpecializationInType sTy
+                                                                resolveSpecializationInType 0 sTy
                                                             )
                                                             tys
                                                     pure
@@ -836,7 +836,7 @@ resolveSpecializationForImplementation name ty = do
                         -- to avoid duplicating work.
                         if Set.member newName specState.rememberedImplementations
                             then do
-                                (newTy, ns) <- resolveSpecializationInType =<< M.applySubstitution implSubst ty
+                                (newTy, ns) <- resolveSpecializationInType 0 =<< M.applySubstitution implSubst ty
                                 pure (HLIR.MkAnnotation newName (Identity newTy), ns, False)
                             else do
                                 -- Marking this specialization as created
@@ -852,11 +852,11 @@ resolveSpecializationForImplementation name ty = do
                                             parameters
                                             ( \(HLIR.MkAnnotation paramName paramType) -> do
                                                 (newParamType, ns) <-
-                                                    resolveSpecializationInType =<< M.applySubstitution implSubst paramType
+                                                    resolveSpecializationInType 0 =<< M.applySubstitution implSubst paramType
                                                 pure (HLIR.MkAnnotation paramName newParamType, ns)
                                             )
                                 (specReturnType, ns) <-
-                                    resolveSpecializationInType =<< M.applySubstitution implSubst returnType
+                                    resolveSpecializationInType 0 =<< M.applySubstitution implSubst returnType
 
                                 newBody <- applySubstInExpr implSubst body
 
@@ -896,7 +896,7 @@ resolveSpecializationForImplementation name ty = do
             -- If no implementation or property was found, default to
             -- the original name and type.
 
-            (newTy, ns) <- resolveSpecializationInType ty
+            (newTy, ns) <- resolveSpecializationInType 0 ty
 
             if name `Set.member` (specState.rememberedNatives <> specState.rememberedLocals)
                 then pure (HLIR.MkAnnotation name (Identity newTy), ns, False)
@@ -950,38 +950,48 @@ resolveSpecializationForImplementation name ty = do
 -- | If a specialized version does not exist, it throws an error.
 resolveSpecializationInType ::
     (MonadIO m, M.MonadError M.Error m) =>
+    Integer ->
     HLIR.Type ->
     m (HLIR.Type, [HLIR.TLIR "toplevel"])
-resolveSpecializationInType (HLIR.MkTyPointer ty) = do
-    (typedTy, newDefs) <- resolveSpecializationInType ty
+resolveSpecializationInType depth ty
+    | depth > 20 = M.throw (M.RecursionLimitExceeded 20)
+    | otherwise = resolveSpecializationInType' depth ty
+
+resolveSpecializationInType' ::
+    (MonadIO m, M.MonadError M.Error m) =>
+    Integer ->
+    HLIR.Type ->
+    m (HLIR.Type, [HLIR.TLIR "toplevel"])
+resolveSpecializationInType' n (HLIR.MkTyPointer ty) = do
+    (typedTy, newDefs) <- resolveSpecializationInType (n + 1) ty
     pure (HLIR.MkTyPointer typedTy, newDefs)
-resolveSpecializationInType (args HLIR.:->: ret) = do
-    (typedArgs, newDefs1) <- mapAndUnzipM resolveSpecializationInType args
-    (typedRet, newDefs2) <- resolveSpecializationInType ret
+resolveSpecializationInType' n (args HLIR.:->: ret) = do
+    (typedArgs, newDefs1) <- mapAndUnzipM (resolveSpecializationInType (n + 1)) args
+    (typedRet, newDefs2) <- resolveSpecializationInType (n + 1) ret
 
     pure (typedArgs HLIR.:->: typedRet, concat newDefs1 ++ newDefs2)
-resolveSpecializationInType (HLIR.MkTyApp (HLIR.MkTyId base) args) =
-    maybeResolveStructure base args
-resolveSpecializationInType (HLIR.MkTyId name) =
-    maybeResolveStructure name []
-resolveSpecializationInType (HLIR.MkTyApp base args) = do
-    (typedBase, newDefs1) <- resolveSpecializationInType base
-    (typedArgs, newDefs2) <- mapAndUnzipM resolveSpecializationInType args
+resolveSpecializationInType' n (HLIR.MkTyApp (HLIR.MkTyId base) args) =
+    maybeResolveStructure n base args
+resolveSpecializationInType' n (HLIR.MkTyId name) =
+    maybeResolveStructure n name []
+resolveSpecializationInType' n (HLIR.MkTyApp base args) = do
+    (typedBase, newDefs1) <- resolveSpecializationInType (n + 1) base
+    (typedArgs, newDefs2) <- mapAndUnzipM (resolveSpecializationInType (n + 1)) args
 
     pure (HLIR.MkTyApp typedBase typedArgs, newDefs1 ++ concat newDefs2)
-resolveSpecializationInType (HLIR.MkTyVar ref) = do
+resolveSpecializationInType' n (HLIR.MkTyVar ref) = do
     ty <- liftIO $ readIORef ref
     case ty of
-        HLIR.Link ty' -> resolveSpecializationInType ty'
+        HLIR.Link ty' -> resolveSpecializationInType n ty'
         HLIR.Unbound{} -> pure (HLIR.MkTyVar ref, [])
-resolveSpecializationInType (HLIR.MkTyQuantified name) = do
+resolveSpecializationInType' _ (HLIR.MkTyQuantified name) = do
     pure (HLIR.MkTyQuantified name, [])
-resolveSpecializationInType (HLIR.MkTyAnonymousStructure b n fields) = do
-    (n', newDefs) <- resolveSpecializationInType n
+resolveSpecializationInType' depth (HLIR.MkTyAnonymousStructure b n fields) = do
+    (n', newDefs) <- resolveSpecializationInType (depth + 1) n
     (typedFields, newDefs2) <-
         mapAndUnzipM
             ( \(name, ty) -> do
-                (typedTy, defs) <- resolveSpecializationInType ty
+                (typedTy, defs) <- resolveSpecializationInType (depth + 1) ty
                 pure ((name, typedTy), defs)
             )
             (Map.toList fields)
@@ -996,10 +1006,11 @@ resolveSpecializationInType (HLIR.MkTyAnonymousStructure b n fields) = do
 -- | that were created during the specialization process.
 maybeResolveStructure ::
     (MonadIO m, M.MonadError M.Error m) =>
+    Integer ->
     Text ->
     [HLIR.Type] ->
     m (HLIR.Type, [HLIR.TLIR "toplevel"])
-maybeResolveStructure name args = do
+maybeResolveStructure depth name args = do
     -- Reading the current state of the specializer
     specState <- liftIO $ readIORef defaultSpecializer
 
@@ -1049,7 +1060,7 @@ maybeResolveStructure name args = do
                     (ns, specializedFields) <-
                         sequence
                             <$> Map.traverseWithKey
-                                (\_ ty -> swap <$> (resolveSpecializationInType =<< M.applySubstitution s ty))
+                                (\_ ty -> swap <$> (resolveSpecializationInType (depth + 1) =<< M.applySubstitution s ty))
                                 instMap
 
                     -- Creating the new specialized structure declaration
@@ -1074,14 +1085,15 @@ maybeResolveStructure name args = do
                             }
 
                     pure (HLIR.MkTyId specName, ns ++ [newStruct])
-        Nothing -> maybeResolveEnumeration name args
+        Nothing -> maybeResolveEnumeration depth name args
 
 maybeResolveEnumeration ::
     (MonadIO m, M.MonadError M.Error m) =>
+    Integer ->
     Text ->
     [HLIR.Type] ->
     m (HLIR.Type, [HLIR.TLIR "toplevel"])
-maybeResolveEnumeration name args = do
+maybeResolveEnumeration depth name args = do
     specState <- liftIO $ readIORef defaultSpecializer
 
     case Map.lookup name specState.enumerations of
@@ -1128,7 +1140,7 @@ maybeResolveEnumeration name args = do
                                 (Map.toList instMap)
                                 ( \(n, ty') -> do
                                     sTy <- M.applySubstitution s ty'
-                                    (finalTy, ns') <- resolveSpecializationInType sTy
+                                    (finalTy, ns') <- resolveSpecializationInType (depth + 1) sTy
                                     pure (ns', (n <> "_" <> Text.intercalate "_" (map toText orderedVars), finalTy))
                                 )
 
