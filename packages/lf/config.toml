@@ -1,0 +1,11 @@
+[package]
+name = "LiFe Project Manager"
+version = "0.1.0"
+author = "Thomas Vergne"
+main = "main.rl"
+
+[features.aliases]
+std = "$REALITY_DIR/std"
+
+[features.libc]
+libraries = ["libc/System.c"]
