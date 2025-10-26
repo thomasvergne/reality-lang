@@ -3,11 +3,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
-#include "../dependencies/gc/src/gc.h"
-
-GarbageCollector* get_gc() {
-    return &gc;
-}
+#include <gc.h>
+#include <ctype.h>
 
 bool string_eq(char* a, char* b) {
     return strcmp(a, b) == 0;
@@ -15,7 +12,7 @@ bool string_eq(char* a, char* b) {
 
 char* malloc_string(const char* content) {
     size_t length = strlen(content);
-    char* copy = (char*)gc_malloc(get_gc(), length + 1);
+    char* copy = (char*)GC_MALLOC(length + 1);
     if (copy) {
         strcpy(copy, content);
     }
@@ -25,7 +22,7 @@ char* malloc_string(const char* content) {
 char* u64_to_string(uint64_t number) {
     size_t length = snprintf(NULL, 0, "%llu", number);
 
-    char* result = (char*)gc_malloc(get_gc(), length + 1);
+    char* result = (char*)GC_MALLOC(length + 1);
     if (result) {
         snprintf(result, length + 1, "%llu", number);
     }
@@ -35,7 +32,7 @@ char* u64_to_string(uint64_t number) {
 char* number_to_string(int number) {
     size_t length = snprintf(NULL, 0, "%d", number);
 
-    char* result = (char*)gc_malloc(get_gc(), length + 1);
+    char* result = (char*)GC_MALLOC(length + 1);
     if (result) {
         snprintf(result, length + 1, "%d", number);
     }
@@ -45,7 +42,7 @@ char* number_to_string(int number) {
 char* pointer_to_string(void* ptr) {
     size_t length = snprintf(NULL, 0, "%p", ptr);
 
-    char* result = (char*)gc_malloc(get_gc(), length + 1);
+    char* result = (char*)GC_MALLOC(length + 1);
     if (result) {
         snprintf(result, length + 1, "%p", ptr);
     }
@@ -140,9 +137,14 @@ uint64_t mod_u64_ext(uint64_t a, uint64_t b) {
     return 0;
 }
 
+bool char_eq(char a, char b) {
+    return a == b;
+}
+
+
 char* concat_strings(char* a, char* b) {
     size_t length = strlen(a) + strlen(b);
-    char* result = (char*)gc_malloc(get_gc(), length + 1);
+    char* result = (char*)GC_MALLOC(length + 1);
     if (result) {
         strcpy(result, a);
         strcat(result, b);
@@ -160,5 +162,38 @@ int free_ext(void* ptr) {
 }
 
 void* realloc_ext(void* ptr, uint64_t size) {
-    return realloc(ptr, size);
+    return GC_REALLOC(ptr, size);
+}
+
+void panic_ext(char* message) {
+    fprintf(stderr, "%s\n", message);
+    exit(1); 
+}
+
+bool is_whitespace(char c) {
+    return isspace((unsigned char)c);
+}
+
+bool is_alpha(char c) {
+    return isalpha((unsigned char)c);
+}
+
+bool is_alphanumeric(char c) {
+    return isalnum((unsigned char)c);
+}
+
+bool is_digit(char c) {
+    return isdigit((unsigned char)c);
+}
+
+void* BDWGC_malloc(size_t size) {
+    return GC_MALLOC(size);
+}
+
+void* BDWGC_realloc(void* ptr, size_t size) {
+    return GC_REALLOC(ptr, size);
+}
+
+void BDWGC_free(void* ptr) {
+    GC_FREE(ptr);
 }
