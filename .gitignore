@@ -1,6 +1,13 @@
 /dist-newstyle
+
 *.out
+*.exe
+*.dSYM
+
 *.c
-!libc/*.c
+!**/libc/*.c
+
+output
+bin
 
 stan.html
