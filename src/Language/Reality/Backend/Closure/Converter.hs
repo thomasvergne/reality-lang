@@ -10,10 +10,22 @@ import Language.Reality.Backend.Closure.Free qualified as M
 import Language.Reality.Backend.Closure.Hoisting qualified as HT
 import Language.Reality.Frontend.Typechecker.Checker qualified as TC
 import Language.Reality.Syntax.HLIR qualified as HLIR
+import Language.Reality.Backend.Specialization.Resolver qualified as SR
 
 {-# NOINLINE structureDeclarations #-}
 structureDeclarations :: IORef [HLIR.TLIR "toplevel"]
 structureDeclarations = IO.unsafePerformIO $ newIORef []
+
+convertTypeField :: (MonadIO m) => HLIR.StructureMember HLIR.Type -> m (HLIR.StructureMember HLIR.Type, [HLIR.TLIR "toplevel"])
+convertTypeField (HLIR.MkStructField name ty) = do
+    (newTy, ns) <- convertType ty
+    pure (HLIR.MkStructField name newTy, ns)
+convertTypeField (HLIR.MkStructStruct name fields) = do
+    (newFields, nss) <- mapAndUnzipM convertTypeField fields
+    pure (HLIR.MkStructStruct name newFields, concat nss)
+convertTypeField (HLIR.MkStructUnion name fields) = do
+    (newFields, nss) <- mapAndUnzipM convertTypeField fields
+    pure (HLIR.MkStructUnion name newFields, concat nss)
 
 getGC :: HLIR.TLIR "expression"
 getGC =
@@ -35,21 +47,34 @@ malloc t =
         { HLIR.callee =
             HLIR.MkExprVariable
                 ( HLIR.MkAnnotation
-                    "gc_malloc"
+                    "GC_MALLOC"
                     (Identity (HLIR.MkTyFun [HLIR.MkTyId "u64"] (HLIR.MkTyPointer HLIR.MkTyChar)))
                 )
                 []
-        , HLIR.arguments = [getGC, HLIR.MkExprSizeOf t]
+        , HLIR.arguments = [HLIR.MkExprSizeOf t]
         , HLIR.returnType = Identity (HLIR.MkTyPointer HLIR.MkTyChar)
         }
 
 expandStructure :: (MonadIO m) => HLIR.TLIR "toplevel" -> m HLIR.Type
 expandStructure (HLIR.MkTopStructureDeclaration name fields) = do
-    newFields <- traverse expandType fields
+    newFields <- traverse expandTypeField fields
+    let ty = SR.fieldToType <$> newFields
 
-    pure $ HLIR.MkTyAnonymousStructure False (HLIR.MkTyId name.name) newFields
+    pure $ HLIR.MkTyAnonymousStructure False (HLIR.MkTyId name.name) (Map.fromList ty)
 expandStructure (HLIR.MkTopLocated _ e) = expandStructure e
 expandStructure _ = error "Expected a structure declaration"
+
+
+expandTypeField :: (MonadIO m) => HLIR.StructureMember HLIR.Type -> m (HLIR.StructureMember HLIR.Type)
+expandTypeField (HLIR.MkStructField name ty) = do
+    newTy <- expandType ty
+    pure (HLIR.MkStructField name newTy)
+expandTypeField (HLIR.MkStructStruct name fields) = do
+    newFields <- mapM expandTypeField fields
+    pure (HLIR.MkStructStruct name newFields)
+expandTypeField (HLIR.MkStructUnion name fields) = do
+    newFields <- mapM expandTypeField fields
+    pure (HLIR.MkStructUnion name newFields)
 
 expandType :: (MonadIO m) => HLIR.Type -> m HLIR.Type
 expandType (HLIR.MkTyAnonymousStructure b ann fields) = do
@@ -109,13 +134,16 @@ convertType (HLIR.MkTyFun argTypes returnType) = do
             HLIR.MkTopStructureDeclaration
                 { HLIR.header = HLIR.MkAnnotation lambdaStructName []
                 , HLIR.fields =
-                    Map.fromList
-                        [
-                            ( "function"
-                            , HLIR.MkTyFun (HLIR.MkTyPointer (HLIR.MkTyId "void") : newArgTypes) newReturnType
+                    [
+                        HLIR.MkStructField "function"
+                            ( HLIR.MkTyFun
+                                ( HLIR.MkTyPointer HLIR.MkTyChar
+                                    : newArgTypes
+                                )
+                                newReturnType
                             )
-                        , ("environment", HLIR.MkTyPointer (HLIR.MkTyId "void"))
-                        ]
+                    ,   HLIR.MkStructField "environment" (HLIR.MkTyPointer HLIR.MkTyChar)
+                    ]
                 }
 
     -- Expanding the structure to get a type with all types reduced
@@ -250,15 +278,15 @@ convertSingularNode (HLIR.MkTopLocated p e) = do
 convertSingularNode (HLIR.MkTopStructureDeclaration name fields) = do
     (nss, newFields) <-
         mapAndUnzipM
-            ( \(fieldName, fieldType) -> do
-                (newFieldType, ns) <- convertType fieldType
-                pure (ns, (fieldName, newFieldType))
+            ( \field -> do
+                (newFieldType, ns) <- convertTypeField field
+                pure (ns, newFieldType)
             )
-            (Map.toList fields)
+            fields
 
-    modifyIORef' structures (Map.insert name.name (Map.fromList newFields))
+    modifyIORef' structures (Map.insert name.name newFields)
     pure
-        $ concat nss <> [HLIR.MkTopStructureDeclaration name (Map.fromList newFields)]
+        $ concat nss <> [HLIR.MkTopStructureDeclaration name newFields]
 convertSingularNode (HLIR.MkTopPublic node) = do
     ns <- convertSingularNode node
     pure (map HLIR.MkTopPublic ns)
@@ -532,7 +560,7 @@ convertExpression (HLIR.MkExprStructureAccess struct field) = do
             -- If the structure is named, we look it up in the global environment
             -- to find its fields
             Just structName | Just fields <- Map.lookup structName structures' ->
-                case Map.lookup field fields of
+                case lookupField field fields of
                     Just ty -> pure (HLIR.MkExprStructureAccess newStruct field, ns, ty)
                     -- If the field is not found, we raise a compiler error
                     Nothing ->
@@ -540,6 +568,25 @@ convertExpression (HLIR.MkExprStructureAccess struct field) = do
                             $ "Field " <> field <> " does not exist in structure " <> structName
             -- If the structure is not found, we raise a compiler error
             _ -> M.compilerError $ "Expected a structure type: " <> show structTy
+    where
+        lookupField :: Text -> [HLIR.StructureMember HLIR.Type] -> Maybe HLIR.Type
+        lookupField fName = foldr
+                ( \member acc ->
+                    case member of
+                        HLIR.MkStructField mName mType ->
+                            if mName == fName then Just mType else acc
+                        HLIR.MkStructStruct mName mFields -> do
+                            let fieldsAsType = Map.fromList $ map SR.fieldToType mFields
+                            if mName == fName
+                                then Just (HLIR.MkTyAnonymousStructure False (HLIR.MkTyId mName) fieldsAsType)
+                                else acc
+                        HLIR.MkStructUnion mName mFields -> do
+                            let fieldsAsType = Map.fromList $ map SR.fieldToType mFields
+                            if mName == fName
+                                then Just (HLIR.MkTyAnonymousStructure True (HLIR.MkTyId mName) fieldsAsType)
+                                else acc
+                )
+                Nothing
 convertExpression (HLIR.MkExprStructureCreation ann fields) = do
     (newFields, nss, tys) <- unzip3 <$> mapM convertExpression (Map.elems fields)
     let fieldNames = Map.keys fields
@@ -595,38 +642,43 @@ convertExpression (HLIR.MkExprWhile cond body _ inExpr) = do
         , ns1 <> ns2 <> ns3
         , inTy
         )
-convertExpression (HLIR.MkExprIfIs expr pat thenB elseB _) = do
-    (newExpr, ns1, _) <- convertExpression expr
-    (newThen, ns2, thenTy) <- convertExpression thenB
-    (newElse, ns3, _) <-
-        maybe
-            (pure (Nothing, [], thenTy))
-            ( \x -> do
-                (e, nse, ety) <- convertExpression x
-                pure (Just e, nse, ety)
-            )
-            elseB
+convertExpression (HLIR.MkExprIs e p _) = do
+    (newE, ns1, ty) <- convertExpression e
+    (newP, ns2) <- convertPattern p
+    (newTy, ns3) <- convertType ty
+
+    let freeP = M.free newP
+
+    modifyIORef' locals (<> freeP)
 
     pure
-        ( HLIR.MkExprIfIs newExpr pat newThen newElse (Identity thenTy)
+        ( HLIR.MkExprIs newE newP (Identity newTy)
         , ns1 <> ns2 <> ns3
-        , thenTy
+        , HLIR.MkTyId "bool"
         )
 convertExpression (HLIR.MkExprFunctionAccess {}) = M.compilerError "Function access should have been inlined before closure conversion"
-convertExpression (HLIR.MkExprWhileIs expr pat body _ inExpr) = do
-    (newExpr, ns1, _) <- convertExpression expr
-    (newBody, ns2, _) <- convertExpression body
-    (newInExpr, ns3, inTy) <- convertExpression inExpr
-    pure
-        ( HLIR.MkExprWhileIs newExpr pat newBody (Identity inTy) newInExpr
-        , ns1 <> ns2 <> ns3
-        , inTy
-        )
 convertExpression (HLIR.MkExprReturn e) = do
     (newE, ns, eTy) <- convertExpression e
     pure (HLIR.MkExprReturn newE, ns, eTy)
 convertExpression HLIR.MkExprContinue = pure (HLIR.MkExprContinue, [], HLIR.MkTyId "void")
 convertExpression HLIR.MkExprBreak = pure (HLIR.MkExprBreak, [], HLIR.MkTyId "void")
+
+convertPattern :: (MonadIO m) => HLIR.TLIR "pattern" -> m (HLIR.TLIR "pattern", [HLIR.TLIR "toplevel"])
+convertPattern (HLIR.MkPatternLocated _ p) = convertPattern p
+convertPattern (HLIR.MkPatternLiteral lit) = pure (HLIR.MkPatternLiteral lit, [])
+convertPattern (HLIR.MkPatternVariable ann) = pure (HLIR.MkPatternVariable ann, [])
+convertPattern HLIR.MkPatternWildcard = pure (HLIR.MkPatternWildcard, [])
+convertPattern (HLIR.MkPatternStructure ann fields) = do
+    (newFields, nss) <- mapAndUnzipM convertPattern (Map.elems fields)
+    let fieldNames = Map.keys fields
+        newFieldMap = Map.fromList (zip fieldNames newFields)
+    pure (HLIR.MkPatternStructure ann newFieldMap, mconcat nss)
+convertPattern (HLIR.MkPatternConstructor name patterns ty) = do
+    (newPatterns, nss) <- mapAndUnzipM convertPattern patterns
+    pure (HLIR.MkPatternConstructor name newPatterns ty, mconcat nss)
+convertPattern (HLIR.MkPatternLet ann) = do
+    (newType, ns) <- convertType ann.typeValue.runIdentity
+    pure (HLIR.MkPatternLet ann{HLIR.typeValue = Identity newType}, ns)
 
 -- | Convert a lambda expression to a closure-converted expression.
 -- | This function takes a lambda expression, and returns an expression with closures
@@ -677,7 +729,7 @@ convertLambda (HLIR.MkExprLambda args _ body) reserved = do
     let environmentStructure =
             HLIR.MkTopStructureDeclaration
                 { HLIR.header = HLIR.MkAnnotation environmentStructName []
-                , HLIR.fields = environment
+                , HLIR.fields = map (uncurry HLIR.MkStructField) (Map.toList environment)
                 }
         environmentStructCreation =
             HLIR.MkExprStructureCreation
@@ -754,17 +806,16 @@ convertLambda (HLIR.MkExprLambda args _ body) reserved = do
             HLIR.MkTopStructureDeclaration
                 { HLIR.header = HLIR.MkAnnotation lambdaStructName []
                 , HLIR.fields =
-                    Map.fromList
-                        [
-                            ( "function"
-                            , HLIR.MkTyFun
+                    [
+                        HLIR.MkStructField "function"
+                            ( HLIR.MkTyFun
                                 ( HLIR.MkTyPointer (HLIR.MkTyId environmentStructName)
                                     : map (runIdentity . (.typeValue)) typedArguments
                                 )
                                 newReturnType
                             )
-                        , ("environment", HLIR.MkTyPointer (HLIR.MkTyId environmentStructName))
-                        ]
+                    , HLIR.MkStructField "environment" (HLIR.MkTyPointer (HLIR.MkTyId environmentStructName))
+                    ]
                 }
 
     -- Creating the environment allocation. We need this because closures
@@ -929,7 +980,7 @@ locals :: IORef (Map Text HLIR.Type)
 locals = IO.unsafePerformIO $ newIORef Map.empty
 
 {-# NOINLINE structures #-}
-structures :: IORef (Map Text (Map Text HLIR.Type))
+structures :: IORef (Map Text [HLIR.StructureMember HLIR.Type])
 structures = IO.unsafePerformIO $ newIORef Map.empty
 
 freshSymbol :: (MonadIO m) => Text -> m Text
