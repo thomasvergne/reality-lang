@@ -2,6 +2,9 @@ mod string {
     type string = *char;
 }
 
+enum unit {
+    unit
+}
 
 fn and(a: bool, b: bool) -> bool {
     if a {
@@ -138,6 +141,7 @@ extern fn malloc_string(s: string) -> string;
 extern fn strlen(s: string) -> u32;
 extern fn strcat(x: string, y: string) -> string;
 extern fn concat_strings(a: string, b: string) -> string;
+extern fn char_eq(a: char, b: char) -> bool;
 
 mod String {
     fn new(data: string) -> String {
@@ -165,7 +169,7 @@ property show_prec[A](x: A, i: i32) -> String;
 
 impl fn (x: String) show_prec(i: i32) -> String {
     if i > 0 {
-        String::new("\"" + x.data + "\"")
+        "\"" + x + "\""
     } else {
         x
     }
@@ -175,16 +179,8 @@ impl fn (x: u64) show_prec(_: i32) -> String {
     String::new(u64_to_string(x))
 }
 
-impl fn (x: string) show_prec(i: i32) -> String {
-    String::new(if i > 0 { "\"" } else { "" } + x + if i > 0 { "\"" } else { "" })
-}
-
-impl fn (x: string) add(y: string) -> string {
-    (String::new(x) + String::new(y)).data
-}
-
 impl fn (x: bool) show_prec(_: i32) -> String {
-    String::new(if (x) { "true" } else { "false" })
+    if (x) { "true" } else { "false" }
 }
 
 impl fn (x: *A) show_prec[A](i: i32) -> String {
@@ -196,5 +192,14 @@ fn show[A](x: A) -> String {
 }
 
 fn print[A](x: A) -> i32 {
-    printf((show(x) + String::new("\n")).data)
+    printf((show(x) + "\n").data)
 }
+
+impl fn (x: String) equals(y: String) -> bool {
+    string_eq(x.data, y.data)
+}
+
+impl fn (x: char) equals(y: char) -> bool {
+    char_eq(x, y)
+}
+

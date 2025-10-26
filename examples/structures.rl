@@ -1,19 +1,21 @@
-import string::*;
-import list::*;
-import actor;
-import option;
-import linked_list;
-
-fn factorial(n: u64) -> u64 {
-    if n == 0 {
-        1u64
-    } else {
-        n * factorial(n - 1)
-    }
-}
+import std::string::*;
+import std::list;
+import actor::*;
+import std::option;
+import std::linked_list::*;
+import std::iterator;
+import std::tuple;
 
 fn main(args: List[String]) -> i32 {
-    args.map(print);
+    let s = Some(Some("test"));
+
+    if s is Some(let value) && value is Some(let innerValue) {
+        print("Some test");
+    } else {
+        print("None or different");
+    }
+
+    print(s);
 
     return 0;
 }

@@ -1,4 +1,4 @@
-import list::*;
+import std::list::*;
 
 type FieldMutex = pthread_mutex_t;
 type FieldCondition = pthread_cond_t;
@@ -97,7 +97,7 @@ mod Actor {
             // For simplicity, we'll just return a default value.
             // In a real implementation, consider using Option or Result types.
 
-            Error(String::new("Actor is closed"))
+            Error("Actor is closed")
         } else {
             let message = (*(actor->mailbox))[actor->head];
             actor->head = actor->head + 1;
@@ -112,7 +112,7 @@ mod Actor {
         create_thread(|| {
             let result = 0;
             while not(actor->closed) || actor->head < actor->tail {
-                let msg = Actor::recv(actor);
+                let msg = recv(actor);
 
                 if msg is Success(let value) {
                     result = handler(value);

@@ -7,9 +7,9 @@ enum Option[T] {
 
 impl fn (c: Option[T]) show_prec[T](i: i32) -> String {
     if c is Some(let v) {
-        String::new("Some(") + show_prec(v, i + 1) + String::new(")")
+        "Some(" + show_prec(v, i + 1) + ")"
     } else {
-        String::new("None")
+        "None"
     }
 }
 

@@ -5,13 +5,13 @@ pub enum LinkedList[A] {
 
 impl fn (c: LinkedList[A]) show_prec[A](i: i32) -> String {
     if c is Cons(let head, let tail) {
-        String::new("Cons(")
+        "Cons("
             + show_prec(head, i + 1)
-            + String::new(", ")
+            + ", "
             + show_prec(*tail, i + 1)
-            + String::new(")")
+            + ")"
     } else {
-        String::new("Nil")
+        "Nil"
     }
 }
 
@@ -29,7 +29,7 @@ mod LinkedList {
             allocate::[LinkedList[A]](Nil)
         } else {
             let head = ptr[0u64];
-            let tail = LinkedList::from_pointer(ptr_add(ptr, 1), count - 1);
+            let tail = from_pointer(ptr_add(ptr, 1), count - 1);
 
             allocate::[LinkedList[A]](Cons(head, tail))
         }
