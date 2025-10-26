@@ -8,6 +8,8 @@ import Data.Map qualified as Map
 import Language.Reality.Frontend.Typechecker.Monad qualified as M
 import Language.Reality.Frontend.Typechecker.Unification qualified as M
 import Language.Reality.Syntax.HLIR qualified as HLIR
+import qualified Data.List as List
+import qualified Data.Foldable as List
 
 -- | TYPECHECKER
 -- | Typecheck a program.
@@ -40,7 +42,7 @@ checkToplevelSingular (HLIR.MkTopConstantDeclaration ann expr) = do
     expectedType <- M.performAliasRemoval ann.typeValue
 
     -- Checking the expression against the expected type
-    (typedExpr, cs) <- checkE expectedType expr
+    (typedExpr, cs, _) <- checkE expectedType expr
 
     -- Expression should not have any unresolved constraints as this
     -- means that there are function calls. But constants cannot have function calls.
@@ -127,7 +129,7 @@ checkToplevelSingular (HLIR.MkTopFunctionDeclaration ann params ret body) = do
             }
 
     -- Checking the function body against the return type
-    (typedBody, cs) <- checkE retType body'
+    (typedBody, cs, _) <- checkE retType body'
 
     -- Solving constraints generated during the body checking
     solveConstraints cs
@@ -163,20 +165,26 @@ checkToplevelSingular (HLIR.MkTopPublic node) = do
 checkToplevelSingular (HLIR.MkTopModuleDeclaration{}) = M.throw (M.CompilerError "Modules are not supported in the typechecker.")
 checkToplevelSingular (HLIR.MkTopStructureDeclaration ann fields) = do
     -- Removing aliases from the field types
-    fieldTypes <- traverse M.performAliasRemoval fields
-
-    forM_ fieldTypes $ \ty -> do
-        isFunction <- isFunctionType ty
-        when isFunction $ M.throw (M.NoFunctionInStructure ann.name ty)
+    fieldTypes <- mapM (mapM M.performAliasRemoval) fields
 
     -- Adding the structure to the environment
     modifyIORef' M.defaultCheckerState $ \s ->
         s
             { M.structures =
-                Map.insert ann.name (HLIR.Forall ann.typeValue fieldTypes) s.structures
+                Map.insert ann.name (HLIR.Forall ann.typeValue (buildFields fieldTypes)) s.structures
             }
 
     pure (HLIR.MkTopStructureDeclaration ann fieldTypes)
+
+    where
+        buildStructureType :: HLIR.StructureMember HLIR.Type -> Map Text HLIR.Type
+        buildStructureType (HLIR.MkStructField name ty) = Map.singleton name ty
+        buildStructureType (HLIR.MkStructStruct name fields') = Map.singleton name (HLIR.MkTyAnonymousStructure False (HLIR.MkTyId name) (buildFields fields'))
+        buildStructureType (HLIR.MkStructUnion name fields') = Map.singleton name (HLIR.MkTyAnonymousStructure False (HLIR.MkTyId name) (buildFields fields'))
+
+        buildFields :: [HLIR.StructureMember HLIR.Type] -> Map Text HLIR.Type
+        buildFields = foldr (Map.union . buildStructureType) Map.empty
+
 checkToplevelSingular (HLIR.MkTopExternalFunction ann params ret) = do
     -- Removing aliases from the parameter and return types
     paramTypes <- mapM (M.performAliasRemoval . (.typeValue)) params
@@ -258,7 +266,7 @@ checkToplevelSingular (HLIR.MkTopImplementation forType header params returnType
     -- Checking the function body against the return type
     -- We use `withEnvironment` to temporarily extend the environment
     -- with the parameters and for type while checking the body.
-    (newBody, cs) <- checkE aliasedReturnType body
+    (newBody, cs, _) <- checkE aliasedReturnType body
 
     modifyIORef' M.defaultCheckerState $ \s ->
         s
@@ -278,7 +286,7 @@ checkToplevelSingular (HLIR.MkTopImplementation forType header params returnType
             newBody
         )
 checkToplevelSingular (HLIR.MkTopAnnotation args node) = do
-    args' <- map (\(_, e, _) -> e) <$> forM args synthesizeE
+    args' <- map (\(_, e, _, _) -> e) <$> forM args synthesizeE
 
     typedNode <- checkToplevelSingular node
 
@@ -340,29 +348,29 @@ checkToplevelSingular (HLIR.MkTopEnumeration ann constructors) = do
 synthesizeE ::
     (MonadIO m, M.MonadError M.Error m) =>
     HLIR.HLIR "expression" ->
-    m (HLIR.Type, HLIR.TLIR "expression", M.Constraints)
+    m (HLIR.Type, HLIR.TLIR "expression", M.Constraints, Map Text (HLIR.Scheme HLIR.Type))
 synthesizeE (HLIR.MkExprLocated p e) = do
     HLIR.pushPosition p
 
-    (ty, expr, cs) <- synthesizeE e
+    (ty, expr, cs, b) <- synthesizeE e
 
     void HLIR.popPosition
 
-    pure (ty, HLIR.MkExprLocated p expr, cs)
+    pure (ty, HLIR.MkExprLocated p expr, cs, b)
 synthesizeE (HLIR.MkExprLiteral lit) = case lit of
     -- Literal values have known types, so we can directly return them
     -- along with their types and no constraints
 
     -- Int have type i32 by default
-    HLIR.MkLitInt n -> pure (HLIR.MkTyInt, HLIR.MkExprLiteral (HLIR.MkLitInt n), mempty)
+    HLIR.MkLitInt n -> pure (HLIR.MkTyInt, HLIR.MkExprLiteral (HLIR.MkLitInt n), mempty, mempty)
     -- Float have type f32 by default
-    HLIR.MkLitFloat f -> pure (HLIR.MkTyFloat, HLIR.MkExprLiteral (HLIR.MkLitFloat f), mempty)
+    HLIR.MkLitFloat f -> pure (HLIR.MkTyFloat, HLIR.MkExprLiteral (HLIR.MkLitFloat f), mempty, mempty)
     -- Bool have type bool
-    HLIR.MkLitBool b -> pure (HLIR.MkTyBool, HLIR.MkExprLiteral (HLIR.MkLitBool b), mempty)
+    HLIR.MkLitBool b -> pure (HLIR.MkTyBool, HLIR.MkExprLiteral (HLIR.MkLitBool b), mempty, mempty)
     -- String have type *char
-    HLIR.MkLitString s -> pure (HLIR.MkTyString, HLIR.MkExprLiteral (HLIR.MkLitString s), mempty)
+    HLIR.MkLitString s -> pure (HLIR.MkTyString, HLIR.MkExprLiteral (HLIR.MkLitString s), mempty, mempty)
     -- Char have type char
-    HLIR.MkLitChar c -> pure (HLIR.MkTyChar, HLIR.MkExprLiteral (HLIR.MkLitChar c), mempty)
+    HLIR.MkLitChar c -> pure (HLIR.MkTyChar, HLIR.MkExprLiteral (HLIR.MkLitChar c), mempty, mempty)
 synthesizeE (HLIR.MkExprVariable ann types) = do
     -- Looking up the variable in the environment
     env <- readIORef M.defaultCheckerState
@@ -375,7 +383,7 @@ synthesizeE (HLIR.MkExprVariable ann types) = do
             -- remove aliases from the instantiated type
             ty <- M.instantiateWithSub scheme types >>= M.performAliasRemoval
 
-            pure (ty, HLIR.MkExprVariable ann{HLIR.typeValue = Identity ty} types, mempty)
+            pure (ty, HLIR.MkExprVariable ann{HLIR.typeValue = Identity ty} types, mempty, mempty)
         Nothing -> case Map.lookup ann.name properties of
             Just scheme -> do
                 -- If variable is a property, we treat it as a regular
@@ -387,23 +395,24 @@ synthesizeE (HLIR.MkExprVariable ann types) = do
                     ( ty
                     , HLIR.MkExprVariable ann{HLIR.typeValue = Identity ty} types
                     , [M.MkImplConstraint ann.name ty pos]
+                    , mempty
                     )
             Nothing -> M.throw (M.VariableNotFound ann.name)
 synthesizeE (HLIR.MkExprCondition cond thenB elseB _) = do
     -- Condition must be of type bool
-    (condExpr, cs1) <- checkE HLIR.MkTyBool cond
+    (condExpr, cs1, b1) <- checkE HLIR.MkTyBool cond
 
     -- Then and else branches must have the same type
     -- We first synthesize the type of the then branch,
     -- then check the else branch against that type
-    (thenTy, thenExpr, cs2) <- synthesizeE thenB
-    (elseExpr, cs3) <- checkE thenTy elseB
+    (thenTy, thenExpr, cs2, _) <- M.withEnvironment b1 $ synthesizeE thenB
+    (elseExpr, cs3, _) <- checkE thenTy elseB
 
     -- Collecting all constraints
     let cs = cs1 <> cs2 <> cs3
 
     pure
-        (thenTy, HLIR.MkExprCondition condExpr thenExpr elseExpr (Identity thenTy), cs)
+        (thenTy, HLIR.MkExprCondition condExpr thenExpr elseExpr (Identity thenTy), cs, mempty)
 synthesizeE (HLIR.MkExprLetIn binding value inExpr _) = do
     -- Collecting old environment to restore it later
     oldEnv <- readIORef M.defaultCheckerState <&> M.environment
@@ -420,7 +429,7 @@ synthesizeE (HLIR.MkExprLetIn binding value inExpr _) = do
             }
 
     -- Checking the value against the expected type
-    (valueExpr, cs1) <- checkE expectedType value
+    (valueExpr, cs1, _) <- checkE expectedType value
 
     -- Ensuring that the type of the binding is a subtype of the expected type
     forM_ binding.typeValue $ \t ->
@@ -429,7 +438,7 @@ synthesizeE (HLIR.MkExprLetIn binding value inExpr _) = do
     -- Synthesizing the type of the in expression
     -- The type of the in expression is the type of the whole let-in expression
     -- so we return it as the type of the let-in expression
-    (inTy, typedInExpr, cs2) <- synthesizeE inExpr
+    (inTy, typedInExpr, cs2, _) <- synthesizeE inExpr
 
     -- Restoring the old environment
     modifyIORef' M.defaultCheckerState $ \s ->
@@ -446,6 +455,7 @@ synthesizeE (HLIR.MkExprLetIn binding value inExpr _) = do
             typedInExpr
             (Identity inTy)
         , cs
+        , mempty
         )
 synthesizeE (HLIR.MkExprLambda params ret body) = do
     -- Removing aliases from the parameter and return types
@@ -472,7 +482,7 @@ synthesizeE (HLIR.MkExprLambda params ret body) = do
             }
 
     -- Checking the body against the return type
-    (bodyExpr, cs) <- checkE retType body
+    (bodyExpr, cs, _) <- checkE retType body
 
     -- Restoring the old environment
     modifyIORef' M.defaultCheckerState $ \s ->
@@ -485,10 +495,10 @@ synthesizeE (HLIR.MkExprLambda params ret body) = do
     let funcType = paramTypes HLIR.:->: retType
 
     pure
-        (funcType, HLIR.MkExprLambda paramAnnotations (Identity retType) bodyExpr, cs)
+        (funcType, HLIR.MkExprLambda paramAnnotations (Identity retType) bodyExpr, cs, mempty)
 synthesizeE (HLIR.MkExprApplication callee args _) = do
     -- Synthesizing the type of the callee
-    (calleeTy, calleeExpr, cs1) <- synthesizeE callee
+    (calleeTy, calleeExpr, cs1, b) <- synthesizeE callee
 
     case calleeTy of
         HLIR.MkTyFun paramTypes retType -> do
@@ -499,13 +509,21 @@ synthesizeE (HLIR.MkExprApplication callee args _) = do
                 else do
                     -- Checking each argument against the corresponding parameter type
                     -- and collecting constraints from each argument.
-                    (checkedArgs, cs2) <- unzip <$> zipWithM checkE paramTypes args
+                    (checkedArgs, cs2, bs) <- List.foldlM 
+                        ( \(accArgs, accCs, accBs) (paramTy, argExpr) -> do
+                            (checkedArg, csArg, bArg) <- 
+                                M.withEnvironment accBs $ 
+                                    checkE paramTy argExpr
+                            pure (accArgs ++ [checkedArg], accCs <> csArg, accBs <> bArg)
+                        )
+                        ([], [], mempty)
+                        (zip paramTypes args)
 
                     -- Collecting all constraints
-                    let cs = cs1 <> mconcat cs2
+                    let cs = cs1 <> cs2
 
                     pure
-                        (retType, HLIR.MkExprApplication calleeExpr checkedArgs (Identity retType), cs)
+                        (retType, HLIR.MkExprApplication calleeExpr checkedArgs (Identity retType), cs, bs <> b)
         _ -> do
             -- If the callee is not a function type, we create new type variables
             newParamTypes <- mapM (const M.newType) args
@@ -517,7 +535,7 @@ synthesizeE (HLIR.MkExprApplication callee args _) = do
 
             -- Checking each argument against the new parameter types
             -- and collecting constraints from each argument.
-            (checkedArgs, cs2) <- unzip <$> zipWithM checkE newParamTypes args
+            (checkedArgs, cs2, bs) <- unzip3 <$> zipWithM checkE newParamTypes args
 
             -- We add a constraint that the callee type must be a subtype of
             -- the expected function type.
@@ -530,6 +548,7 @@ synthesizeE (HLIR.MkExprApplication callee args _) = do
                 ( newRetType
                 , HLIR.MkExprApplication calleeExpr checkedArgs (Identity newRetType)
                 , cs
+                , mconcat bs <> b
                 )
 synthesizeE (HLIR.MkExprStructureCreation ty fields) = do
     -- Removing aliases from the annotated type
@@ -564,21 +583,22 @@ synthesizeE (HLIR.MkExprStructureCreation ty fields) = do
             checkedFields <- forM (Map.toList fields) $ \(name, expr) -> do
                 case Map.lookup name structTy of
                     Just fieldTy -> do
-                        (checkedExpr, cs) <- checkE fieldTy expr
-                        pure ((name, checkedExpr), cs)
+                        (checkedExpr, cs, b) <- checkE fieldTy expr
+                        pure ((name, checkedExpr), cs, b)
                     Nothing -> M.throw (M.FieldNotFound name)
 
             -- Collecting all constraints
-            let (unzippedFields, cs) = unzip checkedFields
+            let (unzippedFields, cs, bs) = unzip3 checkedFields
 
             pure
                 ( aliasedTy
                 , HLIR.MkExprStructureCreation aliasedTy (Map.fromList unzippedFields)
                 , concat cs
+                , mconcat bs
                 )
 synthesizeE (HLIR.MkExprStructureAccess struct field) = do
     -- Synthesizing the type of the structure expression
-    (structTy, structExpr, cs) <- synthesizeE struct
+    (structTy, structExpr, cs, b) <- synthesizeE struct
 
     -- Finding the structure definition by its header, and collecting
     -- it applied type variables.
@@ -592,6 +612,7 @@ synthesizeE (HLIR.MkExprStructureAccess struct field) = do
                 ( fieldTy
                 , HLIR.MkExprStructureAccess structExpr field
                 , cs <> [M.MkFieldConstraint structTy field fieldTy pos]
+                , b
                 )
         Just (HLIR.Forall qvars ty) -> do
             -- Building a substitution map from the structure's quantified
@@ -604,14 +625,14 @@ synthesizeE (HLIR.MkExprStructureAccess struct field) = do
             -- If found, we return its type and the typed expression.
             -- If not found, we throw an error.
             case Map.lookup field structMap of
-                Just fieldTy -> pure (fieldTy, HLIR.MkExprStructureAccess structExpr field, cs)
+                Just fieldTy -> pure (fieldTy, HLIR.MkExprStructureAccess structExpr field, cs, b)
                 Nothing -> M.throw (M.FieldNotFound field)
 synthesizeE (HLIR.MkExprDereference e _) = do
     -- Synthesizing the type of the expression to dereference
     -- It must be a pointer type. We also create a fresh type variable
     -- to represent the type being pointed to.
     newType <- M.newType
-    (eTy, eExpr, cs) <- synthesizeE e
+    (eTy, eExpr, cs, b) <- synthesizeE e
 
     -- The expected type is a pointer to the new type variable
     let expectedType = HLIR.MkTyPointer newType
@@ -620,47 +641,48 @@ synthesizeE (HLIR.MkExprDereference e _) = do
     -- of the expected pointer type.
     void $ eTy `M.isSubtypeOf` expectedType
 
-    pure (newType, HLIR.MkExprDereference eExpr (Identity newType), cs)
+    pure (newType, HLIR.MkExprDereference eExpr (Identity newType), cs, b)
 synthesizeE (HLIR.MkExprReference e _) = do
     -- Synthesizing the type of the expression to reference
     -- The resulting type is a pointer to that type.
-    (eTy, eExpr, cs) <- synthesizeE e
+    (eTy, eExpr, cs, b) <- synthesizeE e
     let refType = HLIR.MkTyPointer eTy
 
-    pure (refType, HLIR.MkExprReference eExpr (Identity refType), cs)
+    pure (refType, HLIR.MkExprReference eExpr (Identity refType), cs, b)
 synthesizeE (HLIR.MkExprUpdate update value _) = do
     -- Synthesizing the type of the update expression
     -- The update expression must be of a type that can be updated,
     -- so we just synthesize its type and use it as the expected type
     -- for the value expression.
-    (updateTy, updateExpr, cs1) <- synthesizeE update
-    (valueExpr, cs2) <- checkE updateTy value
+    (updateTy, updateExpr, cs1, b1) <- synthesizeE update
+    (valueExpr, cs2, b2) <- checkE updateTy value
 
     -- Collecting all constraints
     let cs = cs1 <> cs2
 
-    pure (updateTy, HLIR.MkExprUpdate updateExpr valueExpr (Identity updateTy), cs)
+    pure (updateTy, HLIR.MkExprUpdate updateExpr valueExpr (Identity updateTy), cs, b1 <> b2)
 synthesizeE (HLIR.MkExprSizeOf t) = do
     -- Sizeof expressions have type u64, and we just need to
     -- remove aliases from the type being measured.
     aliasedType <- M.performAliasRemoval t
 
-    pure (HLIR.MkTyId "u64", HLIR.MkExprSizeOf aliasedType, mempty)
+    pure (HLIR.MkTyId "u64", HLIR.MkExprSizeOf aliasedType, mempty, mempty)
 synthesizeE (HLIR.MkExprSingleIf cond thenBranch _) = do
     -- Condition must be of type bool
-    (condExpr, cs) <- checkE HLIR.MkTyBool cond
+    (condExpr, cs, b1) <- checkE HLIR.MkTyBool cond
 
-    (thenTy, typedThenBranch, cs2) <- synthesizeE thenBranch
+    (thenTy, typedThenBranch, cs2, _) <- M.withEnvironment b1 $ synthesizeE thenBranch
 
     -- The type of the single-if expression is the type of the then branch
     pure
         ( thenTy
         , HLIR.MkExprSingleIf condExpr typedThenBranch (Identity thenTy)
         , cs <> cs2
+        , mempty
         )
 synthesizeE (HLIR.MkExprCast expr targetTy) = do
     -- Synthesizing the type of the expression to cast
-    (exprTy, exprExpr, cs) <- synthesizeE expr
+    (exprTy, exprExpr, cs, b) <- synthesizeE expr
 
     -- Removing aliases from the target type
     aliasedTargetTy <- M.performAliasRemoval targetTy
@@ -669,95 +691,27 @@ synthesizeE (HLIR.MkExprCast expr targetTy) = do
     -- of the target type.
     void $ exprTy `M.isSubtypeOf` aliasedTargetTy
 
-    pure (aliasedTargetTy, HLIR.MkExprCast exprExpr aliasedTargetTy, cs)
+    pure (aliasedTargetTy, HLIR.MkExprCast exprExpr aliasedTargetTy, cs, b)
 synthesizeE (HLIR.MkExprWhile cond body _ inExpr) = do
     -- Condition must be of type bool
-    (condExpr, cs1) <- checkE HLIR.MkTyBool cond
+    (condExpr, cs1, b1) <- checkE HLIR.MkTyBool cond
 
     -- Synthesizing the type of the body
-    (bodyTy, bodyExpr, cs2) <- synthesizeE body
+    (bodyTy, bodyExpr, cs2, _) <- M.withEnvironment b1 $ synthesizeE body
 
     -- Synthesizing the type of the in expression
-    (inTy, inExprTyped, cs3) <- synthesizeE inExpr
+    (inTy, inExprTyped, cs3, b3) <- synthesizeE inExpr
 
     -- Collecting all constraints
     let cs = cs1 <> cs2 <> cs3
 
     -- The type of the while expression is the type of the in expression
     pure
-        (inTy, HLIR.MkExprWhile condExpr bodyExpr (Identity bodyTy) inExprTyped, cs)
-synthesizeE (HLIR.MkExprWhileIs expr pat body _ inExpr) = do
-    -- Synthesizing the type of the expression to match
-    (exprTy, exprExpr, cs1) <- synthesizeE expr
-
-    -- Checking the pattern against the expression type
-    (typedPat, cs2, bindings) <- checkP exprTy pat
-
-    -- Collecting all constraints
-    let cs = cs1 <> cs2
-
-    -- Extending the environment with the bindings introduced by the pattern
-    -- We use `withEnvironment` to temporarily extend the environment
-    -- while checking the body.
-    (_, typedBody, cs3) <-
-        M.withEnvironment bindings $ synthesizeE body
-    (inTy, typedInExpr, cs4) <- synthesizeE inExpr
-
-    let cs' = cs3 <> cs4 <> cs
-
-    -- The type of the while-is expression is the type of the in expression
-    pure
-        ( inTy
-        , HLIR.MkExprWhileIs exprExpr typedPat typedBody (Identity inTy) typedInExpr
-        , cs'
-        )
-synthesizeE (HLIR.MkExprIfIs expr pat thenBranch elseBranch _) = do
-    -- Synthesizing the type of the expression to match
-    (exprTy, exprExpr, cs1) <- synthesizeE expr
-
-    -- Checking the pattern against the expression type
-    (typedPat, cs2, bindings) <- checkP exprTy pat
-
-    -- Collecting all constraints
-    let cs = cs1 <> cs2
-
-    -- Extending the environment with the bindings introduced by the pattern
-    -- We use `withEnvironment` to temporarily extend the environment
-    -- while checking the then branch.
-    (thenTy, typedThenBranch, cs3) <-
-        M.withEnvironment bindings $ synthesizeE thenBranch
-    (elseTy, typedElseBranch, cs4) <- case elseBranch of
-        Just e -> do
-            (ty, expr', cs') <- synthesizeE e
-            pure (ty, Just expr', cs')
-        Nothing -> do
-            -- If there is no else branch, we expect the then branch to be of fresh type
-            ty <- M.newType
-
-            pure (ty, Nothing, mempty)
-
-    let cs' = cs3 <> cs4 <> cs
-
-    -- Ensuring that the then and else branches have the same type
-    -- If there is no else branch, we expect the then branch to be of type unit
-    -- and we add a constraint that the then branch type must be a subtype of unit
-    void $ thenTy `M.isSubtypeOf` elseTy
-
-    -- The type of the is expression is bool
-    pure
-        ( thenTy
-        , HLIR.MkExprIfIs
-            exprExpr
-            typedPat
-            typedThenBranch
-            typedElseBranch
-            (Identity thenTy)
-        , cs'
-        )
+        (inTy, HLIR.MkExprWhile condExpr bodyExpr (Identity bodyTy) inExprTyped, cs, b3)
 synthesizeE (HLIR.MkExprFunctionAccess field thisExpr args) = do
     -- Synthesizing the type of the `this` expression
-    (thisTy, thisExprTyped, cs1) <- synthesizeE thisExpr
-    (argTys, typedArgs, cs2) <- unzip3 <$> mapM synthesizeE args
+    (thisTy, thisExprTyped, cs1, bindings1) <- synthesizeE thisExpr
+    (argTys, typedArgs, cs2, bindings2) <- List.unzip4 <$> mapM synthesizeE args
 
     retType <- M.newType
 
@@ -787,6 +741,7 @@ synthesizeE (HLIR.MkExprFunctionAccess field thisExpr args) = do
                             (thisExprTyped : typedArgs)
                             (Identity fRetType)
                         , cs <> [M.MkImplConstraint field func pos]
+                        , bindings1 <> mconcat bindings2
                         )
         Just ty -> M.throw (M.ExpectedFunction ty)
         Nothing -> do
@@ -799,10 +754,11 @@ synthesizeE (HLIR.MkExprFunctionAccess field thisExpr args) = do
                     (thisExprTyped : typedArgs)
                     (Identity retType)
                 , cs <> [M.MkImplConstraint field func pos]
+                , bindings1 <> mconcat bindings2
                 )
 synthesizeE (HLIR.MkExprReturn e) = do
     -- Synthesizing the type of the return expression
-    (eTy, eExpr, cs) <- synthesizeE e
+    (eTy, eExpr, cs, bindings) <- synthesizeE e
 
     -- Finding the expected return type from the environment
     state' <- readIORef M.defaultCheckerState
@@ -814,16 +770,34 @@ synthesizeE (HLIR.MkExprReturn e) = do
             -- a subtype of the expected return type.
             void $ eTy `M.isSubtypeOf` retTy
 
-            pure (retTy, HLIR.MkExprReturn eExpr, cs)
+            pure (retTy, HLIR.MkExprReturn eExpr, cs, bindings)
         Nothing -> M.throw M.ReturnOutsideFunction
 synthesizeE HLIR.MkExprBreak = do
+    freshType <- M.newType
+
     -- Break expressions have type unit
     -- We just return unit type and no constraints
-    pure (HLIR.MkTyId "unit", HLIR.MkExprBreak, mempty)
+    pure (freshType, HLIR.MkExprBreak, mempty, mempty)
 synthesizeE HLIR.MkExprContinue = do
+    freshType <- M.newType
+
     -- Continue expressions have type unit
     -- We just return unit type and no constraints
-    pure (HLIR.MkTyId "unit", HLIR.MkExprContinue, mempty)
+    pure (freshType, HLIR.MkExprContinue, mempty, mempty)
+synthesizeE (HLIR.MkExprIs e p _) = do
+    -- Synthesizing the type of the expression to match
+    (eTy, eExpr, cs, bindings1) <- synthesizeE e
+
+    -- Checking the pattern against the expression type
+    (typedPat, csPat, bindings2) <- checkP eTy p
+
+    -- The type of the is expression is bool
+    pure
+        ( HLIR.MkTyBool
+        , HLIR.MkExprIs eExpr typedPat (Identity eTy)
+        , cs <> csPat
+        , bindings1 <> bindings2
+        )
 
 -- | CHECK PATTERN
 -- | Check a pattern against an expected type.
@@ -970,13 +944,13 @@ checkE ::
     (MonadIO m, M.MonadError M.Error m) =>
     HLIR.Type ->
     HLIR.HLIR "expression" ->
-    m (HLIR.TLIR "expression", M.Constraints)
+    m (HLIR.TLIR "expression", M.Constraints, Map Text (HLIR.Scheme HLIR.Type))
 checkE expected expr = do
-    (inferredTy, typedExpr, cs) <- synthesizeE expr
+    (inferredTy, typedExpr, cs, bindings) <- synthesizeE expr
 
     void $ inferredTy `M.isSubtypeOf` expected
 
-    pure (typedExpr, cs)
+    pure (typedExpr, cs, bindings)
 
 -- | Find a structure definition by its name.
 -- | If the name is `Nothing`, we throw an `InvalidHeader` error.
