@@ -7,7 +7,8 @@ import Data.Set qualified as Set
 import Data.Text qualified as Text
 import GHC.IO qualified as IO
 import Language.Reality.Syntax.MLIR qualified as MLIR
-import Text.Printf qualified as Text
+import qualified Language.Reality.Syntax.HLIR as HLIR
+import qualified Text.Printf as Text
 
 typedefs :: IORef [Text]
 typedefs = IO.unsafePerformIO $ newIORef []
@@ -21,10 +22,21 @@ userDefinedTypes :: IORef (Set Text)
 userDefinedTypes = IO.unsafePerformIO $ newIORef Set.empty
 {-# NOINLINE userDefinedTypes #-}
 
+getUserDefinedTypes :: [MLIR.Toplevel] -> Set Text
+getUserDefinedTypes (MLIR.MkTopStructure name _ : xs) =
+    Set.insert (varify name) (getUserDefinedTypes xs)
+getUserDefinedTypes (_ : xs) = getUserDefinedTypes xs
+getUserDefinedTypes [] = Set.empty
+
 -- | CODEGEN
 -- | Convert MLIR to a C code string.
 codegenProgram :: (MonadIO m) => [MLIR.Toplevel] -> m Text
 codegenProgram toplevels = do
+    let userTypes = getUserDefinedTypes toplevels
+
+    writeIORef userDefinedTypes userTypes
+    writeIORef typedefs []
+
     codeLines <- mapM codegenToplevel toplevels
 
     types <- readIORef typedefs
@@ -50,14 +62,19 @@ codegenToplevel (MLIR.MkTopFunction name params ret body) = do
                 ( \(MLIR.MkAnnotation paramName ty) -> codegenType True (Just (varify paramName)) [] ty
                 )
                 params
+                
     retType <- codegenType True Nothing [] ret
     let funcHeader = Text.concat [retType, " ", varify name, "(", paramList, ") {"]
     funcBody <- mapM codegenExpression body
     let funcFooter = ["}"]
     let insertedReturn = case (unsnoc funcBody, unsnoc body) of
             (Just (initLines, lastLine), Just (_, MLIR.MkExprReturn _)) -> map (<> ";") initLines <> [Text.concat ["    ", lastLine, ";"]]
+            (Just (initLines, lastLine), Just (_, MLIR.MkExprVariable "")) -> map (<> ";") initLines <> [Text.concat ["    ", lastLine, ";"]]
             (Just (initLines, lastLine), _) -> map (<> ";") initLines <> [Text.concat ["    return ", lastLine, ";"]]
             (Nothing, _) -> []
+
+    modifyIORef' typedefs (<> [retType <> " " <> varify name <> "(" <> paramList <> ");"])
+
     pure $ Text.concat ([funcHeader] ++ insertedReturn ++ funcFooter)
 codegenToplevel (MLIR.MkTopGlobal name ty (Just expr)) = do
     constType <- codegenType True (Just name) [] ty
@@ -85,17 +102,17 @@ codegenToplevel (MLIR.MkTopExternalVariable name ty) = do
     varType <- codegenType True (Just name) [] ty
     pure $ Text.concat ["extern ", varType, ";"]
 
-codegenField :: (MonadIO m) => MLIR.StructureMember -> m Text
-codegenField (MLIR.MkStructField name ty) = do
+codegenField :: (MonadIO m) => HLIR.StructureMember HLIR.Type -> m Text
+codegenField (HLIR.MkStructField name ty) = do
     tyStr <- codegenType False (Just (varify name)) [] ty
     pure $ Text.concat [tyStr, ";"]
-codegenField (MLIR.MkStructStruct name fields) = do
+codegenField (HLIR.MkStructStruct name fields) = do
     fieldLines <- mapM codegenField fields
     let structHeader = "struct {"
     let structFooter = "} " <> varify name <> ";"
     pure
         $ Text.unlines ([structHeader] ++ map ("    " <>) fieldLines ++ [structFooter])
-codegenField (MLIR.MkStructUnion name fields) = do
+codegenField (HLIR.MkStructUnion name fields) = do
     fieldLines <- mapM codegenField fields
     let unionHeader = "union {"
     let unionFooter = "} " <> varify name <> ";"
@@ -109,6 +126,9 @@ codegenField (MLIR.MkStructUnion name fields) = do
 codegenExpression :: (MonadIO m) => MLIR.Expression -> m Text
 codegenExpression (MLIR.MkExprLiteral lit) = codegenLiteral lit
 codegenExpression (MLIR.MkExprVariable name) = pure $ varify name
+codegenExpression (MLIR.MkExprApplication (MLIR.MkExprVariable "&&") args) = do
+    argList <- Text.intercalate " && " <$> mapM codegenExpression args
+    pure $ Text.concat ["(", argList, ")"]
 codegenExpression (MLIR.MkExprApplication f args) = do
     fStr <- codegenExpression f
     argList <- Text.intercalate ", " <$> mapM codegenExpression args
@@ -184,10 +204,8 @@ codegenLiteral (MLIR.MkLitInt n) = pure $ Text.pack (show n)
 codegenLiteral (MLIR.MkLitFloat f) = pure $ Text.pack (show f)
 codegenLiteral (MLIR.MkLitBool True) = pure "true"
 codegenLiteral (MLIR.MkLitBool False) = pure "false"
-codegenLiteral (MLIR.MkLitString s) = do
-    let sShow = show s
-    inner <- dropDoubleQuotes (Text.pack sShow)
-    pure $ Text.concat ["\"", inner, "\""]
+codegenLiteral (MLIR.MkLitString s) = 
+    pure $ Text.concat ["\"", encodeUnicode16 s, "\""]
 codegenLiteral (MLIR.MkLitChar c) = do
     let cShow = show (Text.singleton c)
     inner <- dropDoubleQuotes (Text.pack cShow)
@@ -274,6 +292,26 @@ codegenType shouldPutEnv def generics (args MLIR.:->: ret) = do
     modifyIORef' typedefs (<> [typedefLine])
 
     pure $ Text.concat [name, " ", fromMaybe "" def]
+codegenType _ def generics (MLIR.MkTyAnonymousStructure isUnion (MLIR.MkTyId "") fields) = do
+    fieldLines <- mapM
+        ( \(n, ty) -> do
+            tyStr <- codegenType True Nothing generics ty
+            pure $ Text.concat ["    ", tyStr, "; // ", varify n]
+        )
+        (Map.toList fields)
+
+    let structOrUnion = if isUnion then "union" else "struct"
+    let typeDefName = fromMaybe "" def
+    let typedefLine =
+            Text.unlines
+                [ Text.concat ["typedef ", structOrUnion, " {"]
+                , Text.unlines fieldLines
+                , Text.concat ["} ", typeDefName, ";"]
+                ]
+
+    modifyIORef' typedefs (<> [typedefLine])
+
+    pure $ Text.concat [structOrUnion, " ", typeDefName]
 codegenType shouldPutEnv def generics (MLIR.MkTyAnonymousStructure _ n _) = do
     n' <- codegenType shouldPutEnv Nothing generics n
 
@@ -293,6 +331,7 @@ isIdent :: Char -> Bool
 isIdent x = Char.isAlphaNum x || x == '_' || x == '$'
 
 varify :: Text -> Text
+varify "" = ""
 varify n | n `Set.member` cKeywords = Text.concat ["_", n]
 varify n =
     Text.concatMap
@@ -358,12 +397,12 @@ encodeUnicode16 :: Text -> Text
 encodeUnicode16 = Text.concatMap escapeChar
   where
     escapeChar c
-        | c == '\"' = "\\\""
-        | c == '\'' = "\\\'"
-        | c == '\\' = "\\\\"
-        | ' ' <= c && c <= 'z' = toText [c]
-        | Char.isPrint c = toText [c]
-        | otherwise = Text.pack (Text.printf "\\u%04x" (ord c))
+        | c == '"' = Text.pack "\\\""
+        | ' ' <= c && c <= 'z' = Text.singleton c
+        | Char.isPrint c = Text.singleton c
+        | Char.isControl c = Text.pack $ Text.printf "\\x%02x" (fromEnum c)
+        | otherwise =
+            Text.pack $ Text.printf "\\u%04x" (fromEnum c)
 
 freshSymbol :: (MonadIO m) => m Text
 freshSymbol = do
