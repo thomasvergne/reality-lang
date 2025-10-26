@@ -1,7 +1,6 @@
 module Language.Reality.Syntax.MLIR (
     Expression (..),
     Toplevel (..),
-    StructureMember (..),
     -- Re-exports
     module Lit,
     module Ann,
@@ -14,6 +13,7 @@ import Language.Reality.Syntax.Internal.Annotation as Ann
 import Language.Reality.Syntax.Internal.Literal as Lit
 import Language.Reality.Syntax.Internal.Type as Ty
 import Prelude hiding (Type)
+import Language.Reality.Syntax.HLIR qualified as HLIR
 
 -- | MLIR TYPE
 -- | MLIR is a low-level intermediate representation (IR) designed to be a
@@ -45,14 +45,8 @@ data Toplevel
     | MkTopExternalFunction Text [Text] [Ty.Type] Ty.Type
     | MkTopExternalVariable Text Ty.Type
     | MkTopGlobal Text Ty.Type (Maybe Expression)
-    | MkTopStructure Text [StructureMember]
+    | MkTopStructure Text [HLIR.StructureMember Ty.Type]
     | MkTopPublic Toplevel
-    deriving (Eq, Ord, Show, Generic)
-
-data StructureMember
-    = MkStructField Text Ty.Type
-    | MkStructStruct Text [StructureMember]
-    | MkStructUnion Text [StructureMember]
     deriving (Eq, Ord, Show, Generic)
 
 instance ToText Expression where
@@ -169,27 +163,3 @@ instance ToText Toplevel where
     toText (MkTopPublic node) = T.concat ["public ", toText node]
     toText (MkTopExternalVariable name ty) =
         T.concat ["extern var ", name, ": ", toText ty]
-
-instance ToText StructureMember where
-    toText (MkStructField name ty) =
-        T.concat ["  ", name, ": ", toText ty, ";"]
-    toText (MkStructStruct name fields) =
-        T.concat
-            [ "  struct "
-            , name
-            , " {\n"
-            , T.intercalate
-                "\n"
-                (map (\f -> "    " <> toText f) fields)
-            , "\n  };"
-            ]
-    toText (MkStructUnion name fields) =
-        T.concat
-            [ "  union "
-            , name
-            , " {\n"
-            , T.intercalate
-                "\n"
-                (map (\f -> "    " <> toText f) fields)
-            , "\n  };"
-            ]

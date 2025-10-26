@@ -6,11 +6,13 @@ module Language.Reality.Syntax.HLIR (
     Expression (..),
     Toplevel (..),
     Pattern (..),
+    StructureMember (..),
     -- Patterns
     pattern MkExprBinary,
     pattern MkExprString,
     pattern MkExprTuple,
     pattern MkExprVarCall,
+    pattern MkExprWhileIs,
     -- Re-exports
     module Lit,
     module Ann,
@@ -86,20 +88,6 @@ data Expression f t
         , returnType :: f t
         , inExpr :: Expression f t
         }
-    | MkExprIfIs
-        { expr :: Expression f t
-        , expectedPattern :: Pattern f t
-        , thenBranch :: Expression f t
-        , maybeElseBranch :: Maybe (Expression f t)
-        , returnType :: f t
-        }
-    | MkExprWhileIs
-        { expr :: Expression f t
-        , expectedPattern :: Pattern f t
-        , body :: Expression f t
-        , returnType :: f t
-        , inExpr :: Expression f t
-        }
     | MkExprFunctionAccess
         { field :: Text
         , fieldExpr :: Expression f t
@@ -108,6 +96,7 @@ data Expression f t
     | MkExprReturn (Expression f t)
     | MkExprBreak
     | MkExprContinue
+    | MkExprIs (Expression f t) (Pattern f t) (f t)
     deriving (Eq, Ord, Generic)
 
 data Toplevel f t
@@ -137,7 +126,7 @@ data Toplevel f t
         }
     | MkTopStructureDeclaration
         { header :: Ann.Annotation [Text]
-        , fields :: Map Text t
+        , fields :: [StructureMember t]
         }
     | MkTopExternalFunction
         { name :: Ann.Annotation [Text]
@@ -178,12 +167,37 @@ data Pattern f t
         }
     deriving (Eq, Ord, Generic)
 
+data StructureMember t
+    = MkStructField Text t
+    | MkStructStruct Text [StructureMember t]
+    | MkStructUnion Text [StructureMember t]
+    deriving (Eq, Ord, Show, Generic)
+
 -- | BINARY EXPRESSION PATTERN
 -- | A pattern synonym to represent binary expressions in Bonzai.
 pattern MkExprBinary ::
     Text -> Expression Maybe t -> Expression Maybe t -> Expression Maybe t
 pattern MkExprBinary op a b =
     MkExprApplication (MkExprVariable (MkAnnotation op Nothing) []) [a, b] Nothing
+
+pattern MkExprWhileIs ::
+    Expression Maybe t ->
+    Pattern Maybe t ->
+    Expression Maybe t ->
+    Expression Maybe t ->
+    Expression Maybe t
+pattern MkExprWhileIs cond pat body inExpr =
+    MkExprWhile
+        { condition = MkExprLiteral (Lit.MkLitBool True)
+        , body = MkExprCondition
+            { condition = MkExprIs cond pat Nothing
+            , thenBranch = body
+            , elseBranch = MkExprBreak
+            , returnType = Nothing
+            }
+        , returnType = Nothing
+        , inExpr = inExpr
+        }
 
 pattern MkExprVarCall ::
     Text -> [Expression Maybe t] -> Expression Maybe t
@@ -201,7 +215,7 @@ pattern MkExprTuple ::
     Expression Maybe t -> Expression Maybe t -> Expression Maybe t
 pattern MkExprTuple a b =
     MkExprApplication
-        (MkExprVariable (MkAnnotation "Tuple" Nothing) [])
+        (MkExprVariable (MkAnnotation "Pair" Nothing) [])
         [a, b]
         Nothing
 
@@ -285,12 +299,6 @@ instance (ToText (f t), ToText t) => ToText (Expression f t) where
             , " } in "
             , toText inExpr
             ]
-    toText (MkExprIfIs expr pat thenB maybeElseB _) =
-        let elseText = case maybeElseB of
-                Just elseB -> " else " <> toText elseB
-                Nothing -> ""
-         in T.concat
-                ["if ", toText expr, " is ", toText pat, " then ", toText thenB, elseText]
     toText (MkExprFunctionAccess func fieldExpr args) =
         T.concat
             [ toText func
@@ -300,20 +308,11 @@ instance (ToText (f t), ToText t) => ToText (Expression f t) where
             , T.intercalate ", " (map toText args)
             , ")"
             ]
-    toText (MkExprWhileIs expr pat body _ inExpr) =
-        T.concat
-            [ "while "
-            , toText expr
-            , " is "
-            , toText pat
-            , " { "
-            , toText body
-            , " } in "
-            , toText inExpr
-            ]
     toText (MkExprReturn expr) = "return " <> toText expr
     toText MkExprBreak = "break"
     toText MkExprContinue = "continue"
+    toText (MkExprIs expr pat _) =
+        T.concat ["is(", toText expr, ", ", toText pat, ")"]
 
 instance (ToText (f t), ToText t) => ToText (Pattern f t) where
     toText (MkPatternVariable ann) = toText ann
@@ -368,7 +367,7 @@ instance (ToText (f t), ToText t) => ToText (Toplevel f t) where
             ]
     toText (MkTopLocated _ n) = toText n
     toText (MkTopStructureDeclaration header fields) =
-        let fieldTexts = map (\(name, ty) -> name <> ": " <> toText ty) (Map.toList fields)
+        let fieldTexts = map toText fields
          in T.concat
                 [ "struct "
                 , header.name
@@ -442,3 +441,54 @@ instance (ToText (f t), ToText t) => ToText (Toplevel f t) where
                 , T.intercalate ", " constructorTexts
                 , " }"
                 ]
+
+
+instance ToText t => ToText (StructureMember t) where
+    toText (MkStructField name ty) =
+        T.concat ["  ", name, ": ", toText ty, ";"]
+    toText (MkStructStruct name fields) =
+        T.concat
+            [ "  struct "
+            , name
+            , " {\n"
+            , T.intercalate
+                "\n"
+                (map (\f -> "    " <> toText f) fields)
+            , "\n  };"
+            ]
+    toText (MkStructUnion name fields) =
+        T.concat
+            [ "  union "
+            , name
+            , " {\n"
+            , T.intercalate
+                "\n"
+                (map (\f -> "    " <> toText f) fields)
+            , "\n  };"
+            ]
+
+instance Functor StructureMember where
+    fmap f (MkStructField name ty) = MkStructField name (f ty)
+    fmap f (MkStructStruct name fields) = MkStructStruct name (map (fmap f) fields)
+    fmap f (MkStructUnion name fields) = MkStructUnion name (map (fmap f) fields)
+
+instance Foldable StructureMember where
+    foldMap f (MkStructField _ ty) = f ty
+    foldMap f (MkStructStruct _ fields) = foldMap (foldMap f) fields
+    foldMap f (MkStructUnion _ fields) = foldMap (foldMap f) fields
+
+instance Traversable StructureMember where
+    traverse f (MkStructField name ty) = MkStructField name <$> f ty
+    traverse f (MkStructStruct name fields) = MkStructStruct name <$> traverse (traverse f) fields
+    traverse f (MkStructUnion name fields) = MkStructUnion name <$> traverse (traverse f) fields
+    
+instance Applicative StructureMember where
+    pure = MkStructField "" 
+    (MkStructField _ fTy) <*> sm = fmap fTy sm
+    (MkStructStruct name fFields) <*> sm = MkStructStruct name (map (<*> sm) fFields)
+    (MkStructUnion name fFields) <*> sm = MkStructUnion name (map (<*> sm) fFields)
+
+instance Monad StructureMember where
+    (MkStructField _ ty) >>= f = f ty
+    (MkStructStruct name fields) >>= f = MkStructStruct name (map (>>= f) fields)
+    (MkStructUnion name fields) >>= f = MkStructUnion name (map (>>= f) fields)
