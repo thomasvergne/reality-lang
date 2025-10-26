@@ -12,6 +12,7 @@ import Language.Reality.Frontend.Parser.Toplevel qualified as P
 import Language.Reality.Syntax.HLIR qualified as HLIR
 import System.Directory qualified as IO
 import System.FilePath qualified as IO
+import qualified Data.List as List
 
 -- | Run the import resolver on a HLIR program.
 -- | This function takes a list of toplevel nodes, and returns a list of toplevel
@@ -19,10 +20,11 @@ import System.FilePath qualified as IO
 runImportResolver ::
     (MonadIO m, M.MonadError M.Error m) =>
     AbsolutePath ->
+    Map Text AbsolutePath ->
     [HLIR.HLIR "toplevel"] ->
     m [HLIR.HLIR "toplevel"]
-runImportResolver cwd toplevels = do
-    liftIO $ modifyIORef defaultModuleState $ \s -> s{cwd = cwd}
+runImportResolver cwd aliases toplevels = do
+    liftIO $ modifyIORef defaultModuleState $ \s -> s{cwd = cwd, pathAliases = aliases}
     resolveImports toplevels
 
 -- | Resolve imports in a HLIR program.
@@ -37,6 +39,17 @@ resolveImports (n : ns) = do
     rest <- resolveImports ns
     pure (resolved ++ rest)
 resolveImports [] = pure []
+
+findLongestAlias :: 
+    Map Text AbsolutePath ->
+    [Text] ->
+    Maybe (Text, AbsolutePath, Int)
+findLongestAlias aliases paths =
+    let matches = Map.toList $ Map.filterWithKey (\k _ -> k `elem` prefixes) aliases
+        prefixes = [Text.intercalate "::" (take i paths) | i <- [1 .. length paths]]
+     in if null matches
+            then Nothing
+            else Just $ List.maximumBy (\(k1, _, _) (k2, _, _) -> compare (Text.length k1) (Text.length k2)) [(k, v, Text.count "::" k + 1) | (k, v) <- matches]
 
 -- | Resolve a singular HLIR toplevel node.
 -- | This function takes a toplevel node, and returns a list of toplevel nodes.
@@ -55,8 +68,15 @@ resolveSingularNode (HLIR.MkTopImport paths) = do
     -- that takes a list of path segments and returns an absolute file path.
     moduleState <- readIORef defaultModuleState
     let basePath = moduleState.cwd
-    let absolutePath = basePath IO.</> toString (Text.intercalate "/" importPaths) IO.<.> "rl"
-    let pkgName = Text.intercalate "::" importPaths
+        aliases = moduleState.pathAliases
+
+    let (resolvedBasePath, remainingPaths) = case findLongestAlias aliases importPaths of
+            Just (_, aliasPath, aliasLength) ->
+                (aliasPath, drop aliasLength importPaths)
+            Nothing -> (basePath, importPaths)
+
+    let absolutePath = resolvedBasePath IO.</> toString (Text.intercalate "/" remainingPaths) IO.<.> "rl"
+    let pkgName = Text.intercalate "::" remainingPaths
 
     visitModule absolutePath pkgName shouldFlatten
 resolveSingularNode (HLIR.MkTopLocated p n) = do
@@ -141,6 +161,10 @@ visitModule absPath pkgName flatten = do
                     , modToplevels = []
                     }
 
+        oldCwd <- cwd <$> readIORef defaultModuleState
+        modifyIORef' defaultModuleState $ \s ->
+            s{ cwd = IO.takeDirectory absPath }
+
         addNewModule newModule
 
         -- Resolving imports in the module's toplevel nodes
@@ -152,6 +176,8 @@ visitModule absPath pkgName flatten = do
         -- in the module state.
         updateModuleState absPath Visited
         updateModuleToplevels absPath resolvedToplevels
+        modifyIORef' defaultModuleState $ \s ->
+            s{ cwd = oldCwd }
 
         -- We check if we should flatten the modules or not
         -- based on the current import statement.
@@ -270,11 +296,12 @@ data Module = Module
 data ModuleState = ModuleState
     { modules :: Map AbsolutePath Module
     , cwd :: AbsolutePath
+    , pathAliases :: Map Text AbsolutePath
     }
     deriving (Eq)
 
 defaultModuleState :: IORef ModuleState
-defaultModuleState = IO.unsafePerformIO . newIORef $ ModuleState mempty "."
+defaultModuleState = IO.unsafePerformIO . newIORef $ ModuleState mempty "." mempty
 
 -- | UTILITY FUNCTIONS
 -- | These functions are used to manipulate the module state.
