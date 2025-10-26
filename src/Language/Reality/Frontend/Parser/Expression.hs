@@ -8,6 +8,7 @@ import Language.Reality.Frontend.Parser.Internal.Type qualified as Typ
 import Language.Reality.Frontend.Parser.Lexer qualified as Lex
 import Language.Reality.Syntax.HLIR qualified as HLIR
 import Text.Megaparsec.Char qualified as P
+import qualified Data.List as List
 
 -- | PARSE ANNOTATION
 -- | Parse an annotation. An annotation is used to attach metadata to an AST node.
@@ -51,6 +52,11 @@ parseExprLiteral =
         (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
     parseLiteralSuffix = Lex.lexeme $ do
         lit <- Lit.parseLiteral
+    
+        let lit' = case lit of
+                    HLIR.MkLitString _ -> HLIR.MkExprVarCall "String::new" [HLIR.MkExprLiteral lit]
+                    _ -> HLIR.MkExprLiteral lit
+
         suffix <-
             P.optional
                 $ P.choice
@@ -67,44 +73,8 @@ parseExprLiteral =
                     ]
 
         case suffix of
-            Nothing -> pure (HLIR.MkExprLiteral lit)
-            Just s -> pure (HLIR.MkExprCast (HLIR.MkExprLiteral lit) (HLIR.MkTyId s))
-
--- | PARSE IF-IS EXPRESSION
--- | Parse an if-is expression. An if-is expression is an expression that consists
--- | of a condition, a pattern to match, and a then branch. It is used to conditionally
--- | evaluate an expression based on a pattern match.
--- | The syntax of an if-is expression is as follows:
--- |
--- | "if" expression "is" pattern "{" statements "}" ("else" "{" statements "}")?
--- |
-parseExprIfIs ::
-    (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
-parseExprIfIs = do
-    ((start, _), _) <- Lex.reserved "if"
-
-    cond <- snd <$> parseExprTerm
-    void $ Lex.reserved "is"
-    pattern <- snd <$> parsePatternFull
-
-    ((_, firstEnd), thenBranch) <- parseExprBlock
-
-    result <- P.optional $ do
-        void $ Lex.reserved "else"
-
-        ((_, end), elseBranch) <- parseExprFull
-
-        pure (end, elseBranch)
-
-    case result of
-        Nothing ->
-            pure
-                ((start, firstEnd), HLIR.MkExprIfIs cond pattern thenBranch Nothing Nothing)
-        Just (end, elseBranch) ->
-            pure
-                ( (start, end)
-                , HLIR.MkExprIfIs cond pattern thenBranch (Just elseBranch) Nothing
-                )
+            Nothing -> pure lit'
+            Just s -> pure (HLIR.MkExprCast lit' (HLIR.MkTyId s))
 
 -- | PARSE TERNARY
 -- | Parse a ternary expression. A ternary expression is an expression that consists
@@ -198,10 +168,6 @@ parseExprBlock = do
     buildBlockFromList (HLIR.MkExprWhile cond body ty inE : xs)
         | isUnit inE = HLIR.MkExprWhile cond body ty (buildBlockFromList xs)
         | otherwise = HLIR.MkExprWhile cond body ty (buildBlockFromList (inE : xs))
-    buildBlockFromList (HLIR.MkExprWhileIs cond pat body ty inE : xs)
-        | isUnit inE = HLIR.MkExprWhileIs cond pat body ty (buildBlockFromList xs)
-        | otherwise =
-            HLIR.MkExprWhileIs cond pat body ty (buildBlockFromList (inE : xs))
     buildBlockFromList (HLIR.MkExprReturn e : _) = HLIR.MkExprReturn e
     buildBlockFromList (HLIR.MkExprBreak : _) = HLIR.MkExprBreak
     buildBlockFromList (HLIR.MkExprContinue : _) = HLIR.MkExprContinue
@@ -239,6 +205,17 @@ parseExprLambda = do
         Nothing -> parseExprFull
 
     pure ((start, end), HLIR.MkExprLambda params returnType body)
+
+parseExprList :: MonadIO m => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
+parseExprList = do
+    (pos, elements) <- Lex.brackets $ P.sepBy (snd <$> parseExprFull) Lex.comma
+
+    let newList  = HLIR.MkExprVarCall "List::new" []
+
+        listExpr = foldl' addElement newList elements
+        addElement acc el = HLIR.MkExprVarCall "List::push" [acc, el]
+
+    pure (pos, HLIR.MkExprDereference listExpr Nothing)
 
 -- | PARSE STRUCTURE CREATION
 -- | Parse a structure creation expression. A structure creation expression is an
@@ -298,6 +275,9 @@ parsePatternFull =
                 ((start, _), _) <- Lex.reserved "let"
                 ((_, end), name) <- Lex.identifier
                 pure ((start, end), HLIR.MkPatternLet (HLIR.MkAnnotation name Nothing))
+            , do
+                (pos, _) <- Lex.symbol "_"
+                pure (pos, HLIR.MkPatternWildcard)
             , P.try $ do
                 ((start, _), name) <- Lex.identifier
                 ((_, end), args) <- Lex.parens (P.sepBy (snd <$> parsePatternFull) Lex.comma)
@@ -306,12 +286,19 @@ parsePatternFull =
                 (pos, name) <- Lex.identifier
                 pure (pos, HLIR.MkPatternVariable (HLIR.MkAnnotation name Nothing))
             , do
-                (pos, _) <- Lex.symbol "_"
-                pure (pos, HLIR.MkPatternWildcard)
-            , do
                 Lex.lexeme Lit.parseLiteral
                     <&> second HLIR.MkPatternLiteral
             ]
+
+parseExprTuple :: 
+    (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
+parseExprTuple = do
+    (pos, elements) <- Lex.parens $ P.sepBy (snd <$> parseExprFull) Lex.comma   
+    
+    case elements of
+        [] -> pure (pos, HLIR.MkExprVariable (HLIR.MkAnnotation "unit" Nothing) [])
+        [x] -> pure (pos, x)
+        _ -> pure (pos, List.foldr1 HLIR.MkExprTuple elements)
 
 -- | PARSE TERM EXPRESSION
 -- | Parse a term expression. A term expression is the most basic form of an expression
@@ -332,16 +319,16 @@ parseExprTerm ::
 parseExprTerm =
     Lex.locateWith
         <$> P.choice
-            [ snd <$> Lex.parens parseExprFull
+            [ parseExprTuple
             , parseExprBlock
             , parseExprLambda
             , parseExprSizeOf
-            , P.try parseExprTernary
-            , parseExprIfIs
+            , parseExprTernary
             , P.try parseExprStructCreation
             , parseExprLetIn
             , parseExprLiteral
             , parseExprVariable
+            , parseExprList
             ]
 
 makeOperator ::
@@ -389,15 +376,13 @@ parseExprFull ::
 parseExprFull = Lex.locateWith <$> P.makeExprParser parseExprTerm operators
   where
     operators =
-        [ -- 1. Postfix: function call (), array indexing [], struct access ., -> (highest)
-
+        [ 
             [ P.Postfix . Lex.makeUnaryOp $ do
                 void $ Lex.symbol "["
                 index <- snd <$> parseExprFull
                 ((_, end), _) <- Lex.symbol "]"
                 pure $ \(start, arr) -> ((fst start, end), HLIR.MkExprVarCall "get_index" [arr, index])
             ]
-        , []
         ,
             [ P.Postfix . Lex.makeUnaryOp $ do
                 ((_, end), args) <-
@@ -441,6 +426,11 @@ parseExprFull = Lex.locateWith <$> P.makeExprParser parseExprTerm operators
                 void $ Lex.reserved "as"
                 ((_, end), ty) <- Typ.parseType
                 pure $ \((start, _), e) -> ((start, end), HLIR.MkExprCast e ty)
+            , P.Postfix . Lex.makeUnaryOp $ do
+                void $ Lex.reserved "is" 
+                ((_, end), pattern) <- parsePatternFull
+
+                pure $ \((start, _), e) -> ((start, end), HLIR.MkExprIs e pattern Nothing)
             ]
         , -- 3. Multiplicative: *, /, %
 
@@ -519,8 +509,8 @@ parseStmtFull = do
     Lex.locateWith
         <$> P.choice
             [ parseStmtLet
-            , P.try parseStmtWhile
-            , parseStmtWhileIs
+            , parseStmtWhile
+            , parseStmtForIn
             , parseStmtReturn
             , parseStmtBreak
             , parseStmtContinue
@@ -566,33 +556,28 @@ parseStmtContinue = do
     ((start, end), _) <- Lex.reserved "continue"
     pure ((start, end), HLIR.MkExprContinue)
 
--- | PARSE WHILE-IS STATEMENT
--- | Parse a while-is statement. A while-is expression is an expression that consists
--- | of a condition, a pattern to match, and a body. It is used to repeatedly evaluate
--- | an expression based on a pattern match.
--- | The syntax of a while-is expression is as follows:
--- |
--- | "while" expression "is" pattern "{" statements "}"
--- |
-parseStmtWhileIs ::
+parseStmtForIn :: 
     (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
-parseStmtWhileIs = do
-    ((start, _), _) <- Lex.reserved "while"
-
-    cond <- snd <$> parseExprTerm
-    void $ Lex.reserved "is"
-    pattern <- snd <$> parsePatternFull
-
+parseStmtForIn = do
+    ((start, _), _) <- Lex.reserved "for"
+    pattern <- Lex.identifier
+    void $ Lex.reserved "in"
+    iterable <- snd <$> parseExprFull
     ((_, end), body) <- parseExprBlock
+
+    let iterableVar = HLIR.MkAnnotation "_iterable" Nothing
 
     pure
         ( (start, end)
-        , HLIR.MkExprWhileIs
-            cond
-            pattern
+        , HLIR.MkExprLetIn
+            iterableVar
+            (HLIR.MkExprFunctionAccess "iter" iterable [])
+            ( HLIR.MkExprWhileIs
+            (HLIR.MkExprFunctionAccess "next" (HLIR.MkExprVariable iterableVar []) [])
+            (HLIR.MkPatternConstructor "Some" [HLIR.MkPatternLet (HLIR.MkAnnotation (snd pattern) Nothing)] Nothing)
             body
+            (HLIR.MkExprVariable (HLIR.MkAnnotation "unit" Nothing) []) )
             Nothing
-            (HLIR.MkExprVariable (HLIR.MkAnnotation "unit" Nothing) [])
         )
 
 parseStmtWhile ::
@@ -605,8 +590,8 @@ parseStmtWhile = do
     pure
         ( (start, end)
         , HLIR.MkExprWhile
-            cond
-            body
+            (HLIR.MkExprLiteral (HLIR.MkLitBool True))
+            (HLIR.MkExprCondition cond body HLIR.MkExprBreak Nothing)
             Nothing
             (HLIR.MkExprVariable (HLIR.MkAnnotation "unit" Nothing) [])
         )

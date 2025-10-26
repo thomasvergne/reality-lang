@@ -156,7 +156,7 @@ parseTopStructureDeclaration = do
         pure gens
 
     ((_, end), fields) <-
-        Lex.braces $ Map.fromList <$> P.sepBy parseField Lex.comma
+        Lex.braces $ P.sepBy parseField Lex.comma
     pure
         ( (start, end)
         ,
@@ -171,7 +171,7 @@ parseTopStructureDeclaration = do
         (_, name) <- Lex.identifier
         void Lex.colon
         ty <- snd <$> Typ.parseType
-        pure (name, ty)
+        pure (HLIR.MkStructField name ty)
 
 -- | PARSE EXTERNAL FUNCTION NODE
 -- | An external function node is a top-level construct that defines an
