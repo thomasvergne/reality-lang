@@ -1131,7 +1131,7 @@ maybeResolveEnumeration depth name args = do
     specState <- liftIO $ readIORef defaultSpecializer
 
     case Map.lookup name specState.enumerations of
-        Just scheme@(HLIR.Forall _ instMap) -> do
+        Just scheme@(HLIR.Forall orderedVars' instMap) -> do
             -- Instantiating the scheme to get a concrete type and a substitution
             -- that maps the quantified variables to concrete types.
             (_, sub) <- M.instantiateMapAndSub scheme
@@ -1143,13 +1143,13 @@ maybeResolveEnumeration depth name args = do
 
             -- Creating a substitution map that maps the enumeration's type variables
             -- to the provided type arguments
-            let s = Map.fromList (zip (Map.keys sub) args) <> sub
+            let s = Map.fromList (zip orderedVars' args) <> sub
 
             -- Creating a unique name for the specialized enumeration
             -- This is done by re-ordering the scheme variables and using the
             -- substitution `s` so the naming is consistent with other places
             -- that generate specialization names (avoids mismatched naming)
-            let orderedVars = flip map (Map.keys sub) $ \var -> Map.findWithDefault (HLIR.MkTyQuantified var) var s
+            let orderedVars = flip map orderedVars' $ \var -> Map.findWithDefault (HLIR.MkTyQuantified var) var s
                 specName = name <> "_" <> Text.intercalate "_" (map toText orderedVars)
 
             -- Checking if we have already created this specialization
