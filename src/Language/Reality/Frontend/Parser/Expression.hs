@@ -52,7 +52,7 @@ parseExprLiteral =
         (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
     parseLiteralSuffix = Lex.lexeme $ do
         lit <- Lit.parseLiteral
-    
+
         let lit' = case lit of
                     HLIR.MkLitString _ -> HLIR.MkExprVarCall "String::new" [HLIR.MkExprLiteral lit]
                     _ -> HLIR.MkExprLiteral lit
@@ -290,11 +290,11 @@ parsePatternFull =
                     <&> second HLIR.MkPatternLiteral
             ]
 
-parseExprTuple :: 
+parseExprTuple ::
     (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
 parseExprTuple = do
-    (pos, elements) <- Lex.parens $ P.sepBy (snd <$> parseExprFull) Lex.comma   
-    
+    (pos, elements) <- Lex.parens $ P.sepBy (snd <$> parseExprFull) Lex.comma
+
     case elements of
         [] -> pure (pos, HLIR.MkExprVariable (HLIR.MkAnnotation "unit" Nothing) [])
         [x] -> pure (pos, x)
@@ -376,7 +376,7 @@ parseExprFull ::
 parseExprFull = Lex.locateWith <$> P.makeExprParser parseExprTerm operators
   where
     operators =
-        [ 
+        [
             [ P.Postfix . Lex.makeUnaryOp $ do
                 void $ Lex.symbol "["
                 index <- snd <$> parseExprFull
@@ -427,7 +427,7 @@ parseExprFull = Lex.locateWith <$> P.makeExprParser parseExprTerm operators
                 ((_, end), ty) <- Typ.parseType
                 pure $ \((start, _), e) -> ((start, end), HLIR.MkExprCast e ty)
             , P.Postfix . Lex.makeUnaryOp $ do
-                void $ Lex.reserved "is" 
+                void $ Lex.reserved "is"
                 ((_, end), pattern) <- parsePatternFull
 
                 pure $ \((start, _), e) -> ((start, end), HLIR.MkExprIs e pattern Nothing)
@@ -556,7 +556,7 @@ parseStmtContinue = do
     ((start, end), _) <- Lex.reserved "continue"
     pure ((start, end), HLIR.MkExprContinue)
 
-parseStmtForIn :: 
+parseStmtForIn ::
     (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
 parseStmtForIn = do
     ((start, _), _) <- Lex.reserved "for"
