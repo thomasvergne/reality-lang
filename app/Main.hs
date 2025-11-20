@@ -73,9 +73,14 @@ buildOutput (MkOptions inputFile pathAliases) = do
             pipelineResult <- runExceptT $ pipeline ast
 
             let includes = ["<stdint.h>", "<stdbool.h>", "<pthread.h>", "<gc.h>"]
+            let defines = ["#define GC_THREADS"]
 
             handle pipelineResult $ \cstr -> do
-                let finalCstr = unlines (map ("#include " <>) includes) <> "\n\n" <> cstr
+                let finalCstr = 
+                        unlines defines 
+                        <> unlines (map ("#include " <>) includes) 
+                        <> "\n\n" 
+                        <> cstr
 
                 writeFileText (file -<.> "c") finalCstr
         Left err -> do
