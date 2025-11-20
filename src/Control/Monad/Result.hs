@@ -162,7 +162,7 @@ handle (Left (err, pos@(p1, _))) _ = liftIO $ do
                                             <> toText fieldTy
                                             <> " in type "
                                             <> toText ty
-                                    TC.MkImplConstraint name ty _ -> " - implementation of property " <> name <> " for type " <> toText ty
+                                    TC.MkImplConstraint name ty _ _ -> " - implementation of property " <> name <> " for type " <> toText ty
                                 )
                                 cs
                             )
@@ -296,7 +296,7 @@ instance Show BonzaiError where
                                     <> toText fieldTy
                                     <> " in type "
                                     <> toText ty
-                            TC.MkImplConstraint name ty _ -> " - implementation of property " <> name <> " for type " <> toText ty
+                            TC.MkImplConstraint name ty _ _ -> " - implementation of property " <> name <> " for type " <> toText ty
                         )
                         cs
                     )
