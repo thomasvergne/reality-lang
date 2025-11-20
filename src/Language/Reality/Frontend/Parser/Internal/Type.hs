@@ -44,7 +44,7 @@ parseType =
           -- identifier "<" type ("," type)* ">"
           P.try $ do
             ((start, _), idt) <- Lex.identifier
-            ((_, end), tys) <- Lex.brackets $ P.sepBy1 (snd <$> parseType) Lex.comma
+            ((_, end), tys) <- Lex.angles $ P.sepBy1 (snd <$> parseType) Lex.comma
 
             pure ((start, end), HLIR.MkTyApp (HLIR.MkTyId idt) tys)
         , Lex.identifier <&> second HLIR.MkTyId

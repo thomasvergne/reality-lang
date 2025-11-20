@@ -63,6 +63,7 @@ reservedWords =
         , "else"
         , "extern"
         , "is"
+        , "new"
         ]
 
 -- | Lexeme parser that consumes whitespace after the lexeme
@@ -185,7 +186,7 @@ isIdentCharStart :: Text -> Bool
 isIdentCharStart cs = isAlpha (Text.head cs) || Text.head cs == '_'
 
 isIdentCharStart' :: Char -> Bool
-isIdentCharStart' c = isAlpha c || c == '_'
+isIdentCharStart' c = (isAlpha c && isUpper c) || c == '_'
 
 -- | Parse a non-lexed identifier
 -- | A non-lexed identifier is an identifier that is not lexed, meaning that
@@ -211,11 +212,15 @@ nonLexedID = do
 -- | An identifier cannot be a reserved keyword
 identifier :: (MonadIO m) => P.Parser m (Position, Text)
 identifier = lexeme $ do
-    -- Parse identifier segments separated by "::"
-    firstSegment <- identifierSegment
-    restSegments <- P.many (P.try (string "::" *> identifierSegment))
+    -- Parse identifier segments separated by "."
+    qualified <- P.many . P.try $ do
+        segment <- identifierSegment
+        void $ char '.'
+        return (toText segment)
 
-    let cs = Text.intercalate "::" (firstSegment : restSegments)
+    (_, lastSegment) <- nonLexedID
+
+    let cs = Text.intercalate "." (qualified <> [lastSegment])
 
     if cs `Set.member` reservedWords
         then fail $ "The identifier " ++ show cs ++ " is a reserved word"

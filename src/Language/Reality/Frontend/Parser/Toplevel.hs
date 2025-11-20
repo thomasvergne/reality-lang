@@ -39,7 +39,7 @@ parseTopFunctionDeclaration = do
 
     generics <-
         P.option mempty
-            $ snd <$> Lex.brackets (P.sepBy1 (snd <$> Lex.identifier) Lex.comma)
+            $ snd <$> Lex.angles (P.sepBy1 (snd <$> Lex.identifier) Lex.comma)
 
     (_, params) <-
         Lex.parens (P.sepBy (P.parseAnnotation' (snd <$> Typ.parseType)) Lex.comma)
@@ -76,7 +76,7 @@ parseTopTypeAlias = do
 
     generics <-
         P.option mempty
-            $ snd <$> Lex.brackets (P.sepBy1 (snd <$> Lex.identifier) Lex.comma)
+            $ snd <$> Lex.angles (P.sepBy1 (snd <$> Lex.identifier) Lex.comma)
 
     ((_, end), aliased) <- Lex.symbol "=" *> Typ.parseType
 
@@ -103,7 +103,7 @@ parseTopImport ::
 parseTopImport = do
     ((start, _), _) <- Lex.reserved "import"
     modules <-
-        P.sepBy1 (Lex.symbol "*" <|> Lex.nonLexedID) (P.string "::") P.<?> "module path"
+        P.sepBy1 Lex.nonLexedID (P.string ".") P.<?> "module path"
 
     let lastPosition = if null modules then start else List.maximum (map (snd . fst) modules)
     let moduleParts = map snd modules
@@ -152,7 +152,7 @@ parseTopStructureDeclaration = do
 
     (_, idt) <- Lex.identifier
     generics <- P.option mempty $ do
-        (_, gens) <- Lex.brackets (P.sepBy1 (snd <$> Lex.identifier) Lex.comma)
+        (_, gens) <- Lex.angles (P.sepBy1 (snd <$> Lex.identifier) Lex.comma)
         pure gens
 
     ((_, end), fields) <-
@@ -190,7 +190,7 @@ parseTopExternalFunction = do
 
     generics <-
         P.option mempty
-            $ snd <$> Lex.brackets (P.sepBy1 (snd <$> Lex.identifier) Lex.comma)
+            $ snd <$> Lex.angles (P.sepBy1 (snd <$> Lex.identifier) Lex.comma)
 
     (_, params) <-
         Lex.parens (P.sepBy (P.parseAnnotation' (snd <$> Typ.parseType)) Lex.comma)
@@ -223,7 +223,7 @@ parseTopProperty = do
     (_, idt) <- Lex.identifier
     generics <-
         P.option mempty
-            $ snd <$> Lex.brackets (P.sepBy1 (snd <$> Lex.identifier) Lex.comma)
+            $ snd <$> Lex.angles (P.sepBy1 (snd <$> Lex.identifier) Lex.comma)
 
     (_, params) <-
         Lex.parens (P.sepBy (P.parseAnnotation' (snd <$> Typ.parseType)) Lex.comma)
@@ -259,7 +259,7 @@ parseTopEnumeration = do
     (_, idt) <- Lex.identifier
     generics <-
         P.option mempty
-            $ snd <$> Lex.brackets (P.sepBy1 (snd <$> Lex.identifier) Lex.comma)
+            $ snd <$> Lex.angles (P.sepBy1 (snd <$> Lex.identifier) Lex.comma)
 
     ((_, end), variants) <-
         Lex.braces $ P.sepBy parseVariant Lex.comma
@@ -304,7 +304,7 @@ parseTopImplementation = do
     (_, idt) <- Lex.identifier
     generics <-
         P.option mempty
-            $ snd <$> Lex.brackets (P.sepBy1 (snd <$> Lex.identifier) Lex.comma)
+            $ snd <$> Lex.angles (P.sepBy1 (snd <$> Lex.identifier) Lex.comma)
 
     (_, params) <-
         Lex.parens (P.sepBy (P.parseAnnotation' (snd <$> Typ.parseType)) Lex.comma)

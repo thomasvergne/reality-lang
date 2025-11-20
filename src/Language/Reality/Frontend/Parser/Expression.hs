@@ -54,7 +54,7 @@ parseExprLiteral =
         lit <- Lit.parseLiteral
 
         let lit' = case lit of
-                    HLIR.MkLitString _ -> HLIR.MkExprVarCall "String::new" [HLIR.MkExprLiteral lit]
+                    HLIR.MkLitString _ -> HLIR.MkExprVarCall "String.init" [HLIR.MkExprLiteral lit]
                     _ -> HLIR.MkExprLiteral lit
 
         suffix <-
@@ -102,6 +102,13 @@ parseExprTernary = do
         Nothing -> pure ((start, firstEnd), HLIR.MkExprSingleIf cond thenBranch Nothing)
         Just (end, elseBranch) -> pure ((start, end), HLIR.MkExprCondition cond thenBranch elseBranch Nothing)
 
+parseExprNew :: (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
+parseExprNew = do
+    ((start, _), _) <- Lex.reserved "new"
+    ((_, end), expr) <- parseExprFull
+
+    pure ((start, end), HLIR.MkExprVarCall "GC.allocate" [expr])
+
 -- | PARSE VARIABLE
 -- | Parse a variable expression. A variable expression is an expression that
 -- | consists of a variable name. It is used to represent a variable in Reality.
@@ -113,8 +120,8 @@ parseExprVariable ::
 parseExprVariable = do
     (pos@(start, _), name) <- Lex.identifier
     ((_, end), as_type) <-
-        P.try . P.option (pos, [])
-            $ Lex.symbol "::" *> Lex.brackets ((snd <$> Typ.parseType) `P.sepBy1` Lex.comma)
+        P.option (pos, []) . P.try
+            $ Lex.angles ((snd <$> Typ.parseType) `P.sepBy1` Lex.comma)
 
     pure
         ((start, end), HLIR.MkExprVariable (HLIR.MkAnnotation name Nothing) as_type)
@@ -210,10 +217,10 @@ parseExprList :: MonadIO m => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
 parseExprList = do
     (pos, elements) <- Lex.brackets $ P.sepBy (snd <$> parseExprFull) Lex.comma
 
-    let newList  = HLIR.MkExprVarCall "List::new" []
+    let newList  = HLIR.MkExprVarCall "List.init" []
 
         listExpr = foldl' addElement newList elements
-        addElement acc el = HLIR.MkExprVarCall "List::push" [acc, el]
+        addElement acc el = HLIR.MkExprFunctionAccess "push" acc [] [el]
 
     pure (pos, HLIR.MkExprDereference listExpr Nothing)
 
@@ -227,6 +234,8 @@ parseExprList = do
 parseExprStructCreation ::
     (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
 parseExprStructCreation = do
+    void $ Lex.reserved "struct"
+
     ((start, _), header) <- Typ.parseType
 
     ((_, end), fields) <- Lex.braces $ Map.fromList <$> P.sepBy parseField Lex.comma
@@ -322,6 +331,7 @@ parseExprTerm =
             [ parseExprTuple
             , parseExprBlock
             , parseExprLambda
+            , parseExprNew
             , parseExprSizeOf
             , parseExprTernary
             , P.try parseExprStructCreation
@@ -395,7 +405,10 @@ parseExprFull = Lex.locateWith <$> P.makeExprParser parseExprTerm operators
                 (_, sym) <- Lex.symbol "->" <|> Lex.symbol "."
                 ((_, end), field) <- Lex.nonLexedID <* Lex.scn
 
+                types <- P.option [] . P.try $ snd <$> Lex.angles ((snd <$> Typ.parseType) `P.sepBy1` Lex.comma)
+
                 optArgs <- P.optional $ Lex.parens (P.sepBy (snd <$> parseExprFull) Lex.comma)
+
 
                 pure $ \((start, _), e) -> do
                     let e' = case sym of
@@ -409,7 +422,7 @@ parseExprFull = Lex.locateWith <$> P.makeExprParser parseExprTerm operators
                             )
                         Just ((_, end'), args) ->
                             ( (start, end')
-                            , HLIR.MkExprFunctionAccess field e' args
+                            , HLIR.MkExprFunctionAccess field e' types args
                             )
             ]
         , -- 2. Prefix/unary: *, &, cast, etc.
@@ -571,9 +584,9 @@ parseStmtForIn = do
         ( (start, end)
         , HLIR.MkExprLetIn
             iterableVar
-            (HLIR.MkExprFunctionAccess "iter" iterable [])
+            (HLIR.MkExprFunctionAccess "iter" iterable [] [])
             ( HLIR.MkExprWhileIs
-            (HLIR.MkExprFunctionAccess "next" (HLIR.MkExprVariable iterableVar []) [])
+            (HLIR.MkExprFunctionAccess "next" (HLIR.MkExprVariable iterableVar []) [] [])
             (HLIR.MkPatternConstructor "Some" [HLIR.MkPatternLet (HLIR.MkAnnotation (snd pattern) Nothing)] Nothing)
             body
             (HLIR.MkExprVariable (HLIR.MkAnnotation "unit" Nothing) []) )
