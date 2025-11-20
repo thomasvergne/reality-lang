@@ -197,3 +197,7 @@ void* BDWGC_realloc(void* ptr, size_t size) {
 void BDWGC_free(void* ptr) {
     GC_FREE(ptr);
 }
+
+uint64_t i32_to_u64(int32_t value) {
+    return (uint64_t)(uint32_t)value;
+}

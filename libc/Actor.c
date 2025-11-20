@@ -1,17 +1,25 @@
+#define GC_THREADS
 #include <pthread.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <gc.h>
 
 typedef struct {
-    void* environment;
-    void* (*function)(void*);
+  void* (*function)(void*);
+  void* environment;
 } generic_function;
 
-pthread_t create_thread(generic_function* f) {
-    pthread_t thread;
-    pthread_create(&thread, NULL, f->function, f->environment);
+static void* thread_trampoline(void* arg) {
+  GC_register_my_thread(NULL);
+  generic_function* f = (generic_function*)arg;
+  void* result = f->function(f->environment);
+  return result;
+}
 
-    return thread;
+pthread_t create_thread(generic_function* f) {
+  pthread_t thread;
+  pthread_create(&thread, NULL, thread_trampoline, f);
+  return thread;
 }
 
 char* read_file_ext(const char* path) {
