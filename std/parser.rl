@@ -9,14 +9,14 @@ pub extern fn is_digit(c: char) -> bool;
 
 type Rest = String;
 
-enum ParserResult[A] {
+enum ParserResult<A> {
     Success(A, Rest),
     Failure(String, Rest)
 }
 
-type Parser[A] = fn(String) -> ParserResult[A];
+type Parser<A> = fn(String) -> ParserResult<A>;
 
-impl fn (r: ParserResult[A]) show_prec[A](prec: i32) -> String {
+impl fn (r: ParserResult<A>) show_prec<A>(prec: i32) -> String {
     if r is Success(let value, let rest) {
         let result = "Success(" + show_prec(value, prec + 1) + ", ";
         result = result + show_prec(rest, prec + 1) + ")";
@@ -30,7 +30,7 @@ impl fn (r: ParserResult[A]) show_prec[A](prec: i32) -> String {
     }
 }
 
-impl fn (r: ParserResult[A]) or_else[A](default: A) -> A {
+impl fn (r: ParserResult<A>) or_else<A>(default: A) -> A {
     if r is Success(let value, let _) {
         return value;
     } else {
@@ -38,7 +38,7 @@ impl fn (r: ParserResult[A]) or_else[A](default: A) -> A {
     }
 }
 
-fn satisfy(predicate: fn(char) -> bool) -> Parser[char] {
+fn satisfy(predicate: fn(char) -> bool) -> Parser<char> {
     return |input| {
         if input.length == 0u64 {
             return Failure("Unexpected end of input", input);
@@ -54,11 +54,11 @@ fn satisfy(predicate: fn(char) -> bool) -> Parser[char] {
     };
 }
 
-fn character(expected: char) -> Parser[char] {
+fn character(expected: char) -> Parser<char> {
     return satisfy(|c| c == expected);
 }
 
-impl fn (p: Parser[A]) then[A, B](q: Parser[B]) -> Parser[(A, B)] {
+impl fn (p: Parser<A>) then<A, B>(q: Parser<B>) -> Parser<(A, B)> {
     return |input| {
         if (p(input)) is Success(let value1, let rest1) {
             if (q(rest1)) is Success(let value2, let rest2) {
@@ -72,7 +72,7 @@ impl fn (p: Parser[A]) then[A, B](q: Parser[B]) -> Parser[(A, B)] {
     }
 }
 
-impl fn (p: Parser[A]) map[A, B](f: fn(A) -> B) -> Parser[B] {
+impl fn (p: Parser<A>) map<A, B>(f: fn(A) -> B) -> Parser<B> {
     return |input| {
         if (p(input)) is Success(let value, let rest) {
             return Success(f(value), rest);
@@ -82,7 +82,7 @@ impl fn (p: Parser[A]) map[A, B](f: fn(A) -> B) -> Parser[B] {
     };
 }
 
-impl fn (p: Parser[A]) bind[A, B](f: fn(A) -> Parser[B]) -> Parser[B] {
+impl fn (p: Parser<A>) bind<A, B>(f: fn(A) -> Parser<B>) -> Parser<B> {
     return |input| {
         if (p(input)) is Success(let value, let rest) {
             let nextParser = f(value);
@@ -93,13 +93,13 @@ impl fn (p: Parser[A]) bind[A, B](f: fn(A) -> Parser[B]) -> Parser[B] {
     };
 }
 
-impl fn (p: Parser[A]) many[A]() -> Parser[List[A]] {
+impl fn (p: Parser<A>) many<A>() -> Parser<List<A>> {
     return |input| {
-        let results = List::new::[A]();
+        let results = List.init<A>();
         let currentInput = input;
 
         while p(currentInput) is Success(let value, let rest) {
-            List::push(results, value);
+            results.push(value);
             currentInput = rest;
         };
 
@@ -108,14 +108,14 @@ impl fn (p: Parser[A]) many[A]() -> Parser[List[A]] {
 }
 
 
-fn whitespace() -> Parser[String] {
+fn whitespace() -> Parser<String> {
     return satisfy(is_whitespace).many().map(
         |chars| {
             let result = "";
             let i = 0u64;
             while i < chars.length {
                 let c = chars[i];
-                result = result + String::new(GC::allocate(c));
+                result = result + String.init(GC.allocate(c));
                 i = i + 1;
             };
             return result;
@@ -123,17 +123,17 @@ fn whitespace() -> Parser[String] {
     );
 }
 
-impl fn (p: Parser[A]) before[A, B](q: Parser[B]) -> Parser[A] {
+impl fn (p: Parser<A>) before<A, B>(q: Parser<B>) -> Parser<A> {
     return p.bind(|value| {
         return q.map(|_| value);
     });
 }
 
-impl fn (p: Parser[A]) after[A, B](q: Parser[B]) -> Parser[B] {
+impl fn (p: Parser<A>) after<A, B>(q: Parser<B>) -> Parser<B> {
     return p.bind(|_| q);
 }
 
-impl fn (p: Parser[A]) skip_whitespace[A]() -> Parser[A] {
+impl fn (p: Parser<A>) skip_whitespace<A>() -> Parser<A> {
     return whitespace()
         .after(
             p.before(
@@ -142,7 +142,7 @@ impl fn (p: Parser[A]) skip_whitespace[A]() -> Parser[A] {
         );
 }
 
-impl fn (p: Parser[A]) try[A]() -> Parser[A] {
+impl fn (p: Parser<A>) try<A>() -> Parser<A> {
     return |input| {
         let result = p(input);
         if (result) is Success(let value, let rest) {
@@ -153,14 +153,14 @@ impl fn (p: Parser[A]) try[A]() -> Parser[A] {
     };
 }
 
-impl fn (p: fn() -> Parser[A]) lazy[A]() -> Parser[A] {
+impl fn (p: fn() -> Parser<A>) lazy<A>() -> Parser<A> {
     return |input| {
         let parser = p();
         return parser(input);
     };
 }
 
-fn choice[A](parsers: List[Parser[A]]) -> Parser[A] {
+fn choice<A>(parsers: List<Parser<A>>) -> Parser<A> {
     return |input| {
         let i = 0u64;
 
@@ -177,7 +177,7 @@ fn choice[A](parsers: List[Parser[A]]) -> Parser[A] {
     };
 }
 
-impl fn (p: Parser[A]) optional[A]() -> Parser[Option[A]] {
+impl fn (p: Parser<A>) optional<A>() -> Parser<Option<A>> {
     return |input| {
         if (p(input)) is Success(let value, let rest) {
             return Success(Some(value), rest);
@@ -187,16 +187,16 @@ impl fn (p: Parser[A]) optional[A]() -> Parser[Option[A]] {
     };
 }
 
-impl fn (p: Parser[A]) some[A]() -> Parser[List[A]] {
+impl fn (p: Parser<A>) some<A>() -> Parser<List<A>> {
     return |input| {
         if (p(input)) is Success(let firstValue, let rest) {
-            let results = List::new::[A]();
-            List::push(results, firstValue);
+            let results = List.init<A>();
+            results.push(firstValue);
 
             let currentInput = rest;
 
             while (p(currentInput)) is Success(let value, let rest2) {
-                List::push(results, value);
+                results.push(value);
                 currentInput = rest2;
             };
 
@@ -207,7 +207,7 @@ impl fn (p: Parser[A]) some[A]() -> Parser[List[A]] {
     }
 }
 
-impl fn (p: Parser[A]) run[A](input: String) -> ParserResult[A] {
+impl fn (p: Parser<A>) run<A>(input: String) -> ParserResult<A> {
     if (p(input)) is Success(let value, let rest) {
         if rest.length == 0u64 {
             return Success(value, rest);
@@ -219,17 +219,17 @@ impl fn (p: Parser[A]) run[A](input: String) -> ParserResult[A] {
     };
 }
 
-pub impl fn (p: Parser[A]) sep_by[A, B](sep: Parser[B]) -> Parser[List[A]] {
+pub impl fn (p: Parser<A>) sep_by<A, B>(sep: Parser<B>) -> Parser<List<A>> {
     return |input| {
-        let results = List::new::[A]();
+        let results = List.init<A>();
 
         if (p(input)) is Success(let firstValue, let rest1) {
-            List::push(results, firstValue);
+            results.push(firstValue);
             let currentInput = rest1;
 
             while (sep(currentInput)) is Success(let _, let rest2) {
                 if (p(rest2)) is Success(let value, let rest3) {
-                    List::push(results, value);
+                    results.push(value);
                     currentInput = rest3;
                 } else {
                     break;
@@ -243,7 +243,7 @@ pub impl fn (p: Parser[A]) sep_by[A, B](sep: Parser[B]) -> Parser[List[A]] {
     };
 }
 
-fn string(s: String) -> Parser[String] {
+fn string(s: String) -> Parser<String> {
     return |input| {
         let i = 0u64;
 

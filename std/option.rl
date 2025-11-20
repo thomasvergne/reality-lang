@@ -1,11 +1,11 @@
-import string::*;
+import string;
 
-enum Option[T] {
+enum Option<T> {
     Some(T),
     None
 }
 
-impl fn (c: Option[T]) show_prec[T](i: i32) -> String {
+impl fn (c: Option<T>) show_prec<T>(i: i32) -> String {
     if c is Some(let v) {
         "Some(" + show_prec(v, i + 1) + ")"
     } else {
@@ -14,7 +14,7 @@ impl fn (c: Option[T]) show_prec[T](i: i32) -> String {
 }
 
 mod Option {
-    fn map[A, B](c: Option[A], f: fn(A) -> B) -> Option[B] {
+    fn map<A, B>(c: Option<A>, f: fn(A) -> B) -> Option<B> {
         if c is Some(let v) {
             Some(f(v))
         } else {
@@ -22,7 +22,7 @@ mod Option {
         }
     }
 
-    fn get_or_else[A](c: Option[A], default: A) -> A {
+    fn get_or_else<A>(c: Option<A>, default: A) -> A {
         if c is Some(let v) {
             v
         } else {
@@ -30,7 +30,7 @@ mod Option {
         }
     }
 
-    fn is_some[A](c: Option[A]) -> bool {
+    fn is_some<A>(c: Option<A>) -> bool {
         if c is Some(let x) {
             true
         } else {
@@ -38,7 +38,7 @@ mod Option {
         }
     }
 
-    fn is_none[A](c: Option[A]) -> bool {
+    fn is_none<A>(c: Option<A>) -> bool {
         if c is None {
             true
         } else {

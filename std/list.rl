@@ -1,67 +1,73 @@
-import string::*;
+import string;
+import option;
 
-struct List[A] {
+struct List<A> {
     data: *A,
     length: u64,
     capacity: u64
 };
 
+type size = u64;
+
+extern let intrinsic: void;
+
 mod GC {
     struct GarbageCollector { };
 
-    extern fn BDWGC_malloc[A](size: u64) -> A;
-    extern fn BDWGC_free[A](ptr: A) -> unit;
-    extern fn BDWGC_realloc[A](ptr: A, size: u64) -> A;
-
-    //extern fn GC_INIT(gc: *GC::GarbageCollector, argc_ref: *i32) -> i32;
-    extern fn panic_ext(message: string) -> unit;
-
-    pub fn malloc[A]() -> *A {
-        BDWGC_malloc::[*A](sizeof(A))
+    #[intrinsic] {
+        extern fn GC_malloc<A>(size: u64) -> A;
+        extern fn GC_free<A>(ptr: A) -> unit;
+        extern fn GC_realloc<A>(ptr: A, size: u64) -> A;
     }
 
-    pub fn allocate[A](value: A) -> *A {
-        let ptr = GC::malloc::[A]();
+    extern fn panic_ext(message: string) -> unit;
+
+    pub fn malloc<A>() -> *A {
+        GC_malloc<*A>(sizeof(A))
+    }
+
+    pub fn allocate<A>(value: A) -> *A {
+        let ptr = GC.malloc<A>();
         *ptr = value;
         ptr
     }
 
-    pub fn calloc[A](count: u64) -> *A {
-        BDWGC_malloc(count * sizeof(A))
+    pub fn calloc<A>(count: u64) -> *A {
+        GC_malloc(count * sizeof(A))
     }
 
-    pub fn realloc[A](ptr: *A, count: u64) -> *A {
-        BDWGC_realloc(ptr, count)
+    pub fn realloc<A>(ptr: *A, count: u64) -> *A {
+        GC_realloc(ptr, count)
     }
 
-    pub fn free[A](ptr: *A) -> unit {
-        BDWGC_free(ptr)
+    pub fn free<A>(ptr: *A) -> unit {
+        GC_free(ptr)
     }
 
     fn red(message: String) -> String {
         "\x1b[31m" + message + "\x1b[0m"
     }
 
-    pub fn panic[A](message: A) -> unit {
-        let msg_prefix = GC::red("[Panic]: ");
+    pub fn panic<A>(message: A) -> unit {
+        let msg_prefix = GC.red("[Panic]: ");
         let full_message = msg_prefix + show_prec(message, 0);
         panic_ext(full_message.data)
     }
 }
 
-property get_index[Item, Container, Index](container: Container, index: Index) -> Item;
+property get_index<Item, Container, Index>(container: Container, index: Index) -> Item;
 
-extern fn ptr_add[A](ptr: A, offset: u64) -> A;
-extern fn fetch_ptr[A](ptr: A, index: u64) -> A;
+extern fn ptr_add<A>(ptr: A, offset: u64) -> A;
+extern fn fetch_ptr<A>(ptr: A, index: u64) -> A;
 
-impl fn (c: *A) get_index[A](index: u64) -> A {
+impl fn (c: *A) get_index<A>(index: u64) -> A {
     let ptr = ptr_add(c, index * sizeof(A));
     *ptr
 }
 
-impl fn (c: List[A]) get_index[A](index: u64) -> A {
+impl fn (c: List<A>) get_index<A>(index: u64) -> A {
     if index >= c.length {
-        GC::panic("Index out of bounds in List::get_index, " 
+        GC.panic("Index out of bounds in List.get_index, " 
             + show_prec(index, 0) 
             + " (<index>) must be less than "
             + show_prec(c.length, 0) 
@@ -77,105 +83,105 @@ impl fn (x: String) get_index(index: u64) -> char {
     *ptr as char
 }
 
-property get_index_mut[B, A](container: A, index: u64) -> *B;
+property get_index_mut<B, A>(container: A, index: u64) -> *B;
 
-impl fn (c: *A) get_index_mut[A](index: u64) -> *A {
+impl fn (c: *A) get_index_mut<A>(index: u64) -> *A {
     let ptr = ptr_add(c, index * sizeof(A));
     ptr as *A
 }
 
-impl fn (c: List[A]) get_index_mut[A](index: u64) -> *A {
+impl fn (c: List<A>) get_index_mut<A>(index: u64) -> *A {
     get_index_mut(c.data, index)
 }
 
 mod List {
-    fn new[A]() -> *List[A] {
-        let list = GC::malloc::[List[A]]();
+    fn init<A>() -> *List<A> {
+        let list = GC.malloc<List<A>>();
 
-        list->capacity = 10u64;
+        list->capacity = 10.into();
 
-        list->data = GC::calloc::[A](10);
-        list->length = 0u64;
+        list->data = GC.calloc<A>(list->capacity);
+        list->length = 0.into();
 
         list
     }
 
-    fn push[A](list: *List[A], value: A) -> *List[A] {
+    impl fn (list: *List<A>) push<A>(value: A) -> *List<A> {
         if list->length == list->capacity {
-            list->capacity = list->capacity + 10u64;
-            list->data = GC::realloc(list->data, list->capacity + 10);
+            list->capacity = list->capacity + 10.into();
+            list->data = GC.realloc(list->data, list->capacity + 10.into());
         };
 
         *get_index_mut(list->data, list->length) = value;
-        list->length = list->length + 1;
+        list->length = list->length + 1.into();
 
         list
     }
 
-    impl fn (list: List[A]) map[A, B](f: fn(A) -> B) -> List[B] {
-        let new_list = List::new::[B]();
+    impl fn (list: List<A>) map<A, B>(f: fn(A) -> B) -> List<B> {
+        let init_list = List.init<B>();
 
-        let i = 0u64;
+        let i = 0.into();
 
         while i < list.length {
             let value = list[i];
-            List::push(new_list, f(value));
-            i = i + 1;
+            init_list.push(f(value));
+            i = i + 1.into();
         };
 
-        *new_list
+        *init_list
     }
 
-    impl fn (list: List[A]) extend[A](other: List[A]) -> List[A] {
-        let new_list = List::new::[A]();
+    impl fn (list: List<A>) extend<A>(other: List<A>) -> List<A> {
+        let init_list = List.init<A>();
 
-        let i = 0u64;
+        let i = 0.into();
 
         while i < list.length {
             let value = list[i];
-            List::push(new_list, value);
-            i = i + 1;
+            init_list.push(value);
+            i = i + 1.into();
         };
 
-        let j = 0u64;
+        let j = 0.into();
 
         while j < other.length {
             let value = other[j];
-            List::push(new_list, value);
-            j = j + 1;
+            init_list.push(value);
+            j = j + 1.into();
         };
 
-        *new_list
+        *init_list
     }
 
-    fn from_pointer[A](ptr: *A, count: u64) -> *List[A] {
-        let list = List::new::[A]();
+    fn from_pointer<A>(ptr: *A, count: u64) -> *List<A> {
+        let list = List.init<A>();
 
-        let i = 0u64;
+        let i = 0.into();
 
         while i < count {
             let value = ptr[i];
-            List::push(list, value);
-            i = i + 1;
+            list.push(value);
+            i = i + 1.into();
         };
 
         list
     }
 
-    impl fn (list: List[A]) show_prec[A](prec: i32) -> String {
+    impl fn (list: List<A>) show_prec<A>(prec: i32) -> String {
         let result = "[";
 
-        let i = 0u64;
+        let i = 0.into();
 
         while i < list.length {
             let value = list[i];
             result = result + show_prec(value, prec + 1);
 
-            if i < list.length - 1 {
+            if i < list.length - 1.into() {
                 result = result + ", ";
             };
 
-            i = i + 1;
+            i = i + 1.into();
         };
 
         result = result + "]";
@@ -183,21 +189,21 @@ mod List {
         result
     }
 
-    impl fn (list: List[A]) slice[A](start: u64, end: u64) -> List[A] {
-        let new_list = List::new::[A]();
+    impl fn (list: List<A>) slice<A>(start: u64, end: u64) -> List<A> {
+        let init_list = List.init<A>();
 
         let i = start;
 
         while i < end && i < list.length {
             let value = list[i];
-            List::push(new_list, value);
+            init_list.push(value);
             i = i + 1;
         };
 
-        *new_list
+        *init_list
     }
 
-    impl fn (list: List[A]) equals[A](other: List[A]) -> bool {
+    impl fn (list: List<A>) equals<A>(other: List<A>) -> bool {
         if list.length != other.length {
             return false;
         };
@@ -213,6 +219,17 @@ mod List {
 
         return true;
     }
+
+    impl fn (list: *List<A>) pop<A>() -> Option<A> {
+        if list->length == 0.into() {
+            return None;
+        };
+
+        list->length = list->length - 1.into();
+        let value = (list->data)[list->length];
+
+        Some(value)
+    }
 }
 
 impl fn (x: String) slice(start: u64, end: u64) -> String {
@@ -222,7 +239,7 @@ impl fn (x: String) slice(start: u64, end: u64) -> String {
     let i = start;
     while i < length {
         let c = x[i];
-        result = result + String::new(GC::allocate(c));
+        result = result + String.init(GC.allocate(c));
         i = i + 1;
     };
 
@@ -230,22 +247,22 @@ impl fn (x: String) slice(start: u64, end: u64) -> String {
 }
 
 impl fn (x: char) show_prec(_: i32) -> String {
-    let data = GC::allocate(x);
+    let data = GC.allocate(x);
 
-    "'" + String::new(data) + "'"
+    "'" + String.init(data) + "'"
 }
 
-pub fn getArgs(argc: i32, argv: *string) -> List[String] {
-    List::from_pointer(argv, argc)->map(String::new)
+pub fn getArgs(argc: i32, argv: *string) -> List<String> {
+    List.from_pointer(argv, argc.into())->map(String.init)
 }
 
 mod String {
-    fn from_chars(chars: List[char]) -> String {
+    fn from_chars(chars: List<char>) -> String {
         let result = "";
         let i = 0u64;
         while i < chars.length {
             let c = chars[i];
-            result = result + String::new(GC::allocate(c));
+            result = result + String.init(GC.allocate(c));
             i = i + 1;
         };
         result

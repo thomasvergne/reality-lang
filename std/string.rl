@@ -1,6 +1,4 @@
-mod string {
-    type string = *char;
-}
+type string = *char;
 
 enum unit {
     unit
@@ -31,18 +29,18 @@ fn not(a: bool) -> bool {
     }
 }
 
-property add[A](x: A, y: A) -> A;
-property sub[A](x: A, y: A) -> A;
-property mul[A](x: A, y: A) -> A;
-property div[A](x: A, y: A) -> A;
-property modulo[A](x: A, y: A) -> A;
-property greater[A](x: A, y: A) -> bool;
-property lesser[A](x: A, y: A) -> bool;
+property add<A>(x: A, y: A) -> A;
+property sub<A>(x: A, y: A) -> A;
+property mul<A>(x: A, y: A) -> A;
+property div<A>(x: A, y: A) -> A;
+property modulo<A>(x: A, y: A) -> A;
+property greater<A>(x: A, y: A) -> bool;
+property lesser<A>(x: A, y: A) -> bool;
 
-property equals[A](x: A, y: A) -> bool;
+property equals<A>(x: A, y: A) -> bool;
 
 extern fn number_to_string(n: i32) -> string;
-extern fn pointer_to_string[A](p: A) -> string;
+extern fn pointer_to_string<A>(p: A) -> string;
 extern fn add_number(a: i32, b: i32) -> i32;
 extern fn sub_number(a: i32, b: i32) -> i32;
 extern fn mul_number(a: i32, b: i32) -> i32;
@@ -120,15 +118,15 @@ impl fn (x: u64) modulo(y: u64) -> u64 {
     mod_u64_ext(x, y)
 }
 
-fn great_equals[A](x: A, y: A) -> bool {
+fn great_equals<A>(x: A, y: A) -> bool {
     or(greater(x, y), equals(x, y))
 }
 
-fn less_equals[A](x: A, y: A) -> bool {
+fn less_equals<A>(x: A, y: A) -> bool {
     or(lesser(x, y), equals(x, y))
 }
 
-fn not_equals[A](x: A, y: A) -> bool {
+fn not_equals<A>(x: A, y: A) -> bool {
     not(equals(x, y))
 }
 
@@ -138,16 +136,16 @@ struct String {
 };
 
 extern fn malloc_string(s: string) -> string;
-extern fn strlen(s: string) -> u32;
+extern fn strlen(s: string) -> u64;
 extern fn strcat(x: string, y: string) -> string;
 extern fn concat_strings(a: string, b: string) -> string;
 extern fn char_eq(a: char, b: char) -> bool;
 
 mod String {
-    fn new(data: string) -> String {
+    fn init(data: string) -> String {
         let string_mem = malloc_string(data);
 
-        String {
+        struct String {
             data: string_mem,
             length: strlen(string_mem)
         }
@@ -157,7 +155,7 @@ mod String {
 impl fn (x: String) add(y: String) -> String {
     let result = concat_strings(x.data, y.data);
 
-    String {
+    struct String {
         data: result,
         length: strlen(result)
     }
@@ -165,7 +163,7 @@ impl fn (x: String) add(y: String) -> String {
 
 extern fn printf(s: string) -> i32;
 
-property show_prec[A](x: A, i: i32) -> String;
+property show_prec<A>(x: A, i: i32) -> String;
 
 impl fn (x: String) show_prec(i: i32) -> String {
     if i > 0 {
@@ -176,22 +174,26 @@ impl fn (x: String) show_prec(i: i32) -> String {
 }
 
 impl fn (x: u64) show_prec(_: i32) -> String {
-    String::new(u64_to_string(x))
+    String.init(u64_to_string(x))
+}
+
+impl fn (x: i32) show_prec(_: i32) -> String {
+    String.init(number_to_string(x))
 }
 
 impl fn (x: bool) show_prec(_: i32) -> String {
     if (x) { "true" } else { "false" }
 }
 
-impl fn (x: *A) show_prec[A](i: i32) -> String {
+impl fn (x: *A) show_prec<A>(i: i32) -> String {
     show_prec(*x, i)
 }
 
-fn show[A](x: A) -> String {
+fn show<A>(x: A) -> String {
     show_prec(x, 0)
 }
 
-fn print[A](x: A) -> i32 {
+fn print<A>(x: A) -> i32 {
     printf((show(x) + "\n").data)
 }
 
@@ -202,4 +204,36 @@ impl fn (x: String) equals(y: String) -> bool {
 impl fn (x: char) equals(y: char) -> bool {
     char_eq(x, y)
 }
+
+extern fn i32_to_u64(n: i32) -> u64;
+extern fn u64_to_i32(n: u64) -> i32;
+extern fn i64_to_u64(n: i64) -> u64;
+extern fn u64_to_i64(n: u64) -> i64;
+extern fn f32_to_u64(n: f32) -> u64;
+extern fn u64_to_f32(n: u64) -> f32;
+
+impl fn (x: i32) into() -> u64 {
+    i32_to_u64(x)
+}
+
+impl fn (x: u64) into() -> i32 {
+    u64_to_i32(x)
+}
+
+impl fn (x: i64) into() -> u64 {
+    i64_to_u64(x)
+}
+
+impl fn (x: u64) into() -> i64 {
+    u64_to_i64(x)
+}
+
+impl fn (x: f32) into() -> u64 {
+    f32_to_u64(x)
+}
+
+impl fn (x: u64) into() -> f32 {
+    u64_to_f32(x)
+}
+
 
