@@ -1,6 +1,6 @@
-import std::string::*;
-import std::parser;
-import std::io;
+import std.string;
+import std.parser;
+import std.io;
 
 enum CLI {
     PositionalArg(String),
@@ -20,17 +20,17 @@ impl fn (cli: CLI) show_prec(i: i32) -> String {
     }
 }
 
-fn parse_positional_arg() -> Parser[CLI] {
+fn parse_positional_arg() -> Parser<CLI> {
     return satisfy(|c| is_alphanumeric(c) || c == '-' || c == '_')
         .some()
         .map(|chars| {
-            let result = String::from_chars(chars);
+            let result = String.from_chars(chars);
 
             return PositionalArg(result);
         });
 }
 
-fn parse_flag() -> Parser[CLI] {
+fn parse_flag() -> Parser<CLI> {
     let prefix = choice([string("--"), string("-")]);
     
     return prefix
@@ -38,14 +38,14 @@ fn parse_flag() -> Parser[CLI] {
             satisfy(|c| is_alphanumeric(c) || c == '-' || c == '_')
                 .some()
                 .map(|chars| {
-                    let result = String::from_chars(chars);
+                    let result = String.from_chars(chars);
 
                     return Flag(result);
                 })
         );
 }
 
-fn parse_option() -> Parser[CLI] {
+fn parse_option() -> Parser<CLI> {
     let prefix = choice([string("--"), string("-")]);
 
     return prefix
@@ -56,26 +56,26 @@ fn parse_option() -> Parser[CLI] {
                     character('=')
                 )
                 .bind(|keyChars| {
-                    let keyStr = String::from_chars(keyChars);
+                    let keyStr = String.from_chars(keyChars);
                     return satisfy(|c| c != '\n').some().map(|valueChars| {
-                        let valueStr = String::from_chars(valueChars);
+                        let valueStr = String.from_chars(valueChars);
                         return Option(keyStr, valueStr);
                     });
                 })
         );
 }
 
-fn parse_cli_arg() -> Parser[CLI] {
+fn parse_cli_arg() -> Parser<CLI> {
     return choice([parse_option(), parse_flag().try(), parse_positional_arg()]);
 }
 
-fn parse_cli_args() -> Parser[List[CLI]] {
+fn parse_cli_args() -> Parser<List<CLI>> {
     return parse_cli_arg()
         .skip_whitespace()
         .many();
 }
 
-impl fn (args: List[String]) parse_as_cli() -> List[CLI] {
+impl fn (args: List<String>) parse_as_cli() -> List<CLI> {
     let cliStr = args.join(" ");
     let result = parse_cli_args()(cliStr);
 
@@ -86,7 +86,7 @@ impl fn (args: List[String]) parse_as_cli() -> List[CLI] {
     };
 }
 
-impl fn (l: List[CLI]) get_first_positional() -> Option[String] {
+impl fn (l: List<CLI>) get_first_positional() -> Option<String> {
     let i = 0u64;
     while i < l.length {
         let cli_arg = l[i];
@@ -99,7 +99,7 @@ impl fn (l: List[CLI]) get_first_positional() -> Option[String] {
     return None;
 }
 
-impl fn (l: List[CLI]) has_flag(flagName: String) -> bool {
+impl fn (l: List<CLI>) has_flag(flagName: String) -> bool {
     let i = 0u64;
     while i < l.length {
         let cli_arg = l[i];
@@ -114,7 +114,7 @@ impl fn (l: List[CLI]) has_flag(flagName: String) -> bool {
     return false;
 }
 
-impl fn (l: List[CLI]) get_option(optionName: String) -> Option[String] {
+impl fn (l: List<CLI>) get_option(optionName: String) -> Option<String> {
     let i = 0u64;
     while i < l.length {
         let cli_arg = l[i];
@@ -129,9 +129,9 @@ impl fn (l: List[CLI]) get_option(optionName: String) -> Option[String] {
     return None;
 }
 
-type Map[K, V] = List[Tuple[K, V]];
+type Map<K, V> = List<Tuple<K, V>>;
 
-impl fn (m: Map[K, V]) get[K, V](key: K) -> Option[V] {
+impl fn (m: Map<K, V>) get<K, V>(key: K) -> Option<V> {
     let i = 0u64;
     while i < m.length {
         if m[i] is Pair(let k, let v) && k == key {
@@ -144,7 +144,7 @@ impl fn (m: Map[K, V]) get[K, V](key: K) -> Option[V] {
     return None;
 }
 
-impl fn (m: Map[K, V]) has_key[K, V](key: K) -> bool {
+impl fn (m: Map<K, V>) has_key<K, V>(key: K) -> bool {
     let i = 0u64;
     while i < m.length {
         if m[i] is Pair(let k, let v) && k == key {
@@ -156,14 +156,14 @@ impl fn (m: Map[K, V]) has_key[K, V](key: K) -> bool {
     return false;
 }
 
-impl fn (it: Map[K, V]) iter[K, V]() -> Iterator[Map[K, V]] {
-    Iterator[Map[K, V]] {
+impl fn (it: Map<K, V>) iter<K, V>() -> Iterator<Map<K, V>> {
+    struct Iterator<Map<K, V>> {
         container: it,
-        index: GC::allocate(0u64)
+        index: GC.allocate(0u64)
     }
 }
 
-impl fn (it: Iterator[Map[K, V]]) next[K, V]() -> Option[Tuple[K, V]] {
+impl fn (it: Iterator<Map<K, V>>) next<K, V>() -> Option<Tuple<K, V>> {
     if *it.index < it.container.length {
         let value = it.container.at(*it.index);
         *it.index = *it.index + 1u64;

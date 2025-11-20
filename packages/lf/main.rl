@@ -1,11 +1,11 @@
-import std::string::*;
-import std::parser;
-import std::io;
-import std::iterator;
-import src::parser;
-import src::configuration;
-import src::cli;
-import src::color;
+import std.string;
+import std.parser;
+import std.io;
+import std.iterator;
+import src.parser;
+import src.configuration;
+import src.cli;
+import src.color;
 
 extern fn get_current_working_directory() -> string;
 extern fn strlen(s: string) -> u64;
@@ -14,21 +14,21 @@ extern fn folder_exists(path: string) -> bool;
 
 fn get_cwd() -> String {
     let cwd_str = get_current_working_directory();
-    return String {
+    return struct String {
         data: cwd_str,
         length: strlen(cwd_str)
     };
 }
 
-type Command = fn(String, List[CLI]) -> unit;
-type Commands = Map[String, Command];
+type Command = fn(String, List<CLI>) -> unit;
+type Commands = Map<String, Command>;
 
 enum Mode {
     Dev,
     Release
 }
 
-fn parse_key_value_as_alias(kv: Configuration) -> Option[String] {
+fn parse_key_value_as_alias(kv: Configuration) -> Option<String> {
     if kv is KeyValue(let key, Str(let value)) {
         return Some(key + "=" + value);
     } else {
@@ -46,28 +46,28 @@ impl fn (m: Mode) show_prec(prec: i32) -> String {
     }
 }
 
-fn print_lf[A](value: A) -> unit {
+fn print_lf<A>(value: A) -> unit {
     let str = value.show_prec(0);
     print(bold_color(Yellow) + "[LF]" + reset_code() + ": " + str)
 
     unit
 }
 
-fn print_error_lf[A](value: A) -> unit {
+fn print_error_lf<A>(value: A) -> unit {
     let str = value.show_prec(0);
     print(bold_color(Red) + "[LF]" + reset_code() + ": " + str)
 
     unit
 }
 
-fn print_success_lf[A](value: A) -> unit {
+fn print_success_lf<A>(value: A) -> unit {
     let str = value.show_prec(0);
     print(bold_color(Green) + "[LF]" + reset_code() + ": " + str)
 
     unit
 }
 
-fn build_aliases(aliases: List[Option[String]]) -> String {
+fn build_aliases(aliases: List<Option<String>>) -> String {
     let result = "";
 
     let i = 0u64;
@@ -82,7 +82,7 @@ fn build_aliases(aliases: List[Option[String]]) -> String {
     return result;
 }
 
-fn get_libc_flags(config: List[*Configuration]) -> String {
+fn get_libc_flags(config: List<*Configuration>) -> String {
     let libc_section = config.get_section(["features", "libc"]);
     let libraries = if libc_section is Some(Section(_, let configs)) && configs.get_key_value("libraries") is Some(Arr(let flags)) {
         flags
@@ -100,7 +100,7 @@ fn get_libc_flags(config: List[*Configuration]) -> String {
     return libs.join(" ");
 }
 
-fn build_command(cwd: String, args: List[CLI], config: List[*Configuration]) -> unit {
+fn build_command(cwd: String, args: List<CLI>, config: List<*Configuration>) -> Option<String> {
     let mode = if args.has_flag("dev") { Dev } else { Release };
 
     print_lf("Building project in " + mode.show_prec(0) + "...");
@@ -138,7 +138,9 @@ fn build_command(cwd: String, args: List[CLI], config: List[*Configuration]) -> 
     let exit_code = execute_command(compile_command_rlc.data);
 
     if exit_code != 0i32 {
-        return print_error_lf("Build failed with exit code " + (exit_code as u64).show_prec(0) + ".");
+        print_error_lf("Build failed with exit code " + (exit_code as u64).show_prec(0) + ".");
+
+        return None;
     }
 
     let main_file_split = main_file.split('.');
@@ -163,15 +165,17 @@ fn build_command(cwd: String, args: List[CLI], config: List[*Configuration]) -> 
     let gcc_exit_code = execute_command(gcc_command.data);
 
     if gcc_exit_code != 0i32 {
-        return print_error_lf("GCC compilation failed with exit code " + (gcc_exit_code as u64).show_prec(0) + ".");
+        print_error_lf("GCC compilation failed with exit code " + (gcc_exit_code as u64).show_prec(0) + ".");
+
+        return None;
     }
 
     print_success_lf("Build succeeded! Output binary: " + color(Black) + "output/program" + reset_code());
 
-    unit
+    return Some(cwd + "/output/program");
 }
 
-fn help_command(cwd: String, args: List[CLI]) -> unit {
+fn help_command(cwd: String, args: List<CLI>) -> unit {
     print(color(Green) + "LiFe Project Manager" + reset_code());
     print("Usage: lf [command] [options]");
 
@@ -204,17 +208,41 @@ fn help_command(cwd: String, args: List[CLI]) -> unit {
     unit
 }
 
-fn get_commands(cwd: String, config: List[*Configuration]) -> Commands {
+fn run_command(cwd: String, args: List<CLI>, config: List<*Configuration>) -> unit {
+    let build_output = build_command(cwd, args, config);
+
+    if build_output is Some(let binary_path) {
+        print_lf("Running program...");
+
+        let run_exit_code = execute_command(binary_path.data);
+
+        if run_exit_code != 0i32 {
+            print_error_lf("Program exited with code " + (run_exit_code as u64).show_prec(0) + ".");
+        } else {
+            print_success_lf("Program executed successfully.");
+        }
+    } else {
+        print_error_lf("Build failed; cannot run program.");
+    }
+
+    unit
+}
+
+fn get_commands(cwd: String, config: List<*Configuration>) -> Commands {
     return [
-        ("build", |cwd, args| build_command(cwd, args, config)),
-        ("help", help_command)
+        ("build", |cwd, args| {
+            build_command(cwd, args, config);
+            return unit
+        }),
+        ("help", help_command),
+        ("run", |cwd, args| run_command(cwd, args, config))
     ];
 }
 
-pub fn main(args: List[String]) -> i32 {
+pub fn main(args: List<String>) -> i32 {
     let cwd = get_cwd();
 
-    let config = Configuration::parse_file(cwd + "/config.toml");
+    let config = Configuration.parse_file(cwd + "/config.toml");
 
     let final_config = if config is Some(let conf) {
         conf 
