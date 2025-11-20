@@ -87,7 +87,7 @@ removePatternFromFree (HLIR.MkExprWhile cond body _ inExpr) = do
     (   freeCond <> freeBody <> freeInExpr
         , freeP1 <> freeP2 <> freeP3
         )
-removePatternFromFree (HLIR.MkExprFunctionAccess _ this exprs) = do
+removePatternFromFree (HLIR.MkExprFunctionAccess _ this _ exprs) = do
     let (freeThis, freeP1) = removePatternFromFree this
         (freeExprs, freeP2) = foldl' (\(accFree, accP) expr -> do
                 let (freeExpr, freePattern) = removePatternFromFree expr

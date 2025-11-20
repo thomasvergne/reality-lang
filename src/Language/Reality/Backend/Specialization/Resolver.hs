@@ -36,7 +36,7 @@ runSpecializationResolver toplevels = do
     resolved <- forM toplevels $ \n -> do
         (resolvedNode, newDefs) <- resolveSpecializationSingular n
         pure (newDefs ++ maybeToList resolvedNode)
-
+    
     pure (concat resolved)
 
 -- | Resolve specialization in singular toplevel nodes.
@@ -296,7 +296,6 @@ resolveSpecializationInExpr (HLIR.MkExprVariable ann _) = do
     let shouldWrap' =
             shouldWrap
                 || Set.member ann.name paramLessConstructors'
-    
 
     pure
         ( if shouldWrap' && not (isFun specAnn.typeValue.runIdentity)
@@ -605,10 +604,10 @@ applySubstInExpr subst (HLIR.MkExprIs e p t) = do
     newP <- applySubstInPattern subst p
     newT <- M.applySubstitution subst t.runIdentity
     pure (HLIR.MkExprIs newE newP (Identity newT))
-applySubstInExpr subst (HLIR.MkExprFunctionAccess f this args) = do
+applySubstInExpr subst (HLIR.MkExprFunctionAccess f this ty args) = do
     newThis <- applySubstInExpr subst this
     newArgs <- mapM (applySubstInExpr subst) args
-    pure (HLIR.MkExprFunctionAccess f newThis newArgs)
+    pure (HLIR.MkExprFunctionAccess f newThis ty newArgs)
 applySubstInExpr subst (HLIR.MkExprReturn e) = do
     newE <- applySubstInExpr subst e
     pure (HLIR.MkExprReturn newE)
@@ -922,7 +921,8 @@ resolveSpecializationForImplementation name ty = do
 
             if name `Set.member` (specState.rememberedNatives <> specState.rememberedLocals)
                 then pure (HLIR.MkAnnotation name (Identity newTy), ns, False)
-                else M.throw (M.VariableNotFound name)
+                else do
+                    M.throw (M.ImplementationNotFound name ty)
   where
     -- The actual implementation matching algorithm
     -- as described above.
@@ -1043,7 +1043,7 @@ maybeResolveStructure depth name args = do
         Just scheme@(HLIR.Forall qvars instMap) -> do
             -- Instantiating the scheme to get a concrete type and a substitution
             -- that maps the quantified variables to concrete types.
-            (_, sub) <- M.instantiateMapAndSub scheme
+            (_, sub) <- M.instantiateMapWithSub scheme
 
             -- Ensuring the number of type arguments matches the number of
             -- type variables in the structure definition
@@ -1134,7 +1134,7 @@ maybeResolveEnumeration depth name args = do
         Just scheme@(HLIR.Forall orderedVars' instMap) -> do
             -- Instantiating the scheme to get a concrete type and a substitution
             -- that maps the quantified variables to concrete types.
-            (_, sub) <- M.instantiateMapAndSub scheme
+            (_, sub) <- M.instantiateMapWithSub scheme
 
             -- Ensuring the number of type arguments matches the number of
             -- type variables in the enumeration definition

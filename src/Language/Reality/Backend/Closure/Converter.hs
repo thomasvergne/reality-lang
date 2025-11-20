@@ -567,7 +567,12 @@ convertExpression (HLIR.MkExprStructureAccess struct field) = do
                         M.compilerError
                             $ "Field " <> field <> " does not exist in structure " <> structName
             -- If the structure is not found, we raise a compiler error
-            _ -> M.compilerError $ "Expected a structure type: " <> show structTy
+            _ -> M.compilerError $ 
+                "Expected a structure type: " 
+                    <> show structTy 
+                    <> " for expression: "
+                    <> toText struct <> "." <> field
+
     where
         lookupField :: Text -> [HLIR.StructureMember HLIR.Type] -> Maybe HLIR.Type
         lookupField fName = foldr

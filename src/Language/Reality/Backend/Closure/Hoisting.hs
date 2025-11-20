@@ -152,11 +152,11 @@ hoistLambdasInExpr (HLIR.MkExprReturn e) = do
     pure (HLIR.MkExprReturn newE, hoistedE)
 hoistLambdasInExpr HLIR.MkExprBreak = pure (HLIR.MkExprBreak, [])
 hoistLambdasInExpr HLIR.MkExprContinue = pure (HLIR.MkExprContinue, [])
-hoistLambdasInExpr (HLIR.MkExprFunctionAccess ann this exprs) = do
+hoistLambdasInExpr (HLIR.MkExprFunctionAccess ann this tys exprs) = do
     (newThis, hoistedThis) <- hoistLambdasInExpr this
     (newExprs, hoistedExprs) <- mapAndUnzipM hoistLambdasInExpr exprs
     pure
-        ( HLIR.MkExprFunctionAccess ann newThis newExprs
+        ( HLIR.MkExprFunctionAccess ann newThis tys newExprs
         , hoistedThis ++ concat hoistedExprs
         )
 
