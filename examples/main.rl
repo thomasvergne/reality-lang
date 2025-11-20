@@ -1,6 +1,6 @@
 const x: i32 = 5;
 
-import imports::*;
+import imports;
 
 extern fn ptr_add[A](c: A, idx: u64) -> A;
 
