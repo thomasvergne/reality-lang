@@ -10,6 +10,27 @@ import Language.Reality.Frontend.Typechecker.Unification qualified as M
 import Language.Reality.Syntax.HLIR qualified as HLIR
 import qualified Data.List as List
 import qualified Data.Foldable as List
+import qualified Data.Set as Set
+
+withTypeVars ::
+    (MonadIO m) =>
+    [Text] ->
+    m a ->
+    m a
+withTypeVars typeVars action = do   
+    oldState <- readIORef M.defaultCheckerState
+
+    -- Adding type variables to the state
+    modifyIORef' M.defaultCheckerState $ \s ->
+        s{M.typeVariables = Set.union (Set.fromList typeVars) s.typeVariables}
+
+    result <- action
+
+    -- Restoring old state
+    modifyIORef' M.defaultCheckerState $ \s ->
+        s{M.typeVariables = oldState.typeVariables}
+
+    pure result
 
 -- | TYPECHECKER
 -- | Typecheck a program.
@@ -57,7 +78,7 @@ checkToplevelSingular (HLIR.MkTopConstantDeclaration ann expr) = do
             }
 
     pure (HLIR.MkTopConstantDeclaration ann typedExpr)
-checkToplevelSingular (HLIR.MkTopFunctionDeclaration ann params ret body) = do
+checkToplevelSingular (HLIR.MkTopFunctionDeclaration ann params ret body) = withTypeVars ann.typeValue $ do
     -- Removing aliases from the parameter and return types
     paramTypes <- mapM (M.performAliasRemoval . (.typeValue)) params
     retType <- M.performAliasRemoval ret
@@ -142,7 +163,7 @@ checkToplevelSingular (HLIR.MkTopFunctionDeclaration ann params ret body) = do
             }
 
     pure (HLIR.MkTopFunctionDeclaration ann newParams retType typedBody)
-checkToplevelSingular (HLIR.MkTopTypeAlias ann aliased) = do
+checkToplevelSingular (HLIR.MkTopTypeAlias ann aliased) = withTypeVars ann.typeValue $ do
     -- Removing aliases from the aliased type
     realiasedType <- M.performAliasRemoval aliased
 
@@ -163,7 +184,7 @@ checkToplevelSingular (HLIR.MkTopPublic node) = do
     typedNode <- checkToplevelSingular node
     pure (HLIR.MkTopPublic typedNode)
 checkToplevelSingular (HLIR.MkTopModuleDeclaration{}) = M.throw (M.CompilerError "Modules are not supported in the typechecker.")
-checkToplevelSingular (HLIR.MkTopStructureDeclaration ann fields) = do
+checkToplevelSingular (HLIR.MkTopStructureDeclaration ann fields) = withTypeVars ann.typeValue $ do
     -- Removing aliases from the field types
     fieldTypes <- mapM (mapM M.performAliasRemoval) fields
 
@@ -203,7 +224,7 @@ checkToplevelSingular (HLIR.MkTopExternalFunction ann params ret) = do
 
     pure (HLIR.MkTopExternalFunction ann newParams retType)
 checkToplevelSingular (HLIR.MkTopImport _) = M.throw (M.CompilerError "Imports are not supported in the typechecker.")
-checkToplevelSingular (HLIR.MkTopProperty header params returnType) = do
+checkToplevelSingular (HLIR.MkTopProperty header params returnType) = withTypeVars header.typeValue $ do
     -- Removing aliases from the parameter and return types
     paramTypes <- mapM (M.performAliasRemoval . (.typeValue)) params
     retType <- M.performAliasRemoval returnType
@@ -220,7 +241,7 @@ checkToplevelSingular (HLIR.MkTopProperty header params returnType) = do
             }
 
     pure (HLIR.MkTopProperty header newParams retType)
-checkToplevelSingular (HLIR.MkTopImplementation forType header params returnType body) = do
+checkToplevelSingular (HLIR.MkTopImplementation forType header params returnType body) = withTypeVars header.typeValue $ do
     -- Find the property being implemented
     scheme <- findPropertyByName header.name
 
@@ -302,7 +323,7 @@ checkToplevelSingular (HLIR.MkTopExternLet ann) = do
             }
 
     pure (HLIR.MkTopExternLet ann)
-checkToplevelSingular (HLIR.MkTopEnumeration ann constructors) = do
+checkToplevelSingular (HLIR.MkTopEnumeration ann constructors) = withTypeVars ann.typeValue $ do
     -- Removing aliases from the constructor types
     constructorTypes <-
         traverse
@@ -394,7 +415,7 @@ synthesizeE (HLIR.MkExprVariable ann types) = do
                 pure
                     ( ty
                     , HLIR.MkExprVariable ann{HLIR.typeValue = Identity ty} types
-                    , [M.MkImplConstraint ann.name ty pos]
+                    , [M.MkImplConstraint ann.name ty pos types]
                     , mempty
                     )
             Nothing -> M.throw (M.VariableNotFound ann.name)
@@ -518,7 +539,7 @@ synthesizeE (HLIR.MkExprApplication callee args _) = do
                         )
                         ([], [], mempty)
                         (zip paramTypes args)
-
+    
                     -- Collecting all constraints
                     let cs = cs1 <> cs2
 
@@ -557,7 +578,7 @@ synthesizeE (HLIR.MkExprStructureCreation ty fields) = do
     -- Finding the structure definition by its header, and collecting
     -- it applied type variables.
     let annHeader = getHeader aliasedTy
-        annTypes = getTypeArgs aliasedTy
+    annTypes <- getTypeArgs aliasedTy
 
     -- If the structure is not found, we throw an error.
     -- If found, we do not instantiate it, because we need to
@@ -614,12 +635,12 @@ synthesizeE (HLIR.MkExprStructureAccess struct field) = do
                 , cs <> [M.MkFieldConstraint structTy field fieldTy pos]
                 , b
                 )
-        Just (HLIR.Forall qvars ty) -> do
+        Just sch -> do
             -- Building a substitution map from the structure's quantified
             -- variables to the applied types. And applying the substitution to
             -- the structure's field types.
-            let substMap = Map.fromList (zip qvars (getTypeArgs structTy))
-            structMap <- Map.traverseWithKey (\_ t -> M.applySubstitution substMap t) ty
+            args <- getTypeArgs structTy
+            structMap <- M.instantiateMapAndSub sch args
 
             -- Looking up the field in the structure's field types
             -- If found, we return its type and the typed expression.
@@ -708,7 +729,7 @@ synthesizeE (HLIR.MkExprWhile cond body _ inExpr) = do
     -- The type of the while expression is the type of the in expression
     pure
         (inTy, HLIR.MkExprWhile condExpr bodyExpr (Identity bodyTy) inExprTyped, cs, b3)
-synthesizeE (HLIR.MkExprFunctionAccess field thisExpr args) = do
+synthesizeE (HLIR.MkExprFunctionAccess field thisExpr typeValues args) = do
     -- Synthesizing the type of the `this` expression
     (thisTy, thisExprTyped, cs1, bindings1) <- synthesizeE thisExpr
     (argTys, typedArgs, cs2, bindings2) <- List.unzip4 <$> mapM synthesizeE args
@@ -722,7 +743,7 @@ synthesizeE (HLIR.MkExprFunctionAccess field thisExpr args) = do
     pos <- HLIR.peekPosition'
 
     funcType <-
-        findImplementationMatching env field ((thisTy : argTys) HLIR.:->: retType) pos
+        findImplementationMatching env typeValues field ((thisTy : argTys) HLIR.:->: retType) pos
 
     -- Collecting all constraints
     let cs = cs1 <> mconcat cs2
@@ -740,7 +761,7 @@ synthesizeE (HLIR.MkExprFunctionAccess field thisExpr args) = do
                             (HLIR.MkExprVariable (HLIR.MkAnnotation field (Identity func)) [])
                             (thisExprTyped : typedArgs)
                             (Identity fRetType)
-                        , cs <> [M.MkImplConstraint field func pos]
+                        , cs <> [M.MkImplConstraint field func pos typeValues]
                         , bindings1 <> mconcat bindings2
                         )
         Just ty -> M.throw (M.ExpectedFunction ty)
@@ -753,7 +774,7 @@ synthesizeE (HLIR.MkExprFunctionAccess field thisExpr args) = do
                     (HLIR.MkExprVariable (HLIR.MkAnnotation field (Identity func)) [])
                     (thisExprTyped : typedArgs)
                     (Identity retType)
-                , cs <> [M.MkImplConstraint field func pos]
+                , cs <> [M.MkImplConstraint field func pos typeValues]
                 , bindings1 <> mconcat bindings2
                 )
 synthesizeE (HLIR.MkExprReturn e) = do
@@ -861,7 +882,7 @@ checkP expected (HLIR.MkPatternStructure ty fields) = do
     -- Finding the structure definition by its header, and collecting
     -- it applied type variables.
     let annHeader = getHeader aliasedTy
-        annTypes = getTypeArgs aliasedTy
+    annTypes <- getTypeArgs aliasedTy
 
     -- If the structure is not found, we throw an error.
     -- If found, we do not instantiate it, because we need to
@@ -987,50 +1008,53 @@ solveConstraints constraints = do
     -- If found, we affine the types by ensuring that the implementation
     -- type is a subtype of the required type.
     forM_ constraints $ \case
-        M.MkImplConstraint name ty pos -> do
-            mImplTy <- findImplementationMatching implementations name ty pos
+        M.MkImplConstraint name ty pos tys -> do
+            mImplTy <- findImplementationMatching implementations tys name ty pos
             case mImplTy of
                 Just implTy -> void $ implTy `M.isSubtypeOf` ty
                 Nothing -> pure () -- Ignoring unsolved constraints
         M.MkFieldConstraint structTy fieldName fieldTy pos -> do
             header <- getHeader <$> M.removeAliases structTy
+            args <- getTypeArgs structTy
 
             case header of
                 Just resolved ->
-                    findStructureMatching structures resolved pos >>= \case
+                    findStructureMatching args structures resolved pos >>= \case
                         Just structMap -> case Map.lookup fieldName structMap of
                             Just expectedFieldTy -> void $ expectedFieldTy `M.isSubtypeOf` fieldTy
-                            Nothing -> pure () -- Ignoring unsolved constraints
-                        Nothing -> pure () -- Ignoring unsolved constraints
-                Nothing -> pure () -- Ignoring unsolved constraints
+                            Nothing -> M.throwError (M.FieldNotFound fieldName, pos)
+                        Nothing -> M.throwError (M.StructureNotFound structTy, pos)
+                Nothing -> M.throwError (M.InvalidHeader, pos)
   where
     findStructureMatching ::
         (MonadIO m, M.MonadError M.Error m) =>
+        [HLIR.Type] ->
         [(Text, HLIR.Scheme (Map Text HLIR.Type))] ->
         Text ->
         HLIR.Position ->
         m (Maybe (Map Text HLIR.Type))
-    findStructureMatching [] _ _ = pure Nothing
-    findStructureMatching ((structName, scheme) : xs) name pos
+    findStructureMatching _ [] _ _ = pure Nothing
+    findStructureMatching args ((structName, scheme) : xs) name pos
         | structName == name = do
             -- We instantiate the structure scheme to get a concrete type
-            structTy <- M.instantiateMap scheme >>= mapM M.performAliasRemoval
+            structTy <- M.instantiateMapAndSub scheme args >>= mapM M.performAliasRemoval
             pure (Just structTy)
-        | otherwise = findStructureMatching xs name pos
+        | otherwise = findStructureMatching args xs name pos
 
 findImplementationMatching ::
     (MonadIO m, M.MonadError M.Error m) =>
     [((Text, HLIR.Type), HLIR.Scheme HLIR.Type)] ->
+    [HLIR.Type] ->
     Text ->
     HLIR.Type ->
     HLIR.Position ->
     m (Maybe HLIR.Type)
-findImplementationMatching [] _ _ _ = pure Nothing
-findImplementationMatching (((implName, _), scheme) : xs) name ty pos
+findImplementationMatching [] _ _ _ _ = pure Nothing
+findImplementationMatching (((implName, _), scheme) : xs) tys name ty pos
     | implName == name = do
         -- We instantiate the implementation scheme to get a concrete type
         -- and remove aliases from it.
-        implTy <- M.instantiate scheme >>= M.performAliasRemoval
+        implTy <- M.instantiateWithSub scheme tys >>= M.performAliasRemoval
 
         -- We check if the implementation type is a subtype of the required type
         -- If it is, we return it as a matching implementation.
@@ -1038,8 +1062,8 @@ findImplementationMatching (((implName, _), scheme) : xs) name ty pos
 
         case result of
             Right _ -> pure (Just implTy)
-            Left _ -> findImplementationMatching xs name ty pos
-    | otherwise = findImplementationMatching xs name ty pos
+            Left _ -> findImplementationMatching xs tys name ty pos
+    | otherwise = findImplementationMatching xs tys name ty pos
 
 -- | Extract the header (base type) from a type.
 -- | For example, for `MyStruct[i32, bool]`, it returns `Just "MyStruct"`.
@@ -1058,9 +1082,15 @@ getHeader _ = Nothing
 -- | For example, for `MyStruct[i32, bool]`, it returns `[i32, bool]`.
 -- | For `MyStruct`, it returns `[]`.
 -- | For `i32`, it returns `[]`.
-getTypeArgs :: HLIR.Type -> [HLIR.Type]
-getTypeArgs (HLIR.MkTyApp _ args) = args
-getTypeArgs _ = []
+getTypeArgs :: MonadIO m => HLIR.Type -> m [HLIR.Type]
+getTypeArgs (HLIR.MkTyApp _ args) = pure args
+getTypeArgs (HLIR.MkTyVar ref) = do
+    ty <- readIORef ref
+
+    case ty of
+        HLIR.Link t -> getTypeArgs t
+        HLIR.Unbound _ _ -> pure []
+getTypeArgs _ = pure []
 
 -- | Find a property definition by its name.
 -- | If the property is not found, we throw a `PropertyNotFound` error.

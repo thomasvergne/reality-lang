@@ -5,6 +5,7 @@ import Data.Text qualified as Text
 import GHC.IO qualified as IO
 import Language.Reality.Syntax.HLIR qualified as HLIR
 import Prelude hiding (Constraint)
+import qualified Data.Set as Set
 
 -- | The state of the type checker monad.
 -- | This state includes:
@@ -27,6 +28,7 @@ data CheckerState = CheckerState
     , properties :: Map Text (HLIR.Scheme HLIR.Type)
     , returnType :: Maybe HLIR.Type
     , isInLoop :: Bool
+    , typeVariables :: Set Text
     }
     deriving (Eq, Ord, Generic)
 
@@ -43,7 +45,7 @@ type Substitution = Map Text HLIR.Type
 type Constraints = [Constraint]
 
 data Constraint
-    = MkImplConstraint Text HLIR.Type HLIR.Position
+    = MkImplConstraint Text HLIR.Type HLIR.Position [HLIR.Type]
     | MkFieldConstraint HLIR.Type Text HLIR.Type HLIR.Position
     deriving (Eq, Ord, Generic)
 
@@ -77,6 +79,7 @@ defaultCheckerState = IO.unsafePerformIO $ do
             , properties = Map.empty
             , returnType = Nothing
             , isInLoop = False
+            , typeVariables = Set.empty
             }
 
 -- | NEW SYMBOL
@@ -124,6 +127,7 @@ resetState = do
                 , properties = Map.empty
                 , returnType = Nothing
                 , isInLoop = False
+                , typeVariables = Set.empty
                 }
 
 -- | INSTANTIATE AND SUB
@@ -144,15 +148,26 @@ instantiateAndSub (HLIR.Forall qvars schemeTy) = do
 -- | Instantiate a type scheme that contains a map of types by replacing its quantified
 -- | variables with fresh type variables.
 -- | It also returns the substitution used for the instantiation.
-instantiateMapAndSub ::
+instantiateMapWithSub ::
     (MonadIO m) =>
     HLIR.Scheme (Map Text HLIR.Type) -> m (Map Text HLIR.Type, Map Text HLIR.Type)
-instantiateMapAndSub (HLIR.Forall qvars schemeTy) = do
+instantiateMapWithSub (HLIR.Forall qvars schemeTy) = do
     newVars <- forM qvars $ const newType
     let s = Map.fromList (zip qvars newVars)
     ty <- Map.traverseWithKey (\_ ty -> applySubstitution s ty) schemeTy
 
     pure (ty, s)
+
+instantiateMapAndSub ::
+    (MonadIO m) => HLIR.Scheme (Map Text HLIR.Type) ->
+    [HLIR.Type] ->
+    m (Map Text HLIR.Type)
+instantiateMapAndSub (HLIR.Forall qvars schemeTy) types = do
+    let subst = zip qvars types
+        rest = drop (length types) qvars
+    newVars <- forM rest $ const newType
+    let s' = Map.fromList (subst ++ zip rest newVars)
+    Map.traverseWithKey (\_ ty -> applySubstitution s' ty) schemeTy
 
 -- | INSTANTIATE WITH SUB
 -- | Instantiate a type scheme by replacing its quantified variables with the given
@@ -177,7 +192,7 @@ instantiate (HLIR.Forall qvars schemeTy) = fst <$> instantiateAndSub (HLIR.Foral
 -- | variables with fresh type variables.
 instantiateMap ::
     (MonadIO m) => HLIR.Scheme (Map Text HLIR.Type) -> m (Map Text HLIR.Type)
-instantiateMap (HLIR.Forall qvars schemeTy) = fst <$> instantiateMapAndSub (HLIR.Forall qvars schemeTy)
+instantiateMap (HLIR.Forall qvars schemeTy) = fst <$> instantiateMapWithSub (HLIR.Forall qvars schemeTy)
 
 -- | APPLY SUBSTITUTION
 -- | Apply a substitution to a type, replacing all occurrences of the type variables
