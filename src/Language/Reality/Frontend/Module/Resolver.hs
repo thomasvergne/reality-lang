@@ -101,7 +101,7 @@ resolveModuleSingular node _ = pure [node]
 -- | For example, if the paths are ["MyModule", "SubModule"] and the name is "MyType",
 -- | the resulting name will be "MyModule::SubModule::MyType".
 createName :: Paths -> Text -> Text
-createName paths name = Text.intercalate "::" (paths ++ [name])
+createName paths name = Text.intercalate "." (paths ++ [name])
 
 -- | Type alias for module paths
 -- | Paths represents the hierarchical path of modules,
