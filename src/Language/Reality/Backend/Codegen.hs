@@ -59,11 +59,11 @@ codegenToplevel (MLIR.MkTopFunction name params ret body) = do
     paramList <-
         Text.intercalate ", "
             <$> mapM
-                ( \(MLIR.MkAnnotation paramName ty) -> codegenType True (Just (varify paramName)) [] ty
+                ( \(MLIR.MkAnnotation paramName ty) -> codegenType True False (Just (varify paramName)) [] ty
                 )
                 params
                 
-    retType <- codegenType True Nothing [] ret
+    retType <- codegenType True False Nothing [] ret
     let funcHeader = Text.concat [retType, " ", varify name, "(", paramList, ") {"]
     funcBody <- mapM codegenExpression body
     let funcFooter = ["}"]
@@ -77,11 +77,11 @@ codegenToplevel (MLIR.MkTopFunction name params ret body) = do
 
     pure $ Text.concat ([funcHeader] ++ insertedReturn ++ funcFooter)
 codegenToplevel (MLIR.MkTopGlobal name ty (Just expr)) = do
-    constType <- codegenType True (Just name) [] ty
+    constType <- codegenType True False (Just name) [] ty
     constValue <- codegenExpression expr
     pure $ Text.concat [constType, " = ", constValue, ";"]
 codegenToplevel (MLIR.MkTopGlobal name ty Nothing) = do
-    constType <- codegenType True (Just name) [] ty
+    constType <- codegenType True False (Just name) [] ty
     pure $ Text.concat [constType, ";"]
 codegenToplevel (MLIR.MkTopPublic n) = do
     innerCode <- codegenToplevel n
@@ -95,16 +95,16 @@ codegenToplevel (MLIR.MkTopStructure name fields) = do
 codegenToplevel (MLIR.MkTopExternalFunction name generics params ret) = do
     paramList <-
         Text.intercalate ", "
-            <$> mapM (codegenType True Nothing generics) params
-    retType <- codegenType True (Just name) generics ret
+            <$> mapM (codegenType True True Nothing generics) params
+    retType <- codegenType True True (Just name) generics ret
     pure $ Text.concat ["extern ", retType, "(", paramList, ");"]
 codegenToplevel (MLIR.MkTopExternalVariable name ty) = do
-    varType <- codegenType True (Just name) [] ty
+    varType <- codegenType True True (Just name) [] ty
     pure $ Text.concat ["extern ", varType, ";"]
 
 codegenField :: (MonadIO m) => HLIR.StructureMember HLIR.Type -> m Text
 codegenField (HLIR.MkStructField name ty) = do
-    tyStr <- codegenType False (Just (varify name)) [] ty
+    tyStr <- codegenType False False (Just (varify name)) [] ty
     pure $ Text.concat [tyStr, ";"]
 codegenField (HLIR.MkStructStruct name fields) = do
     fieldLines <- mapM codegenField fields
@@ -137,7 +137,7 @@ codegenExpression (MLIR.MkExprBlock bl) = do
     blockLines <- mapM codegenExpression bl
     pure $ Text.concat ["{", Text.concat (map (<> ";") blockLines), "}"]
 codegenExpression (MLIR.MkExprCast ty expr) = do
-    tyStr <- codegenType True Nothing [] ty
+    tyStr <- codegenType True False Nothing [] ty
     exprStr <- codegenExpression expr
     pure $ Text.concat ["(", tyStr, ")", exprStr]
 codegenExpression (MLIR.MkExprCondition cond thenBr elseBr) = do
@@ -146,11 +146,11 @@ codegenExpression (MLIR.MkExprCondition cond thenBr elseBr) = do
     elseExpr <- codegenExpression elseBr
     pure $ Text.concat ["if (", condExpr, ") ", thenExpr, " else ", elseExpr]
 codegenExpression (MLIR.MkExprLet name ty (Just expr)) = do
-    varType <- codegenType True (Just name) [] ty
+    varType <- codegenType True False (Just name) [] ty
     varValue <- codegenExpression expr
     pure $ Text.concat [varType, " = ", varValue, ";"]
 codegenExpression (MLIR.MkExprLet name ty Nothing) = do
-    varType <- codegenType True (Just name) [] ty
+    varType <- codegenType True False (Just name) [] ty
     pure $ Text.concat [varType, ";"]
 codegenExpression (MLIR.MkExprDereference e) = do
     eStr <- codegenExpression e
@@ -159,7 +159,7 @@ codegenExpression (MLIR.MkExprReference e) = do
     eStr <- codegenExpression e
     pure $ Text.concat ["(&", eStr, ")"]
 codegenExpression (MLIR.MkExprSizeOf ty) = do
-    tyStr <- codegenType True Nothing [] ty
+    tyStr <- codegenType True False Nothing [] ty
     pure $ Text.concat ["sizeof(", tyStr, ")"]
 codegenExpression (MLIR.MkExprStructureAccess (MLIR.MkExprDereference e) f) = do
     eStr <- codegenExpression e
@@ -168,7 +168,7 @@ codegenExpression (MLIR.MkExprStructureAccess e f) = do
     eStr <- codegenExpression e
     pure $ Text.concat [eStr, ".", varify f]
 codegenExpression (MLIR.MkExprStructureCreation ty fields) = do
-    tyStr <- codegenType True Nothing [] ty
+    tyStr <- codegenType True False Nothing [] ty
     fieldInits <-
         mapM
             ( \(n, v) -> do
@@ -222,22 +222,22 @@ dropDoubleQuotes txt =
 -- | This is a simplified example and does not cover all MLIR type constructs.
 -- | You would need to expand this function to handle all the type constructs you need.
 codegenType ::
-    (MonadIO m) => Bool -> Maybe Text -> [Text] -> MLIR.Type -> m Text
-codegenType _ def _ (MLIR.MkTyId "i8") = pure $ Text.concat ["int8_t ", fromMaybe "" def]
-codegenType _ def _ (MLIR.MkTyId "i16") = pure $ Text.concat ["int16_t ", fromMaybe "" def]
-codegenType _ def _ (MLIR.MkTyId "i32") = pure $ Text.concat ["int32_t ", fromMaybe "" def]
-codegenType _ def _ (MLIR.MkTyId "i64") = pure $ Text.concat ["int64_t ", fromMaybe "" def]
-codegenType _ def _ (MLIR.MkTyId "u8") = pure $ Text.concat ["uint8_t ", fromMaybe "" def]
-codegenType _ def _ (MLIR.MkTyId "u16") = pure $ Text.concat ["uint16_t ", fromMaybe "" def]
-codegenType _ def _ (MLIR.MkTyId "u32") = pure $ Text.concat ["uint32_t ", fromMaybe "" def]
-codegenType _ def _ (MLIR.MkTyId "u64") = pure $ Text.concat ["uint64_t ", fromMaybe "" def]
-codegenType _ def _ (MLIR.MkTyId "f32") = pure $ Text.concat ["float ", fromMaybe "" def]
-codegenType _ def _ (MLIR.MkTyId "f64") = pure $ Text.concat ["double ", fromMaybe "" def]
-codegenType _ def _ (MLIR.MkTyId "char") = pure $ Text.concat ["char ", fromMaybe "" def]
-codegenType _ def _ (MLIR.MkTyId "bool") = pure $ Text.concat ["bool ", fromMaybe "" def]
-codegenType _ def _ (MLIR.MkTyId "void") = pure $ Text.concat ["void ", fromMaybe "" def]
-codegenType _ def generics (MLIR.MkTyId n) | n `elem` generics = pure $ Text.concat ["void*", fromMaybe "" def]
-codegenType _ def _ (MLIR.MkTyId n) = do
+    (MonadIO m) => Bool -> Bool -> Maybe Text -> [Text] -> MLIR.Type -> m Text
+codegenType _ _ def _ (MLIR.MkTyId "i8") = pure $ Text.concat ["int8_t ", fromMaybe "" def]
+codegenType _ _ def _ (MLIR.MkTyId "i16") = pure $ Text.concat ["int16_t ", fromMaybe "" def]
+codegenType _ _ def _ (MLIR.MkTyId "i32") = pure $ Text.concat ["int32_t ", fromMaybe "" def]
+codegenType _ _ def _ (MLIR.MkTyId "i64") = pure $ Text.concat ["int64_t ", fromMaybe "" def]
+codegenType _ _ def _ (MLIR.MkTyId "u8") = pure $ Text.concat ["uint8_t ", fromMaybe "" def]
+codegenType _ _ def _ (MLIR.MkTyId "u16") = pure $ Text.concat ["uint16_t ", fromMaybe "" def]
+codegenType _ _ def _ (MLIR.MkTyId "u32") = pure $ Text.concat ["uint32_t ", fromMaybe "" def]
+codegenType _ _ def _ (MLIR.MkTyId "u64") = pure $ Text.concat ["uint64_t ", fromMaybe "" def]
+codegenType _ _ def _ (MLIR.MkTyId "f32") = pure $ Text.concat ["float ", fromMaybe "" def]
+codegenType _ _ def _ (MLIR.MkTyId "f64") = pure $ Text.concat ["double ", fromMaybe "" def]
+codegenType _ _ def _ (MLIR.MkTyId "char") = pure $ Text.concat ["char ", fromMaybe "" def]
+codegenType _ _ def _ (MLIR.MkTyId "bool") = pure $ Text.concat ["bool ", fromMaybe "" def]
+codegenType _ _ def _ (MLIR.MkTyId "void") = pure $ Text.concat ["void ", fromMaybe "" def]
+codegenType _ _ def generics (MLIR.MkTyId n) | n `elem` generics = pure $ Text.concat ["void*", fromMaybe "" def]
+codegenType _ _ def _ (MLIR.MkTyId n) = do
     let typeName = varify n
 
     typedefs' <- readIORef typedefs
@@ -256,17 +256,17 @@ codegenType _ def _ (MLIR.MkTyId n) = do
             , " "
             , fromMaybe "" def
             ]
-codegenType shouldPutEnv def _ (MLIR.MkTyVar tv) = do
+codegenType shouldPutEnv ext def _ (MLIR.MkTyVar tv) = do
     let tvr = IO.unsafePerformIO $ readIORef tv
 
     case tvr of
-        MLIR.Link ty -> codegenType shouldPutEnv def [] ty
+        MLIR.Link ty -> codegenType shouldPutEnv ext def [] ty
         MLIR.Unbound name _ -> Err.compilerError $ "Unbound type variable in codegen: " <> name
-codegenType shouldPutEnv def generics ptr@(MLIR.MkTyPointer ty)
+codegenType shouldPutEnv ext def generics ptr@(MLIR.MkTyPointer ty)
     | (MLIR.MkTyFun args ret, n) <- getMultipleTimesPointer ptr = do
         argTypes <-
-            Text.intercalate ", " <$> mapM (codegenType True Nothing generics) args
-        retType <- codegenType shouldPutEnv Nothing generics ret
+            Text.intercalate ", " <$> mapM (codegenType True ext Nothing generics) args
+        retType <- codegenType shouldPutEnv ext Nothing generics ret
 
         name <- freshSymbol
 
@@ -278,13 +278,14 @@ codegenType shouldPutEnv def generics ptr@(MLIR.MkTyPointer ty)
 
         pure $ Text.concat [name, " ", fromMaybe "" def]
     | otherwise = do
-        innerTy <- codegenType shouldPutEnv Nothing generics ty
+        innerTy <- codegenType shouldPutEnv ext Nothing generics ty
         pure $ Text.concat [innerTy, "*", fromMaybe "" def]
-codegenType shouldPutEnv def generics (args MLIR.:->: ret) = do
+codegenType _ True def _ (HLIR.MkTyFun {}) = pure $ Text.concat ["void* ", fromMaybe "" def]
+codegenType shouldPutEnv ext def generics (args MLIR.:->: ret) = do
     argTypes <-
-        Text.intercalate ", " <$> mapM (codegenType True Nothing generics) args
-    retType <- codegenType shouldPutEnv Nothing generics ret
-
+        Text.intercalate ", " <$> mapM (codegenType True ext Nothing generics) args
+    retType <- codegenType shouldPutEnv ext Nothing generics ret
+    
     name <- freshSymbol
 
     let typedefLine = Text.concat ["typedef ", retType, " (*", name, ")(", argTypes, ");"]
@@ -292,10 +293,10 @@ codegenType shouldPutEnv def generics (args MLIR.:->: ret) = do
     modifyIORef' typedefs (<> [typedefLine])
 
     pure $ Text.concat [name, " ", fromMaybe "" def]
-codegenType _ def generics (MLIR.MkTyAnonymousStructure isUnion (MLIR.MkTyId "") fields) = do
+codegenType _ ext def generics (MLIR.MkTyAnonymousStructure isUnion (MLIR.MkTyId "") fields) = do
     fieldLines <- mapM
         ( \(n, ty) -> do
-            tyStr <- codegenType True Nothing generics ty
+            tyStr <- codegenType True ext Nothing generics ty
             pure $ Text.concat ["    ", tyStr, "; // ", varify n]
         )
         (Map.toList fields)
@@ -312,12 +313,12 @@ codegenType _ def generics (MLIR.MkTyAnonymousStructure isUnion (MLIR.MkTyId "")
     modifyIORef' typedefs (<> [typedefLine])
 
     pure $ Text.concat [structOrUnion, " ", typeDefName]
-codegenType shouldPutEnv def generics (MLIR.MkTyAnonymousStructure _ n _) = do
-    n' <- codegenType shouldPutEnv Nothing generics n
+codegenType shouldPutEnv ext def generics (MLIR.MkTyAnonymousStructure _ n _) = do
+    n' <- codegenType shouldPutEnv ext Nothing generics n
 
     pure $ Text.concat [n', " ", fromMaybe "" def]
-codegenType _ _ _ (MLIR.MkTyQuantified _) = pure "void*"
-codegenType _ _ _ t@(MLIR.MkTyApp _ _) =
+codegenType _ _ def _ (MLIR.MkTyQuantified _) = pure $ Text.concat ["void* ", fromMaybe "" def]
+codegenType _ _ _ _ t@(MLIR.MkTyApp _ _) =
     Err.compilerError
         $ "Type applications are not directly supported in C codegen: "
             <> Text.pack (show t)
