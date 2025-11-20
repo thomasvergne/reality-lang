@@ -91,6 +91,7 @@ data Expression f t
     | MkExprFunctionAccess
         { field :: Text
         , fieldExpr :: Expression f t
+        , typeValues :: [t]
         , arguments :: [Expression f t]
         }
     | MkExprReturn (Expression f t)
@@ -299,7 +300,7 @@ instance (ToText (f t), ToText t) => ToText (Expression f t) where
             , " } in "
             , toText inExpr
             ]
-    toText (MkExprFunctionAccess func fieldExpr args) =
+    toText (MkExprFunctionAccess func fieldExpr _ args) =
         T.concat
             [ toText func
             , "("
