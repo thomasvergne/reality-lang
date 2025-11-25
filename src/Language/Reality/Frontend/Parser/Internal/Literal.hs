@@ -74,5 +74,5 @@ parseLiteral =
         , P.try $ HLIR.MkLitBool True <$ Lex.reserved "true"
         , P.try $ HLIR.MkLitBool False <$ Lex.reserved "false"
         , HLIR.MkLitChar <$> parseChar
-        , HLIR.MkLitString <$> parseString
+        -- , HLIR.MkLitString <$> parseString
         ]

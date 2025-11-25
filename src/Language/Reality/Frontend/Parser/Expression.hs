@@ -11,6 +11,7 @@ import Language.Reality.Syntax.HLIR qualified as HLIR
 import qualified Data.List as List
 import qualified GHC.IO as IO
 import qualified Data.Text as Text
+import qualified Text.Megaparsec.Char as P
 
 {-# NOINLINE lambdaArgumentCounter #-}
 lambdaArgumentCounter :: IORef Int
@@ -49,6 +50,93 @@ parseAnnotation' ::
     (MonadIO m) => P.Parser m a -> P.Parser m (HLIR.Annotation a)
 parseAnnotation' p = HLIR.MkAnnotation . snd <$> Lex.identifier <*> (Lex.symbol ":" *> p)
 
+-- | PARSE A STRING INTERPOLATION LITERAL 
+-- | Parse a string interpolation literal. A string interpolation literal is a
+-- | string literal that contains expressions that are evaluated and inserted
+-- | into the string. The syntax of a string interpolation literal is as follows:
+-- |
+-- | "\"" (string_content | "${" expression "}")* "\""
+parseInterpolatedString ::
+    (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
+parseInterpolatedString = do
+    ((start,_),_) <- Lex.symbol "f\""
+    parts <- many stringSegment
+    ((_,end),_) <- Lex.symbol "\""
+
+    let (_, finalExpr) = List.foldl1 combine parts
+    pure ((start,end), finalExpr)
+  where
+    literalChars :: (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
+    literalChars = do
+        start <- P.getSourcePos
+        str <- P.takeWhile1P
+                (Just "literal string character")
+                (\c -> c /= '"' && c /= '{' && c /= '\\')
+        end <- P.getSourcePos
+
+        let pos = (start, end)
+
+        pure (pos, stringInit str)
+
+    stringSegment = P.choice
+        [ interpolation
+        , escapeBracket
+        , P.try literalChars
+        , P.try (do
+            start <- P.getSourcePos
+            void $ P.string "\\\""
+            end <- P.getSourcePos
+
+            let pos = (start, end)
+
+            pure ( pos
+                 , stringInit "\""
+                 )
+          )
+        ]
+
+    interpolation = do
+        start <- P.getSourcePos
+        void $ P.string "{"
+
+        (pos, expr) <- parseExprFull
+
+        void $ P.char '}'
+        end <- P.getSourcePos
+
+        pure ( (start,end)
+             , showPrecE (pos, expr)
+             )
+
+    escapeBracket = do
+        start <- P.getSourcePos
+        void $ P.string "\\{"
+        end <- P.getSourcePos
+
+        let pos = (start, end)
+
+        pure ( pos
+             , showPrecE ( pos
+                         , stringInit "{"
+                         )
+             )
+
+    showPrecE (_, expr) =
+        HLIR.MkExprFunctionAccess "show_prec" expr [] [ HLIR.MkExprLiteral (HLIR.MkLitInt 0) ]
+
+    combine (p1, e1) (p2, e2) =
+        ( (fst p1, snd p2)
+        , HLIR.MkExprFunctionAccess "add" e1 [] [e2]
+        )
+
+-- | STRING INIT
+-- | Initialize a string from a Text value.
+stringInit :: Text -> HLIR.HLIR "expression"
+stringInit str =
+    HLIR.MkExprVarCall "String.init" [
+        HLIR.MkExprLiteral (HLIR.MkLitString str)
+    ]
+
 -- | PARSE LITERAL
 -- | Parsing a literal is just parsing a literal value except string literal, which
 -- | is covered by the parseInterpolatedString function (used to parse interpolated
@@ -62,12 +150,14 @@ parseExprLiteral =
     parseLiteralSuffix ::
         (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
     parseLiteralSuffix = Lex.lexeme $ do
-        lit <- Lit.parseLiteral
+        lit <- (HLIR.MkExprLiteral <$> Lit.parseLiteral) 
+            <|> (snd <$> parseInterpolatedString)
+            <|> (HLIR.MkExprLiteral . HLIR.MkLitString <$> Lit.parseString)
 
         let lit' = case lit of
-                    HLIR.MkLitString _ -> HLIR.MkExprVarCall "String.init" [HLIR.MkExprLiteral lit]
-                    _ -> HLIR.MkExprLiteral lit
-
+                    HLIR.MkExprLiteral (HLIR.MkLitString _) -> HLIR.MkExprVarCall "String.init" [lit]
+                    _ -> lit
+        
         pure lit'
 
 -- | PARSE TERNARY
