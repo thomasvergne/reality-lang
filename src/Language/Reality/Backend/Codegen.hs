@@ -68,9 +68,14 @@ codegenToplevel (MLIR.MkTopFunction name params ret body) = do
     funcBody <- mapM codegenExpression body
     let funcFooter = ["}"]
     let insertedReturn = case (unsnoc funcBody, unsnoc body) of
-            (Just (initLines, lastLine), Just (_, MLIR.MkExprReturn _)) -> map (<> ";") initLines <> [Text.concat ["    ", lastLine, ";"]]
-            (Just (initLines, lastLine), Just (_, MLIR.MkExprVariable "")) -> map (<> ";") initLines <> [Text.concat ["    ", lastLine, ";"]]
-            (Just (initLines, lastLine), _) -> map (<> ";") initLines <> [Text.concat ["    return ", lastLine, ";"]]
+            (Just (initLines, lastLine), Just (_, MLIR.MkExprReturn _)) -> 
+                map (<> ";") initLines <> [Text.concat ["    ", lastLine, ";"]]
+            (Just (initLines, lastLine), Just (_, MLIR.MkExprVariable "")) ->
+                map (<> ";") initLines <> [Text.concat ["    ", lastLine, ";"]]
+            (Just (initLines, lastLine), Just (_, expr)) | containsSpecialVariable expr -> 
+                map (<> ";") initLines <> [Text.concat ["    ", lastLine, ";"]]
+            (Just (initLines, lastLine), _) -> 
+                map (<> ";") initLines <> [Text.concat ["    return ", lastLine, ";"]]
             (Nothing, _) -> []
 
     modifyIORef' typedefs (<> [retType <> " " <> varify name <> "(" <> paramList <> ");"])
@@ -101,6 +106,9 @@ codegenToplevel (MLIR.MkTopExternalFunction name generics params ret) = do
 codegenToplevel (MLIR.MkTopExternalVariable name ty) = do
     varType <- codegenType True True (Just name) [] ty
     pure $ Text.concat ["extern ", varType, ";"]
+codegenToplevel (MLIR.MkTopTypeAlias name ty) = do
+    tyStr <- codegenType True False Nothing [] ty
+    pure $ Text.concat ["typedef ", tyStr, " ", varify name, ";"]
 
 codegenField :: (MonadIO m) => HLIR.StructureMember HLIR.Type -> m Text
 codegenField (HLIR.MkStructField name ty) = do
@@ -119,6 +127,35 @@ codegenField (HLIR.MkStructUnion name fields) = do
     pure
         $ Text.unlines ([unionHeader] ++ map ("    " <>) fieldLines ++ [unionFooter])
 
+containsSpecialVariable :: MLIR.Expression -> Bool
+containsSpecialVariable (MLIR.MkExprSpecialVariable _) = True
+containsSpecialVariable (MLIR.MkExprApplication f args) =
+    containsSpecialVariable f || any containsSpecialVariable args
+containsSpecialVariable (MLIR.MkExprBlock exprs) =
+    any containsSpecialVariable exprs
+containsSpecialVariable (MLIR.MkExprCondition cond thenBr elseBr) =
+    containsSpecialVariable cond
+        || containsSpecialVariable thenBr
+        || containsSpecialVariable elseBr
+containsSpecialVariable (MLIR.MkExprLet _ _ (Just expr)) =
+    containsSpecialVariable expr
+containsSpecialVariable (MLIR.MkExprLet _ _ Nothing) = False
+containsSpecialVariable (MLIR.MkExprDereference e) = containsSpecialVariable e
+containsSpecialVariable (MLIR.MkExprReference e) = containsSpecialVariable e
+containsSpecialVariable (MLIR.MkExprSizeOf _) = False
+containsSpecialVariable (MLIR.MkExprStructureAccess struct _) =
+    containsSpecialVariable struct
+containsSpecialVariable (MLIR.MkExprStructureCreation _ fields) =
+    any containsSpecialVariable (Map.elems fields)  
+containsSpecialVariable (MLIR.MkExprUpdate e v) =
+    containsSpecialVariable e || containsSpecialVariable v
+containsSpecialVariable (MLIR.MkExprSingleIf cond thenBr) =
+    containsSpecialVariable cond || containsSpecialVariable thenBr  
+containsSpecialVariable (MLIR.MkExprWhile cond body) =
+    containsSpecialVariable cond || containsSpecialVariable body
+containsSpecialVariable (MLIR.MkExprReturn e) = containsSpecialVariable e
+containsSpecialVariable _ = False
+
 -- | Convert a single MLIR expression to C code lines.
 -- | This function takes an expression, and returns a list of C code lines.
 -- | This is a simplified example and does not cover all MLIR constructs.
@@ -126,6 +163,15 @@ codegenField (HLIR.MkStructUnion name fields) = do
 codegenExpression :: (MonadIO m) => MLIR.Expression -> m Text
 codegenExpression (MLIR.MkExprLiteral lit) = codegenLiteral lit
 codegenExpression (MLIR.MkExprVariable name) = pure $ varify name
+codegenExpression (MLIR.MkExprApplication (MLIR.MkExprVariable "or") args) = do
+    argList <- Text.intercalate " || " <$> mapM codegenExpression args
+    pure $ Text.concat ["(", argList, ")"]
+codegenExpression (MLIR.MkExprApplication (MLIR.MkExprVariable "||") args) = do
+    argList <- Text.intercalate " || " <$> mapM codegenExpression args
+    pure $ Text.concat ["(", argList, ")"]
+codegenExpression (MLIR.MkExprApplication (MLIR.MkExprVariable "and") args) = do
+    argList <- Text.intercalate " && " <$> mapM codegenExpression args
+    pure $ Text.concat ["(", argList, ")"]
 codegenExpression (MLIR.MkExprApplication (MLIR.MkExprVariable "&&") args) = do
     argList <- Text.intercalate " && " <$> mapM codegenExpression args
     pure $ Text.concat ["(", argList, ")"]
@@ -194,6 +240,7 @@ codegenExpression (MLIR.MkExprReturn e) = do
     pure $ Text.concat ["return ", eStr]
 codegenExpression MLIR.MkExprBreak = pure "break"
 codegenExpression MLIR.MkExprContinue = pure "continue"
+codegenExpression (MLIR.MkExprSpecialVariable n) = pure ("/* SPECIAL */ " <> n)
 
 -- | Convert a single MLIR literal to a C code string.
 -- | This function takes a literal, and returns a C code string.
@@ -223,16 +270,8 @@ dropDoubleQuotes txt =
 -- | You would need to expand this function to handle all the type constructs you need.
 codegenType ::
     (MonadIO m) => Bool -> Bool -> Maybe Text -> [Text] -> MLIR.Type -> m Text
-codegenType _ _ def _ (MLIR.MkTyId "i8") = pure $ Text.concat ["int8_t ", fromMaybe "" def]
-codegenType _ _ def _ (MLIR.MkTyId "i16") = pure $ Text.concat ["int16_t ", fromMaybe "" def]
-codegenType _ _ def _ (MLIR.MkTyId "i32") = pure $ Text.concat ["int32_t ", fromMaybe "" def]
-codegenType _ _ def _ (MLIR.MkTyId "i64") = pure $ Text.concat ["int64_t ", fromMaybe "" def]
-codegenType _ _ def _ (MLIR.MkTyId "u8") = pure $ Text.concat ["uint8_t ", fromMaybe "" def]
-codegenType _ _ def _ (MLIR.MkTyId "u16") = pure $ Text.concat ["uint16_t ", fromMaybe "" def]
-codegenType _ _ def _ (MLIR.MkTyId "u32") = pure $ Text.concat ["uint32_t ", fromMaybe "" def]
-codegenType _ _ def _ (MLIR.MkTyId "u64") = pure $ Text.concat ["uint64_t ", fromMaybe "" def]
-codegenType _ _ def _ (MLIR.MkTyId "f32") = pure $ Text.concat ["float ", fromMaybe "" def]
-codegenType _ _ def _ (MLIR.MkTyId "f64") = pure $ Text.concat ["double ", fromMaybe "" def]
+codegenType _ _ def _ (MLIR.MkTyId "int") = pure $ Text.concat ["int32_t ", fromMaybe "" def]
+codegenType _ _ def _ (MLIR.MkTyId "float") = pure $ Text.concat ["float ", fromMaybe "" def]
 codegenType _ _ def _ (MLIR.MkTyId "char") = pure $ Text.concat ["char ", fromMaybe "" def]
 codegenType _ _ def _ (MLIR.MkTyId "bool") = pure $ Text.concat ["bool ", fromMaybe "" def]
 codegenType _ _ def _ (MLIR.MkTyId "void") = pure $ Text.concat ["void ", fromMaybe "" def]
