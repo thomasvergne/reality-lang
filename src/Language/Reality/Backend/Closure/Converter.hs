@@ -48,7 +48,7 @@ malloc t =
             HLIR.MkExprVariable
                 ( HLIR.MkAnnotation
                     "GC_MALLOC"
-                    (Identity (HLIR.MkTyFun [HLIR.MkTyId "u64"] (HLIR.MkTyPointer HLIR.MkTyChar)))
+                    (Identity (HLIR.MkTyFun [HLIR.MkTyId "int"] (HLIR.MkTyPointer HLIR.MkTyChar)))
                 )
                 []
         , HLIR.arguments = [HLIR.MkExprSizeOf t]
@@ -524,8 +524,8 @@ convertExpression e@(HLIR.MkExprLiteral lit) =
         ( e
         , []
         , case lit of
-            HLIR.MkLitInt _ -> HLIR.MkTyId "i32"
-            HLIR.MkLitFloat _ -> HLIR.MkTyId "f32"
+            HLIR.MkLitInt _ -> HLIR.MkTyId "int"
+            HLIR.MkLitFloat _ -> HLIR.MkTyId "float"
             HLIR.MkLitBool _ -> HLIR.MkTyId "bool"
             HLIR.MkLitString _ -> HLIR.MkTyPointer HLIR.MkTyChar
             HLIR.MkLitChar _ -> HLIR.MkTyChar
@@ -624,7 +624,7 @@ convertExpression (HLIR.MkExprUpdate update value _) = do
         (HLIR.MkExprUpdate newUpdate newValue (Identity updateTy), ns1 <> ns2, updateTy)
 convertExpression (HLIR.MkExprSizeOf t) = do
     (t', ns) <- convertType t
-    pure (HLIR.MkExprSizeOf t', ns, HLIR.MkTyId "u64")
+    pure (HLIR.MkExprSizeOf t', ns, HLIR.MkTyId "int")
 convertExpression (HLIR.MkExprSingleIf cond thenB _) = do
     (newCond, ns1, _) <- convertExpression cond
     (newThen, ns2, thenTy) <- convertExpression thenB
@@ -667,6 +667,21 @@ convertExpression (HLIR.MkExprReturn e) = do
     pure (HLIR.MkExprReturn newE, ns, eTy)
 convertExpression HLIR.MkExprContinue = pure (HLIR.MkExprContinue, [], HLIR.MkTyId "void")
 convertExpression HLIR.MkExprBreak = pure (HLIR.MkExprBreak, [], HLIR.MkTyId "void")
+convertExpression (HLIR.MkExprLetPatternIn pattern value inExpr _) = do
+    (newPattern, ns1) <- convertPattern pattern
+    (newValue, ns2, _) <- convertExpression value
+
+    let freeP = M.free newPattern
+
+    modifyIORef' locals (<> freeP)
+
+    (newInExpr, ns3, inTy) <- convertExpression inExpr
+
+    pure
+        ( HLIR.MkExprLetPatternIn newPattern newValue newInExpr (Identity inTy)
+        , ns1 <> ns2 <> ns3
+        , inTy
+        )
 
 convertPattern :: (MonadIO m) => HLIR.TLIR "pattern" -> m (HLIR.TLIR "pattern", [HLIR.TLIR "toplevel"])
 convertPattern (HLIR.MkPatternLocated _ p) = convertPattern p

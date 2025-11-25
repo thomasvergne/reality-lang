@@ -159,6 +159,11 @@ hoistLambdasInExpr (HLIR.MkExprFunctionAccess ann this tys exprs) = do
         ( HLIR.MkExprFunctionAccess ann newThis tys newExprs
         , hoistedThis ++ concat hoistedExprs
         )
+hoistLambdasInExpr (HLIR.MkExprLetPatternIn pat value inExpr ret) = do
+    (newValue, hoistedValue) <- hoistLambdasInExpr value
+    (newInExpr, hoistedInExpr) <- hoistLambdasInExpr inExpr
+    pure
+        (HLIR.MkExprLetPatternIn pat newValue newInExpr ret, hoistedValue ++ hoistedInExpr)
 
 {-# NOINLINE symbolCounter #-}
 symbolCounter :: IORef Int

@@ -41,7 +41,9 @@ convertToANF ::
     (MonadIO m) =>
     [HLIR.TLIR "toplevel"] ->
     m [MLIR.Toplevel]
-convertToANF = (concat <$>) . mapM convertToplevel
+convertToANF xs = do
+    toplevels <- mapM convertToplevel xs
+    pure ([MLIR.MkTopTypeAlias "never" (HLIR.MkTyId "void")] <> concat toplevels)
 
 -- | Convert a HLIR toplevel to a MLIR toplevel.
 -- | This function takes a HLIR toplevel, and returns a MLIR toplevel.
@@ -203,7 +205,7 @@ getConditions (HLIR.MkExprCondition cond thenB elseB _) =
     cond : (getConditions thenB ++ getConditions elseB)
 getConditions (HLIR.MkExprLocated _ e) = getConditions e
 getConditions (HLIR.MkExprApplication callee args t)
-    | isVariable callee "and" || isVariable callee "or" = do
+    | isVariable callee "and" = do
         let conds = concatMap getConditions args
         conds
     | otherwise = 
@@ -239,12 +241,28 @@ createCondition (cond' : rest) t e@(elseB, l3, bs3) su n = do
     
     pure ifExpr
 
+isVoidType :: MonadIO m => HLIR.Type -> m Bool
+isVoidType (HLIR.MkTyId "never") = pure True
+isVoidType (HLIR.MkTyFun _ retType) = isVoidType retType
+isVoidType (HLIR.MkTyVar ref) = do
+    ty <- liftIO $ readIORef ref
+    case ty of
+        HLIR.Link ty' -> isVoidType ty'
+        HLIR.Unbound{} -> pure False
+isVoidType _ = pure False
+
 -- | Convert a HLIR expression to a MLIR expression in ANF.
 -- | This function takes a HLIR expression, and returns a MLIR expression.
 convertExpression ::
     (MonadIO m) => HLIR.TLIR "expression" -> m (MLIR.Expression, [MLIR.Expression], [MLIR.Expression])
+convertExpression (HLIR.MkExprVariable ann _) = do
+    isVoid <- isVoidType ann.typeValue.runIdentity
+
+    if isVoid then
+        pure (MLIR.MkExprSpecialVariable ann.name, [], [])
+    else
+        pure (MLIR.MkExprVariable ann.name, [], [])
 convertExpression (HLIR.MkExprLiteral l) = pure (MLIR.MkExprLiteral l, [], [])
-convertExpression (HLIR.MkExprVariable ann _) = pure (MLIR.MkExprVariable ann.name, [], [])
 convertExpression (HLIR.MkExprApplication f args _) = do
     (f', l1, bs1) <- convertExpression f
     (args', l2s, bs2) <- unzip3 <$> mapM convertExpression args
@@ -276,8 +294,9 @@ convertExpression (HLIR.MkExprCondition cond thenB elseB branchTy) = do
     else' <- convertExpression elseB
 
     let isCF = isCFStatement thenB || isCFStatement elseB
+    isVoid <- isVoidType branchTy.runIdentity
 
-    if isCF then do
+    if isCF || isVoid then do
         expr <- createCondition conditions then' else' isCF ""
         -- If one of the branches is a control flow statement,
         -- we don't need to create a new variable for it, as it will not be used.
@@ -367,8 +386,9 @@ convertExpression (HLIR.MkExprSingleIf cond thenB branchTy) = do
     then' <- convertExpression thenB
 
     let isCF = isCFStatement thenB
+    isVoid <- isVoidType branchTy.runIdentity
 
-    if isCF then do
+    if isCF || isVoid then do
         ifExpr <- createCondition conds then' (MLIR.MkExprBlock [], [], []) isCF ""
 
         pure (MLIR.MkExprVariable "", ifExpr, [])
@@ -408,11 +428,12 @@ convertExpression (HLIR.MkExprIs e p ty) = do
 
     (lets, conds) <- generateCondition nameExpr p
 
-    let lets' = [MLIR.MkExprLet name ty' (Just expr) | (name, ty', expr) <- lets]
+    let lets' = [MLIR.MkExprLet name ty' (Just expr) | (name, ty', expr) <- lets, ty' /= MLIR.MkTyId "void"]
 
     let cond =
-            List.foldr1
+            List.foldr
                 (\a b -> MLIR.MkExprApplication (MLIR.MkExprVariable "&&") [a, b])
+                (MLIR.MkExprLiteral (MLIR.MkLitBool True))
                 conds
 
     pure (cond, l1, [nameBinding] <> lets' <> bs1)
@@ -424,6 +445,9 @@ convertExpression (HLIR.MkExprReturn e) = do
     pure (MLIR.MkExprReturn e', l1, bs1)
 convertExpression HLIR.MkExprBreak = pure (MLIR.MkExprBreak, [], [])
 convertExpression HLIR.MkExprContinue = pure (MLIR.MkExprContinue, [], [])
+convertExpression (HLIR.MkExprLetPatternIn {}) = 
+    Err.compilerError
+        "Let-pattern expressions should have been desugared before ANF conversion."
 
 type Lets = [(Text, MLIR.Type, MLIR.Expression)]
 type Conditions = [MLIR.Expression]

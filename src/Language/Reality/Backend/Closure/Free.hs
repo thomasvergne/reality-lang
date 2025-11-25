@@ -101,6 +101,14 @@ removePatternFromFree (HLIR.MkExprVariable ann _) = (Map.singleton ann.name ann.
 removePatternFromFree (HLIR.MkExprLiteral _) = (Map.empty, Map.empty)
 removePatternFromFree (HLIR.MkExprCast e _) = removePatternFromFree e
 removePatternFromFree (HLIR.MkExprSizeOf _) = (Map.empty, Map.empty)
+removePatternFromFree (HLIR.MkExprLetPatternIn pat value inExpr _) = do
+    let (freeValue, freeP1) = removePatternFromFree value
+        (freeInExpr, freeP2) = removePatternFromFree inExpr
+        freeP' = freeP1 <> freeP2 <> free pat
+    (   (freeValue <> freeInExpr)
+        Map.\\ free pat
+        , freeP'
+        )
 
 instance Free (HLIR.Pattern Identity HLIR.Type) where
     free :: HLIR.Pattern Identity HLIR.Type -> Map Text HLIR.Type
