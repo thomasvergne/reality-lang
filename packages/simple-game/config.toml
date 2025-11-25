@@ -1,0 +1,12 @@
+[package]
+name = "Reality Compiler"
+version = "0.1.0"
+author = "Thomas Vergne"
+main = "source/main.rl"
+
+[features.aliases]
+std = "$REALITY_DIR/std"
+
+[features.libc] 
+libraries = ["$(pkg-config --libs --cflags raylib)", "libc/game.c"]
+headers = ["<raylib.h>"]
