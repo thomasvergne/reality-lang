@@ -15,6 +15,10 @@ char* get_current_working_directory() {
     }
 }
 
+bool file_exists(const char* path) {    
+    return access(path, F_OK) != -1;
+}
+
 int execute_command(const char* command) {
     return system(command);
 }

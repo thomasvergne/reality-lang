@@ -2,6 +2,7 @@ import std.string;
 import std.parser;
 import std.io;
 import configuration;
+import std.error;
 
 fn identifier() -> Parser<String> {
     return satisfy(is_alpha).bind(
@@ -89,15 +90,21 @@ fn parse_configuration() -> Parser<*Configuration> {
 }
 
 mod Configuration {
-    pub fn parse_file(filename: String) -> Option<List<*Configuration>> {
+    extern fn file_exists(path: string) -> bool;
+
+    pub fn parse_file(filename: String) -> Error<List<*Configuration>, String> {
+        if not(file_exists(filename.data)) {
+            return Err("Configuration file not found: " + filename);
+        };
+
         let file_content = read_file(filename);
 
         let parse_result = parse_configuration().some().run(file_content);
 
         if parse_result is Success(let configs, let _) {
-            return Some(configs.build_tree());
-        } else {
-            return None;
+            return Ok(configs.build_tree());
+        } else {  
+            return Err("Failed to parse configuration file: " + filename);
         }
     }
 }

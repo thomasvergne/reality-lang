@@ -261,11 +261,15 @@ pub fn main(args: List<String>) -> int {
 
     let config = Configuration.parse_file(cwd + "/config.toml");
 
-    let final_config = if config is Some(let conf) {
+    let final_config = if config is Ok(let conf) {
         conf 
+    } else if config is Err(let errMsg) {
+        print_error_lf(errMsg);
+        GC.exit(1);
     } else {
-        []
-    };
+        print_error_lf("Unknown error while parsing configuration.");
+        GC.exit(1);
+    }
 
     let cli_args = args.slice(1, args.length).parse_as_cli();
 
