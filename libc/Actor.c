@@ -1,8 +1,23 @@
 #define GC_THREADS
-#include <pthread.h>
-#include <stdlib.h>
-#include <stdio.h>
 #include <gc.h>
+#include <pthread.h>
+#include <sched.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+
+void* undefined() {
+    return NULL;
+}
+
+void pthread_yield() {
+    sched_yield();
+}
+
+void wait_time(int32_t milliseconds) {
+    usleep(milliseconds * 1000);
+}
 
 typedef struct {
   void* (*function)(void*);
@@ -40,4 +55,8 @@ char* read_file_ext(const char* path) {
 
     fclose(file);
     return buffer;
+}
+
+int string_to_int(char* str) {
+    return atoi(str);
 }

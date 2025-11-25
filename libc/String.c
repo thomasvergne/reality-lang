@@ -1,10 +1,11 @@
-#include <stdio.h>
-#include <stdint.h>
-#include <string.h>
-#include <stdlib.h>
-#include <stdbool.h>
-#include <gc.h>
 #include <ctype.h>
+#include <gc.h>
+#include <math.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 bool string_eq(char* a, char* b) {
     return strcmp(a, b) == 0;
@@ -17,16 +18,6 @@ char* malloc_string(const char* content) {
         strcpy(copy, content);
     }
     return copy;
-}
-
-char* u64_to_string(uint64_t number) {
-    size_t length = snprintf(NULL, 0, "%llu", number);
-
-    char* result = (char*)GC_MALLOC(length + 1);
-    if (result) {
-        snprintf(result, length + 1, "%llu", number);
-    }
-    return result;
 }
 
 char* number_to_string(int number) {
@@ -73,30 +64,6 @@ bool equals_number(int a, int b) {
     return a == b;
 }
 
-uint64_t add_u64_ext(uint64_t a, uint64_t b) {
-    return a + b;
-}
-
-uint64_t sub_u64_ext(uint64_t a, uint64_t b) {
-    return a - b;
-}
-
-uint64_t mul_u64_ext(uint64_t a, uint64_t b) {
-    return a * b;
-}
-
-uint64_t div_u64_ext(uint64_t a, uint64_t b) {
-    if (b != 0) {
-        return a / b;
-    }
-    // Handle division by zero case
-    return 0;
-}
-
-bool equals_u64_ext(uint64_t a, uint64_t b) {
-    return a == b;
-}
-
 char* fetch_ptr(char* container, uint32_t index) {
     return &container[index];
 }
@@ -114,22 +81,6 @@ int less_number(int a, int b) {
 }
 
 int mod_number(int a, int b) {
-    if (b != 0) {
-        return a % b;
-    }
-    // Handle division by zero case
-    return 0;
-}
-
-bool greater_u64_ext(uint64_t a, uint64_t b) {
-    return a > b;
-}
-
-bool less_u64_ext(uint64_t a, uint64_t b) {
-    return a < b;
-}
-
-uint64_t mod_u64_ext(uint64_t a, uint64_t b) {
     if (b != 0) {
         return a % b;
     }
@@ -198,6 +149,68 @@ void BDWGC_free(void* ptr) {
     GC_FREE(ptr);
 }
 
-uint64_t i32_to_u64(int32_t value) {
-    return (uint64_t)(uint32_t)value;
+char int_to_char(int32_t x) {
+    return (char)x;
+}
+
+int32_t char_to_int(char c) {
+    return (int32_t)c;
+}
+
+float add_float_(float a, float b) {
+    return a + b;
+}
+
+float sub_float_(float a, float b) {
+    return a - b;
+}
+
+float mul_float_(float a, float b) {
+    return a * b;
+}
+
+float div_float_(float a, float b) {
+    if (b != 0.0f) {
+        return a / b;
+    }
+    // Handle division by zero case
+    return 0.0f;
+}
+
+bool equals_float_(float a, float b) {
+    return a == b;
+}
+
+bool greater_float_(float a, float b) {
+    return a > b;
+}
+
+bool less_float_(float a, float b) {
+    return a < b;
+}
+
+float mod_float_(float a, float b) {
+    if (b != 0.0f) {
+        return fmodf(a, b);
+    }
+    // Handle division by zero case
+    return 0.0f;
+}
+
+int32_t float_to_int(float f) {
+    return (int32_t)f;
+}
+
+float int_to_float(int32_t i) {
+    return (float)i;
+}
+
+char* float_to_string(float f) {
+    size_t length = snprintf(NULL, 0, "%f", f);
+
+    char* result = (char*)GC_MALLOC(length + 1);
+    if (result) {
+        snprintf(result, length + 1, "%f", f);
+    }
+    return result;
 }
