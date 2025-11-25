@@ -7,8 +7,8 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
-void* undefined() {
-    return NULL;
+void undefined() {
+    return;
 }
 
 void pthread_yield() {
@@ -59,4 +59,8 @@ char* read_file_ext(const char* path) {
 
 int string_to_int(char* str) {
     return atoi(str);
+}
+
+void exit_program(int code) {
+    exit(code);
 }
