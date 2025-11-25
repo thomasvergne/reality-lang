@@ -19,6 +19,7 @@ import qualified Data.Text as Text
 data Options = MkOptions 
     { optInputFile :: FilePath
     , optPathAliases :: [(Text, FilePath)]
+    , optHeaders :: [FilePath]
     }
 
 options :: App.Parser Options
@@ -31,6 +32,11 @@ options = MkOptions
        <> App.short 'p'
        <> App.metavar "ALIAS=PATH"
        <> App.help "Path alias for import resolution" ))
+    <*> App.many (App.strOption
+        ( App.long "header"
+       <> App.short 'I'
+       <> App.metavar "HEADER"
+       <> App.help "Additional header file to include in the generated C code" ))
   where
     parseAlias :: String -> Either String (Text, FilePath)
     parseAlias s =
@@ -48,7 +54,7 @@ main = buildOutput =<< App.execParser opts
 
 
 buildOutput :: Options -> IO ()
-buildOutput (MkOptions inputFile pathAliases) = do
+buildOutput (MkOptions inputFile pathAliases headers) = do
     let file = inputFile
         cwd  = takeDirectory file
 
@@ -73,12 +79,19 @@ buildOutput (MkOptions inputFile pathAliases) = do
             pipelineResult <- runExceptT $ pipeline ast
 
             let includes = ["<stdint.h>", "<stdbool.h>", "<pthread.h>", "<gc.h>"]
+            let headers' = map (\h -> do
+                        let path = toText h
+                        if Text.isPrefixOf "<" path && Text.isSuffixOf ">" path
+                            then "#include " <> path
+                            else "#include \"" <> path <> "\""
+                    ) headers
             let defines = ["#define GC_THREADS"]
 
             handle pipelineResult $ \cstr -> do
                 let finalCstr = 
                         unlines defines 
                         <> unlines (map ("#include " <>) includes) 
+                        <> unlines headers'
                         <> "\n\n" 
                         <> cstr
 
