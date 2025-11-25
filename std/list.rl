@@ -18,7 +18,7 @@ impl fn (c: *A) get_index<A>(index: int) -> A {
 
 impl fn (c: List<A>) get_index<A>(index: int) -> A {
     if index >= c.length {
-        GC.panic<unit>("Index out of bounds in List.get_index, " 
+        GC.panic("Index out of bounds in List.get_index, " 
             + show_prec(index, 0) 
             + " (<index>) must be less than "
             + show_prec(c.length, 0) 
@@ -66,7 +66,7 @@ mod List {
 
     impl fn (list: List<A>) pop_at<A>(index: int) -> A {
         if index < 0 || index >= list.length {
-            GC.panic<unit>("Index out of bounds in List.pop_at, " 
+            GC.panic("Index out of bounds in List.pop_at, " 
                 + index.show()
                 + " (<index>) must be between 0 and "
                 + (list.length - 1).show()

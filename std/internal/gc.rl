@@ -4,6 +4,11 @@ mod GC {
     struct GarbageCollector { };
     
     extern fn undefined() -> never;
+    extern fn exit_program(code: int) -> never;
+
+    fn exit(code: int) -> never {
+        exit_program(code)
+    }
 
     #[intrinsic] {
         extern fn GC_malloc<A>(size: int) -> A;
@@ -39,7 +44,7 @@ mod GC {
         "\x1b[31m" + message + "\x1b[0m"
     }
 
-    pub fn panic<B, A>(message: A) -> B {
+    pub fn panic<A>(message: A) -> never {
         let msg_prefix = GC.red("[Panic]: ");
         let full_message = msg_prefix + message.show();
         panic_ext(full_message.data)
