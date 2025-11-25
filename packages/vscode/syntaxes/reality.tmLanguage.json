@@ -1,0 +1,252 @@
+{
+    "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+    "name": "Reality",
+    "patterns": [
+        {
+            "include": "#functions"
+        },
+        {
+            "include": "#booleans"
+        },
+        {
+            "include": "#natives"
+        },
+        {
+            "include": "#keywords"
+        },
+        {
+            "include": "#types"
+        },
+        {
+            "include": "#identifiers"
+        },
+        {
+            "include": "#interpolated"
+        },
+        {
+            "include": "#strings"
+        },
+        {
+            "include": "#numbers"
+        },
+        {
+            "include": "#hexNumbers"
+        },
+        {
+            "include": "#characters"
+        },
+        {
+            "include": "#comments"
+        }
+    ],
+    "repository": {
+        "keywords": {
+            "patterns": [
+                {
+                    "name": "keyword.control.reality",
+                    "match": "\\b(let|extern|import|fn|if|else|while|is|pub|for|in|return|break|continue|type|mod|struct|as|new|impl|const|property|enum)\\b"
+                },
+                {
+                    "name": "keyword.operator.reality",
+                    "match": "\\b(&&|\\|\\||!|:)\\b"
+                }
+            ]
+        },
+        "natives": {
+            "patterns": [
+                {
+                    "match": "\\b(extern)\\s+(fn)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+                    "comment": "Native function definition",
+                    "captures": {
+                        "1": {
+                            "name": "keyword.control.reality"
+                        },
+                        "2": {
+                            "name": "keyword.control.reality"
+                        },
+                        "3": {
+                            "name": "entity.name.function.reality"
+                        }
+                    }
+                },
+                {
+                    "match": "\\b(property)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+                    "captures": {
+                        "1": {
+                            "name": "keyword.control.reality"
+                        },
+                        "2": {
+                            "name": "entity.name.function.reality"
+                        }
+                    }
+                },
+                {
+                    "match": "\\b(fn)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+                    "captures": {
+                        "1": {
+                            "name": "keyword.control.reality"
+                        },
+                        "2": {
+                            "name": "entity.name.function.reality"
+                        }
+                    }
+                },
+                {
+                    "match": "\\b(impl)\\s+(fn)\\s*(\\(.*?\\))\\s*([a-zA-Z_][a-zA-Z0-9_]*)",
+                    "captures": {
+                        "1": {
+                            "name": "keyword.control.reality"
+                        },
+                        "2": {
+                            "name": "keyword.control.reality"
+                        },
+                        "3": {
+                            "patterns": [
+                                {
+                                    "include": "#types"
+                                }
+                            ]
+                        },
+                        "4": {
+                            "name": "entity.name.function.reality"
+                        }
+                    }
+                },
+                {
+                    "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)(<.*?>)?\\s*\\(",
+                    "captures": {
+                        "1": {
+                            "name": "entity.name.function.reality"
+                        },
+                        "2": {
+                            "patterns": [
+                                {
+                                    "include": "#types"
+                                }
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        "types": {
+            "patterns": [
+                {
+                    "name": "support.type.reality",
+                    "match": "\\b(int|string|bool|char|float|unit)\\b"
+                },
+                {
+                    "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*<(?!\\()",
+                    "comment": "Type definition with type parameters",
+                    "captures": {
+                        "1": {
+                            "name": "support.type.reality"
+                        }
+                    }
+                },
+                {
+                    "match": "\\b([A-Z_][a-zA-Z0-9_]*)",
+                    "comment": "Type names starting with uppercase letter",
+                    "captures": {
+                        "1": {
+                            "name": "support.type.reality"
+                        }
+                    }
+                }
+            ]
+        },
+        "identifiers": {
+            "patterns": [
+                {
+                    "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)(\\()",
+                    "captures": {
+                        "1": {
+                            "name": "entity.name.function.reality"
+                        }
+                    }
+                },
+                {
+                    "match": "\\b([A-Z_][a-zA-Z0-9_]*)\\.",
+                    "captures": {
+                        "1": {
+                            "name": "entity.name.type.reality"
+                        }
+                    }
+                },
+                {
+                    "match": "\\b([A-Z_][a-zA-Z0-9_]*)\\b",
+                    "comment": "Type names starting with uppercase letter",
+                    "captures": {
+                        "1": {
+                            "name": "entity.name.type.reality"
+                        }
+                    }
+                },
+                {
+                    "name": "variable.name",
+                    "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b"
+                }
+            ]
+        },
+        "strings": {
+            "name": "string.quoted.double.reality",
+            "begin": "\"",
+            "end": "\"",
+            "patterns": [
+                {
+                    "name": "constant.character.escape.reality",
+                    "match": "\\\\."
+                }
+            ]
+        },
+        "interpolated": {
+            "name": "string.quoted.double.reality",
+            "begin": "\"",
+            "end": "\"",
+            "patterns": [
+                {
+                    "name": "constant.character.escape.reality",
+                    "match": "\\\\."
+                },
+                {
+                    "name": "variable.other.readwrite.reality",
+                    "match": "\\$[a-zA-Z_][a-zA-Z0-9_]*"
+                },
+                {
+                    "name": "string.quoted.double.reality",
+                    "match": "\\$\\$[a-zA-Z_][a-zA-Z0-9_]*"
+                }
+            ]
+        },
+        "numbers": {
+            "name": "constant.numeric.reality",
+            "match": "\\b(\\d+(\\.\\d+)?|\\.\\d+)\\b"
+        },
+        "hexNumbers": {
+            "name": "constant.numeric.hex.reality",
+            "match": "\\b0x[0-9a-fA-F]+\\b"
+        },
+        "booleans": {
+            "name": "constant.language.reality",
+            "match": "\\b(true|false)\\b"
+        },
+        "characters": {
+            "name": "constant.character.reality",
+            "match": "'.'"
+        },
+        "comments": {
+            "patterns": [
+                {
+                    "name": "comment.line.reality",
+                    "match": "//.*"
+                },
+                {
+                    "name": "comment.block.reality",
+                    "begin": "/\\*",
+                    "end": "\\*/"
+                }
+            ]
+        }
+    },
+    "scopeName": "source.reality"
+}

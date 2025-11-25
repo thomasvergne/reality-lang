@@ -1,0 +1,30 @@
+{
+  "name": "reality-lang",
+  "displayName": "Reality",
+  "repository": {
+    "url": "https://github.com/thomasvergne/reality-lang.git",
+    "type": "git",
+    "directory": "packages/vscode"
+  },
+  "description": "",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.106.1"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [{
+      "id": "reality",
+      "aliases": ["Reality", "reality"],
+      "extensions": [".rl"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "reality",
+      "scopeName": "source.reality",
+      "path": "./syntaxes/reality.tmLanguage.json"
+    }]
+  }
+}
