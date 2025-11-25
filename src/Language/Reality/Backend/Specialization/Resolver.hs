@@ -461,6 +461,18 @@ resolveSpecializationInExpr (HLIR.MkExprReturn e) = do
     pure (HLIR.MkExprReturn typedE, newDefs, b1)
 resolveSpecializationInExpr HLIR.MkExprBreak = pure (HLIR.MkExprBreak, [], mempty)
 resolveSpecializationInExpr HLIR.MkExprContinue = pure (HLIR.MkExprContinue, [], mempty)
+resolveSpecializationInExpr (HLIR.MkExprLetPatternIn pat value inExpr ret) = do
+    (typedPat, newDefs1, bindingsPat) <- resolveSpecializationInPattern pat
+    (typedValue, newDefs2, _) <- withLocals bindingsPat $ resolveSpecializationInExpr value
+    (typedInExpr, newDefs3, _) <- withLocals bindingsPat $ resolveSpecializationInExpr inExpr
+    (specRet, newDefs4) <-
+        first Identity <$> resolveSpecializationInType 0 ret.runIdentity
+
+    pure
+        ( HLIR.MkExprLetPatternIn typedPat typedValue typedInExpr specRet
+        , newDefs1 ++ newDefs2 ++ newDefs3 ++ newDefs4
+        , bindingsPat
+        )
 
 resolveSpecializationInPattern ::
     (MonadIO m, M.MonadError M.Error m) =>
@@ -613,6 +625,13 @@ applySubstInExpr subst (HLIR.MkExprReturn e) = do
     pure (HLIR.MkExprReturn newE)
 applySubstInExpr _ HLIR.MkExprBreak = pure HLIR.MkExprBreak
 applySubstInExpr _ HLIR.MkExprContinue = pure HLIR.MkExprContinue
+applySubstInExpr subst (HLIR.MkExprLetPatternIn pat value inExpr ret) = do
+    newPat <- applySubstInPattern subst pat
+    newValue <- applySubstInExpr subst value
+    newInExpr <- applySubstInExpr subst inExpr
+    newRet <- M.applySubstitution subst ret.runIdentity
+
+    pure (HLIR.MkExprLetPatternIn newPat newValue newInExpr (Identity newRet))
 
 applySubstInPattern ::
     (MonadIO m) =>
@@ -688,7 +707,7 @@ resolveSpecializationForIdentifier (HLIR.MkAnnotation name (Identity ty)) = do
                         let orderedVars = flip map qvars $ \var -> Map.findWithDefault (HLIR.MkTyQuantified var) var subst
                             newName
                                 | null orderedVars = name
-                                | otherwise = name <> "_" <> Text.intercalate "_" (map toText orderedVars)
+                                | otherwise = name <> "_" <> toText ty
 
                         -- Checking if we already created this specialization
                         -- to avoid duplicating work.
@@ -831,18 +850,15 @@ resolveSpecializationForImplementation name ty = do
             _ -> Nothing
 
     case result of
-        Just (node, implSubst, propScheme@(HLIR.Forall qvars _)) -> do
+        Just (node, implSubst, propScheme@(HLIR.Forall _ _)) -> do
             -- Creating the final substitution by instantiating the property scheme
             -- and ensuring that the implementation type is a subtype of the property type
-            (propTy, subst) <- M.instantiateAndSub propScheme
+            (propTy, _) <- M.instantiateAndSub propScheme
             void $ ty `M.isSubtypeOf` propTy
 
             -- Re-ordering the resolved types according to the property scheme quantified
             -- variables to create a consistent name
-            let orderedVars = flip map qvars $ \var -> Map.findWithDefault (HLIR.MkTyQuantified var) var subst
-                newName
-                    | null orderedVars = name
-                    | otherwise = name <> "_" <> Text.intercalate "_" (map toText orderedVars)
+            let newName = name <> "_" <> toText ty
 
             -- Checking if the node is a function declaration, otherwise there must
             -- be an error somewhere else. We just handle it gracefully here.
