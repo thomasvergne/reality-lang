@@ -59,7 +59,8 @@ data Expression f t
         { condition :: Expression f t
         , thenBranch :: Expression f t
         , elseBranch :: Expression f t
-        , returnType :: f t
+        , thenType :: f t
+        , elseType :: f t
         }
     | MkExprSingleIf (Expression f t) (Expression f t) (f t)
     | MkExprLocated
@@ -201,7 +202,8 @@ pattern MkExprWhileIs cond pat body inExpr =
             { condition = MkExprIs cond pat Nothing
             , thenBranch = body
             , elseBranch = MkExprBreak
-            , returnType = Nothing
+            , thenType = Nothing
+            , elseType = Nothing
             }
         , returnType = Nothing
         , inExpr = inExpr
@@ -238,7 +240,8 @@ pattern MkExprConditionIs cond pat thenB elseB =
         { condition = MkExprIs cond pat Nothing
         , thenBranch = thenB
         , elseBranch = elseB
-        , returnType = Nothing
+        , thenType = Nothing
+        , elseType = Nothing
         }
 
 type family HLIR (s :: Symbol) where
@@ -289,7 +292,7 @@ instance (ToText (f t), ToText t) => ToText (Expression f t) where
             , " in "
             , toText inExpr
             ]
-    toText (MkExprCondition cond thenB elseB _) =
+    toText (MkExprCondition cond thenB elseB _ _) =
         T.concat
             [ "if "
             , toText cond

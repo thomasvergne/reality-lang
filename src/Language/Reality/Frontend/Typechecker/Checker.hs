@@ -419,7 +419,7 @@ synthesizeE (HLIR.MkExprVariable ann types) = do
                     , mempty
                     )
             Nothing -> M.throw (M.VariableNotFound ann.name)
-synthesizeE (HLIR.MkExprCondition cond thenB elseB _) = do
+synthesizeE (HLIR.MkExprCondition cond thenB elseB _ _) = do
     -- Condition must be of type bool
     (condExpr, cs1, b1) <- checkE HLIR.MkTyBool cond
 
@@ -433,7 +433,7 @@ synthesizeE (HLIR.MkExprCondition cond thenB elseB _) = do
     let cs = cs1 <> cs2 <> cs3
 
     pure
-        (thenTy, HLIR.MkExprCondition condExpr thenExpr elseExpr (Identity thenTy), cs, mempty)
+        (thenTy, HLIR.MkExprCondition condExpr thenExpr elseExpr (Identity thenTy) (Identity thenTy), cs, mempty)
 synthesizeE (HLIR.MkExprLetIn binding value inExpr _) = do
     -- Collecting old environment to restore it later
     oldEnv <- readIORef M.defaultCheckerState <&> M.environment

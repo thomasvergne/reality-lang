@@ -532,13 +532,13 @@ convertExpression e@(HLIR.MkExprLiteral lit) =
         )
 convertExpression e@(HLIR.MkExprLambda{}) = do
     convertLambda e Map.empty
-convertExpression (HLIR.MkExprCondition cond thenB elseB _) = do
+convertExpression (HLIR.MkExprCondition cond thenB elseB _ _) = do
     (newCond, ns1, _) <- convertExpression cond
     (newThen, ns2, thenTy) <- convertExpression thenB
-    (newElse, ns3, _) <- convertExpression elseB
+    (newElse, ns3, elseTy) <- convertExpression elseB
 
     pure
-        ( HLIR.MkExprCondition newCond newThen newElse (Identity thenTy)
+        ( HLIR.MkExprCondition newCond newThen newElse (Identity thenTy) (Identity elseTy)
         , ns1 <> ns2 <> ns3
         , thenTy
         )

@@ -342,16 +342,18 @@ resolveSpecializationInExpr (HLIR.MkExprLetIn binding value inExpr ret) = do
     let allNewDefs = newDefs ++ newDefs1 ++ newDefs2 ++ newDefs3
 
     pure (HLIR.MkExprLetIn specBinding typedValue typedInExpr specRet, allNewDefs, b1 <> b2)
-resolveSpecializationInExpr (HLIR.MkExprCondition cond thenB elseB branchTy) = do
+resolveSpecializationInExpr (HLIR.MkExprCondition cond thenB elseB thenType elseType) = do
     (typedCond, newDefs1, b1) <- resolveSpecializationInExpr cond
     (typedThen, newDefs2, _) <- withLocals b1 $ resolveSpecializationInExpr thenB
     (typedElse, newDefs3, _) <- resolveSpecializationInExpr elseB
-    (specBranchTy, newDefs4) <-
-        first Identity <$> resolveSpecializationInType 0 branchTy.runIdentity
+    (specThenType, newDefs4) <-
+        first Identity <$> resolveSpecializationInType 0 thenType.runIdentity
+    (specElseType, newDefs5) <-
+        first Identity <$> resolveSpecializationInType 0 elseType.runIdentity
 
     pure
-        ( HLIR.MkExprCondition typedCond typedThen typedElse specBranchTy
-        , newDefs1 ++ newDefs2 ++ newDefs3 ++ newDefs4
+        ( HLIR.MkExprCondition typedCond typedThen typedElse specThenType specElseType
+        , newDefs1 ++ newDefs2 ++ newDefs3 ++ newDefs4 ++ newDefs5
         , mempty
         )
 resolveSpecializationInExpr (HLIR.MkExprApplication callee args retTy) = do
@@ -555,15 +557,16 @@ applySubstInExpr subst (HLIR.MkExprLetIn binding value inExpr ret) =
         newRet <- M.applySubstitution subst ret.runIdentity
 
         pure (HLIR.MkExprLetIn newBinding newValue newInExpr (Identity newRet))
-applySubstInExpr subst (HLIR.MkExprCondition cond thenB elseB branchType) =
+applySubstInExpr subst (HLIR.MkExprCondition cond thenB elseB thenType elseType) =
     do
         newCond <- applySubstInExpr subst cond
         newThenB <- applySubstInExpr subst thenB
         newElseB <- applySubstInExpr subst elseB
 
-        newBranchType <- M.applySubstitution subst branchType.runIdentity
+        newThenType <- M.applySubstitution subst thenType.runIdentity
+        newElseType <- M.applySubstitution subst elseType.runIdentity
 
-        pure (HLIR.MkExprCondition newCond newThenB newElseB (Identity newBranchType))
+        pure (HLIR.MkExprCondition newCond newThenB newElseB (Identity newThenType) (Identity newElseType))
 applySubstInExpr subst (HLIR.MkExprApplication callee args retTy) = do
     newCallee <- applySubstInExpr subst callee
     newArgs <- mapM (applySubstInExpr subst) args

@@ -46,7 +46,7 @@ removePatternFromFree (HLIR.MkExprLetIn binding value inExpr _) = do
         Map.\\ Map.singleton binding.name binding.typeValue.runIdentity
         , freeP''
         )
-removePatternFromFree (HLIR.MkExprCondition cond thenB elseB _) = do
+removePatternFromFree (HLIR.MkExprCondition cond thenB elseB _ _) = do
     let (freeCond, freeP1) = removePatternFromFree cond
         (freeThenB, freeP2) = removePatternFromFree thenB
         (freeElseB, freeP3) = removePatternFromFree elseB

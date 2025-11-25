@@ -240,7 +240,7 @@ codegenExpression (MLIR.MkExprReturn e) = do
     pure $ Text.concat ["return ", eStr]
 codegenExpression MLIR.MkExprBreak = pure "break"
 codegenExpression MLIR.MkExprContinue = pure "continue"
-codegenExpression (MLIR.MkExprSpecialVariable n) = pure ("/* SPECIAL */ " <> n)
+codegenExpression (MLIR.MkExprSpecialVariable n) = pure ("/* SPECIAL */ " <> varify n)
 
 -- | Convert a single MLIR literal to a C code string.
 -- | This function takes a literal, and returns a C code string.
@@ -275,6 +275,7 @@ codegenType _ _ def _ (MLIR.MkTyId "float") = pure $ Text.concat ["float ", from
 codegenType _ _ def _ (MLIR.MkTyId "char") = pure $ Text.concat ["char ", fromMaybe "" def]
 codegenType _ _ def _ (MLIR.MkTyId "bool") = pure $ Text.concat ["bool ", fromMaybe "" def]
 codegenType _ _ def _ (MLIR.MkTyId "void") = pure $ Text.concat ["void ", fromMaybe "" def]
+codegenType _ _ def _ (HLIR.MkTyId "never") = pure $ Text.concat ["void ", fromMaybe "" def]
 codegenType _ _ def generics (MLIR.MkTyId n) | n `elem` generics = pure $ Text.concat ["void*", fromMaybe "" def]
 codegenType _ _ def _ (MLIR.MkTyId n) = do
     let typeName = varify n

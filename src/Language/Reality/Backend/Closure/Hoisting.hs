@@ -95,12 +95,12 @@ hoistLambdasInExpr (HLIR.MkExprLetIn binding value inExpr ret) = do
     (newInExpr, hoistedInExpr) <- hoistLambdasInExpr inExpr
     pure
         (HLIR.MkExprLetIn binding newValue newInExpr ret, hoistedValue ++ hoistedInExpr)
-hoistLambdasInExpr (HLIR.MkExprCondition cond thenB elseB branchType) = do
+hoistLambdasInExpr (HLIR.MkExprCondition cond thenB elseB thenType elseType) = do
     (newCond, hoistedCond) <- hoistLambdasInExpr cond
     (newThenB, hoistedThenB) <- hoistLambdasInExpr thenB
     (newElseB, hoistedElseB) <- hoistLambdasInExpr elseB
     pure
-        ( HLIR.MkExprCondition newCond newThenB newElseB branchType
+        ( HLIR.MkExprCondition newCond newThenB newElseB thenType elseType
         , hoistedCond ++ hoistedThenB ++ hoistedElseB
         )
 hoistLambdasInExpr (HLIR.MkExprStructureAccess struct field) = do

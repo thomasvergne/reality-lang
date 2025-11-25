@@ -185,7 +185,7 @@ isCFStatement HLIR.MkExprContinue = True
 isCFStatement (HLIR.MkExprLocated _ e) = isCFStatement e
 isCFStatement (HLIR.MkExprWhile _ _ _ inExpr) = isCFStatement inExpr
 isCFStatement (HLIR.MkExprLetIn _ _ inExpr _) = isCFStatement inExpr
-isCFStatement (HLIR.MkExprCondition _ thenB elseB _) =
+isCFStatement (HLIR.MkExprCondition _ thenB elseB _ _) =
     isCFStatement thenB || isCFStatement elseB
 isCFStatement (HLIR.MkExprSingleIf _ thenB _) = isCFStatement thenB
 isCFStatement _ = False
@@ -201,7 +201,7 @@ isVariable (HLIR.MkExprLocated _ e) name = isVariable e name
 isVariable _ _ = False
 
 getConditions :: HLIR.TLIR "expression" -> [HLIR.TLIR "expression"]
-getConditions (HLIR.MkExprCondition cond thenB elseB _) =
+getConditions (HLIR.MkExprCondition cond thenB elseB _ _) =
     cond : (getConditions thenB ++ getConditions elseB)
 getConditions (HLIR.MkExprLocated _ e) = getConditions e
 getConditions (HLIR.MkExprApplication callee args t)
@@ -220,20 +220,20 @@ createCondition ::
     [HLIR.TLIR "expression"] ->
     (MLIR.Expression, [MLIR.Expression], [MLIR.Expression]) ->
     (MLIR.Expression, [MLIR.Expression], [MLIR.Expression]) ->
-    Bool ->
+    (Bool, Bool) ->
     Text ->
     m [MLIR.Expression]
-createCondition [] (thenB, l1, bs2) _ shouldUpdate n
-    | not shouldUpdate && n /= "" = do
+createCondition [] (thenB, l1, bs2) _ (su1, _)  n
+    | not su1 && n /= "" = do
         let update = MLIR.MkExprUpdate (MLIR.MkExprVariable n) thenB
             in pure $ l1 ++ bs2 ++ [update]
     | otherwise = pure $ l1 ++ bs2 ++ [thenB]
-createCondition (cond' : rest) t e@(elseB, l3, bs3) su n = do
+createCondition (cond' : rest) t e@(elseB, l3, bs3) (su1, su2) n = do
     (cond'', l1, bs1) <- convertExpression cond'
 
-    innerCondition <- createCondition rest t e su n
+    innerCondition <- createCondition rest t e (su1, su2) n
     let elseExpr
-            | not su && n /= "" = 
+            | not su2 && n /= "" = 
                 let update = MLIR.MkExprUpdate (MLIR.MkExprVariable n) elseB
                 in MLIR.MkExprBlock $ l3 ++ bs3 ++ [update]
             | otherwise = MLIR.MkExprBlock $ l3 ++ bs3 ++ [elseB]
@@ -286,7 +286,7 @@ convertExpression (HLIR.MkExprLetIn binding value inExpr _) = do
     -- we don't need to create a new variable for it, as it will not be used.
     let letBinding = MLIR.MkExprLet binding.name binding.typeValue.runIdentity (Just value')
     pure (inExpr', l1 ++ [letBinding] ++ l2, bs1 ++ bs2)
-convertExpression (HLIR.MkExprCondition cond thenB elseB branchTy) = do
+convertExpression (HLIR.MkExprCondition cond thenB elseB thenTy elseTy) = do
     let conditions = getConditions cond
 
     -- Converting the condition, then branch and else branch.
@@ -294,10 +294,9 @@ convertExpression (HLIR.MkExprCondition cond thenB elseB branchTy) = do
     else' <- convertExpression elseB
 
     let isCF = isCFStatement thenB || isCFStatement elseB
-    isVoid <- isVoidType branchTy.runIdentity
 
-    if isCF || isVoid then do
-        expr <- createCondition conditions then' else' isCF ""
+    if isCF then do
+        expr <- createCondition conditions then' else' (isCF, isCF) ""
         -- If one of the branches is a control flow statement,
         -- we don't need to create a new variable for it, as it will not be used.
 
@@ -311,11 +310,28 @@ convertExpression (HLIR.MkExprCondition cond thenB elseB branchTy) = do
         --
         -- This permits to have conditions as expressions as well as conditions
         -- as statements.
+        
+        isVoid1 <- isVoidType thenTy.runIdentity
+        isVoid2 <- isVoidType elseTy.runIdentity
 
-        let def = MLIR.MkExprLet newVariable branchTy.runIdentity Nothing
-        ifExpr <- createCondition conditions then' else' isCF newVariable
+        let def
+                | isVoid1 && isVoid2 = []
+                | isVoid1 = [MLIR.MkExprLet newVariable elseTy.runIdentity Nothing]
+                | isVoid2 = [MLIR.MkExprLet newVariable thenTy.runIdentity Nothing]
+                | otherwise = [MLIR.MkExprLet newVariable thenTy.runIdentity Nothing]
 
-        pure (MLIR.MkExprVariable newVariable, [def] <> ifExpr, [])
+        let var 
+                | isVoid1 && isVoid2 = MLIR.MkExprVariable ""
+                | otherwise = MLIR.MkExprVariable newVariable
+
+        ifExpr <- createCondition 
+            conditions 
+            then' 
+            else' 
+            (isVoid1 || isCF, isVoid2 || isCF) 
+            newVariable
+
+        pure (var, def <> ifExpr, [])
 convertExpression (HLIR.MkExprLocated _ e) = convertExpression e
 convertExpression (HLIR.MkExprStructureAccess struct field) = do
     (struct', l1, bs1) <- convertExpression struct
@@ -389,7 +405,7 @@ convertExpression (HLIR.MkExprSingleIf cond thenB branchTy) = do
     isVoid <- isVoidType branchTy.runIdentity
 
     if isCF || isVoid then do
-        ifExpr <- createCondition conds then' (MLIR.MkExprBlock [], [], []) isCF ""
+        ifExpr <- createCondition conds then' (MLIR.MkExprBlock [], [], []) (isCF, False) ""
 
         pure (MLIR.MkExprVariable "", ifExpr, [])
     else do
@@ -397,7 +413,7 @@ convertExpression (HLIR.MkExprSingleIf cond thenB branchTy) = do
         let var = MLIR.MkExprVariable newVariable
             def = MLIR.MkExprLet newVariable branchTy.runIdentity Nothing
 
-        ifExpr <- createCondition conds then' (var, [], []) isCF newVariable
+        ifExpr <- createCondition conds then' (var, [], []) (isCF, False) newVariable
         pure (MLIR.MkExprVariable newVariable, def : ifExpr, [])
 convertExpression (HLIR.MkExprUpdate update value _) = do
     (update', l1, bs1) <- convertExpression update

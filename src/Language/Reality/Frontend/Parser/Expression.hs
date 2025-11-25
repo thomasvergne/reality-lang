@@ -94,7 +94,7 @@ parseExprTernary = do
 
     case result of
         Nothing -> pure ((start, firstEnd), HLIR.MkExprSingleIf cond thenBranch Nothing)
-        Just (end, elseBranch) -> pure ((start, end), HLIR.MkExprCondition cond thenBranch elseBranch Nothing)
+        Just (end, elseBranch) -> pure ((start, end), HLIR.MkExprCondition cond thenBranch elseBranch Nothing Nothing)
 
 parseExprNew :: (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
 parseExprNew = do
@@ -683,7 +683,7 @@ parseStmtWhile = do
         ( (start, end)
         , HLIR.MkExprWhile
             (HLIR.MkExprLiteral (HLIR.MkLitBool True))
-            (HLIR.MkExprCondition cond body HLIR.MkExprBreak Nothing)
+            (HLIR.MkExprCondition cond body HLIR.MkExprBreak Nothing Nothing)
             Nothing
             (HLIR.MkExprVariable (HLIR.MkAnnotation "unit" Nothing) [])
         )
