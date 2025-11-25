@@ -1,5 +1,11 @@
 type string = *char;
 
+extern fn ptr_add<A>(ptr: A, offset: int) -> A;
+extern fn fetch_ptr<A>(ptr: A, index: int) -> A;
+
+property get_index<Item, Container, Index>(container: Container, index: Index) -> Item;
+property get_index_mut<B, A>(container: A, index: int) -> *B;
+
 enum unit {
     unit
 }
@@ -39,83 +45,52 @@ property lesser<A>(x: A, y: A) -> bool;
 
 property equals<A>(x: A, y: A) -> bool;
 
-extern fn number_to_string(n: i32) -> string;
+extern fn number_to_string(n: int) -> string;
 extern fn pointer_to_string<A>(p: A) -> string;
-extern fn add_number(a: i32, b: i32) -> i32;
-extern fn sub_number(a: i32, b: i32) -> i32;
-extern fn mul_number(a: i32, b: i32) -> i32;
-extern fn div_number(a: i32, b: i32) -> i32;
-extern fn equals_number(a: i32, b: i32) -> bool;
-extern fn greater_number(a: i32, b: i32) -> bool;
-extern fn less_number(a: i32, b: i32) -> bool;
-extern fn mod_number(a: i32, b: i32) -> i32;
+extern fn add_number(a: int, b: int) -> int;
+extern fn sub_number(a: int, b: int) -> int;
+extern fn mul_number(a: int, b: int) -> int;
+extern fn div_number(a: int, b: int) -> int;
+extern fn equals_number(a: int, b: int) -> bool;
+extern fn greater_number(a: int, b: int) -> bool;
+extern fn less_number(a: int, b: int) -> bool;
+extern fn mod_number(a: int, b: int) -> int;
 extern fn string_eq(a: string, b: string) -> bool;
 
-impl fn (x: i32) add(y: i32) -> i32 {
+fn int_to_string(n: int) -> string {
+    number_to_string(n)
+}
+
+impl fn (x: int) add(y: int) -> int {
     add_number(x, y)
 }
 
-impl fn (x: i32) sub(y: i32) -> i32 {
+impl fn (x: int) sub(y: int) -> int {
     sub_number(x, y)
 }
 
-impl fn (x: i32) mul(y: i32) -> i32 {
+impl fn (x: int) mul(y: int) -> int {
     mul_number(x, y)
 }
 
-impl fn (x: i32) div(y: i32) -> i32 {
+impl fn (x: int) div(y: int) -> int {
     div_number(x, y)
 }
 
-impl fn (x: i32) equals(y: i32) -> bool {
+impl fn (x: int) equals(y: int) -> bool {
     equals_number(x, y)
 }
 
-impl fn (x: i32) greater(y: i32) -> bool {
+impl fn (x: int) greater(y: int) -> bool {
     greater_number(x, y)
 }
 
-impl fn (x: i32) lesser(y: i32) -> bool {
+impl fn (x: int) lesser(y: int) -> bool {
     less_number(x, y)
 }
 
-impl fn (x: i32) modulo(y: i32) -> i32 {
+impl fn (x: int) modulo(y: int) -> int {
     mod_number(x, y)
-}
-
-extern fn add_u64_ext(a: u64, b: u64) -> u64;
-extern fn sub_u64_ext(a: u64, b: u64) -> u64;
-extern fn mul_u64_ext(a: u64, b: u64) -> u64;
-extern fn div_u64_ext(a: u64, b: u64) -> u64;
-extern fn equals_u64_ext(a: u64, b: u64) -> bool;
-extern fn greater_u64_ext(a: u64, b: u64) -> bool;
-extern fn less_u64_ext(a: u64, b: u64) -> bool;
-extern fn mod_u64_ext(a: u64, b: u64) -> u64;
-extern fn u64_to_string(n: u64) -> string;
-
-impl fn (x: u64) add(y: u64) -> u64 {
-    add_u64_ext(x, y)
-}
-impl fn (x: u64) sub(y: u64) -> u64 {
-    sub_u64_ext(x, y)
-}
-impl fn (x: u64) mul(y: u64) -> u64 {
-    mul_u64_ext(x, y)
-}
-impl fn (x: u64) div(y: u64) -> u64 {
-    div_u64_ext(x, y)
-}
-impl fn (x: u64) equals(y: u64) -> bool {
-    equals_u64_ext(x, y)
-}
-impl fn (x: u64) greater(y: u64) -> bool {
-    greater_u64_ext(x, y)
-}
-impl fn (x: u64) lesser(y: u64) -> bool {
-    less_u64_ext(x, y)
-}
-impl fn (x: u64) modulo(y: u64) -> u64 {
-    mod_u64_ext(x, y)
 }
 
 fn great_equals<A>(x: A, y: A) -> bool {
@@ -132,14 +107,35 @@ fn not_equals<A>(x: A, y: A) -> bool {
 
 struct String {
     data: string,
-    length: u64
+    length: int
 };
 
 extern fn malloc_string(s: string) -> string;
-extern fn strlen(s: string) -> u64;
+extern fn strlen(s: string) -> int;
 extern fn strcat(x: string, y: string) -> string;
 extern fn concat_strings(a: string, b: string) -> string;
 extern fn char_eq(a: char, b: char) -> bool;
+extern fn string_to_int(s: string) -> int;
+
+impl fn (x: string) get_index(index: int) -> char {
+    let ptr = ptr_add(x, index * sizeof(char));
+    *ptr as char
+}
+
+impl fn (x: string) get_index_mut(index: int) -> *char {
+    let ptr = ptr_add(x, index * sizeof(char));
+    ptr as *char
+}
+
+impl fn (x: String) get_index(index: int) -> char {
+    let ptr = ptr_add(x.data, index * sizeof(char));
+    *ptr as char
+}
+
+impl fn (x: String) get_index_mut(index: int) -> *char {
+    let ptr = ptr_add(x.data, index * sizeof(char));
+    ptr as *char
+}
 
 mod String {
     fn init(data: string) -> String {
@@ -149,6 +145,13 @@ mod String {
             data: string_mem,
             length: strlen(string_mem)
         }
+    }
+
+    fn from_char(c: char) -> String {
+        let s = "0";
+        *get_index_mut(s.data, 0) = c;
+
+        s
     }
 }
 
@@ -161,11 +164,11 @@ impl fn (x: String) add(y: String) -> String {
     }
 }
 
-extern fn printf(s: string) -> i32;
+extern fn printf(s: string) -> int;
 
-property show_prec<A>(x: A, i: i32) -> String;
+property show_prec<A>(x: A, i: int) -> String;
 
-impl fn (x: String) show_prec(i: i32) -> String {
+impl fn (x: String) show_prec(i: int) -> String {
     if i > 0 {
         "\"" + x + "\""
     } else {
@@ -173,19 +176,19 @@ impl fn (x: String) show_prec(i: i32) -> String {
     }
 }
 
-impl fn (x: u64) show_prec(_: i32) -> String {
-    String.init(u64_to_string(x))
+impl fn (x: int) show_prec(_: int) -> String {
+    String.init(int_to_string(x))
 }
 
-impl fn (x: i32) show_prec(_: i32) -> String {
+impl fn (x: int) show_prec(_: int) -> String {
     String.init(number_to_string(x))
 }
 
-impl fn (x: bool) show_prec(_: i32) -> String {
+impl fn (x: bool) show_prec(_: int) -> String {
     if (x) { "true" } else { "false" }
 }
 
-impl fn (x: *A) show_prec<A>(i: i32) -> String {
+impl fn (x: *A) show_prec<A>(i: int) -> String {
     show_prec(*x, i)
 }
 
@@ -193,7 +196,7 @@ fn show<A>(x: A) -> String {
     show_prec(x, 0)
 }
 
-fn print<A>(x: A) -> i32 {
+fn print<A>(x: A) -> int {
     printf((show(x) + "\n").data)
 }
 
@@ -205,35 +208,92 @@ impl fn (x: char) equals(y: char) -> bool {
     char_eq(x, y)
 }
 
-extern fn i32_to_u64(n: i32) -> u64;
-extern fn u64_to_i32(n: u64) -> i32;
-extern fn i64_to_u64(n: i64) -> u64;
-extern fn u64_to_i64(n: u64) -> i64;
-extern fn f32_to_u64(n: f32) -> u64;
-extern fn u64_to_f32(n: u64) -> f32;
+extern fn int_to_char(x: int) -> char;
+extern fn char_to_int(c: char) -> int;
 
-impl fn (x: i32) into() -> u64 {
-    i32_to_u64(x)
+impl fn (x: int) to_char() -> char {
+    int_to_char(x)
 }
 
-impl fn (x: u64) into() -> i32 {
-    u64_to_i32(x)
+impl fn (x: char) from_char() -> int {
+    char_to_int(x)
 }
 
-impl fn (x: i64) into() -> u64 {
-    i64_to_u64(x)
+impl fn (x: String) to_int() -> int {
+    string_to_int(x.data)
 }
 
-impl fn (x: u64) into() -> i64 {
-    u64_to_i64(x)
+property into_int<A>(x: A) -> int;
+property into_float<A>(x: A) -> float;
+
+impl fn (x: int) into_int() -> int {
+    x
 }
 
-impl fn (x: f32) into() -> u64 {
-    f32_to_u64(x)
+impl fn (x: float) into_float() -> float {
+    x
 }
 
-impl fn (x: u64) into() -> f32 {
-    u64_to_f32(x)
+extern fn int_to_float(x: int) -> float;
+extern fn float_to_int(x: float) -> int;
+
+impl fn (x: int) into_float() -> float {
+    int_to_float(x)
 }
 
+impl fn (x: float) into_int() -> int {
+    float_to_int(x)
+}
 
+fn float<A>(x: A) -> float {
+    return x.into_float();
+}
+
+fn int<A>(x: A) -> int {
+    return x.into_int();
+}
+
+extern fn add_float_(a: float, b: float) -> float;
+extern fn sub_float_(a: float, b: float) -> float;
+extern fn mul_float_(a: float, b: float) -> float;
+extern fn div_float_(a: float, b: float) -> float;
+extern fn equals_float_(a: float, b: float) -> bool;
+extern fn greater_float_(a: float, b: float) -> bool;
+extern fn less_float_(a: float, b: float) -> bool;
+extern fn mod_float_(a: float, b: float) -> float;
+extern fn float_to_string(f: float) -> string;
+
+impl fn (x: float) add(y: float) -> float {
+    add_float_(x, y)
+}
+impl fn (x: float) sub(y: float) -> float {
+    sub_float_(x, y)
+}
+
+impl fn (x: float) mul(y: float) -> float {
+    mul_float_(x, y)
+}
+
+impl fn (x: float) div(y: float) -> float {
+    div_float_(x, y)
+}
+
+impl fn (x: float) equals(y: float) -> bool {
+    equals_float_(x, y)
+}
+
+impl fn (x: float) greater(y: float) -> bool {
+    greater_float_(x, y)
+}
+
+impl fn (x: float) lesser(y: float) -> bool {
+    less_float_(x, y)
+}
+
+impl fn (x: float) show_prec(i: int) -> String {
+    String.init(float_to_string(x))
+}
+
+impl fn (x: float) negate() -> float {
+    0.0.sub(x)
+}

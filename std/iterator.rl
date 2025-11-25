@@ -1,6 +1,6 @@
 struct Iterator<A> {
     container: A,
-    index: *u64
+    index: *int
 }
 
 impl fn (it: List<A>) iter<A>() -> Iterator<List<A>> {
@@ -10,7 +10,7 @@ impl fn (it: List<A>) iter<A>() -> Iterator<List<A>> {
     }
 }
 
-impl fn (self: List<A>) at<A>(index: u64) -> A {
+impl fn (self: List<A>) at<A>(index: int) -> A {
     self.get_index(index)
 }
 
@@ -25,13 +25,13 @@ impl fn (it: Iterator<List<A>>) next<A>() -> Option<A> {
 }
 
 struct Range {
-    start: i32,
-    end: i32
+    start: int,
+    end: int
 }
 
 struct RangeIterator {
     range: Range,
-    current: *i32
+    current: *int
 }
 
 impl fn (r: Range) iter() -> RangeIterator {
@@ -41,14 +41,14 @@ impl fn (r: Range) iter() -> RangeIterator {
     }
 }
 
-pub fn range(start: i32, end: i32) -> Range {
+pub fn range(start: int, end: int) -> Range {
     struct Range {
         start: start,
         end: end
     }
 }
 
-impl fn (it: RangeIterator) next() -> Option<i32> {
+impl fn (it: RangeIterator) next() -> Option<int> {
     if *it.current < it.range.end {
         let value = *it.current;
         *it.current = *it.current + 1;
@@ -58,8 +58,8 @@ impl fn (it: RangeIterator) next() -> Option<i32> {
     }
 }
 
-impl fn (it: Range) to_list() -> List<i32> {
-    let list = List.init<i32>();
+impl fn (it: Range) to_list() -> List<int> {
+    let list = new List.init<int>();
 
     for value in it {
         list.push(value);

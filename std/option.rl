@@ -5,7 +5,7 @@ enum Option<T> {
     None
 }
 
-impl fn (c: Option<T>) show_prec<T>(i: i32) -> String {
+impl fn (c: Option<T>) show_prec<T>(i: int) -> String {
     if c is Some(let v) {
         "Some(" + show_prec(v, i + 1) + ")"
     } else {
@@ -19,6 +19,14 @@ mod Option {
             Some(f(v))
         } else {
             None
+        }
+    }
+
+    impl fn (c: Option<A>) or_else<A>(d: Option<A>) -> Option<A> {
+        if c is Some(let v) {
+            Some(v)
+        } else {
+            d
         }
     }
 

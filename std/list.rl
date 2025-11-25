@@ -1,73 +1,24 @@
 import string;
 import option;
+import std.internal.gc;
 
 struct List<A> {
     data: *A,
-    length: u64,
-    capacity: u64
+    length: int,
+    capacity: int
 };
 
-type size = u64;
+type size = int;
 
-extern let intrinsic: void;
 
-mod GC {
-    struct GarbageCollector { };
-
-    #[intrinsic] {
-        extern fn GC_malloc<A>(size: u64) -> A;
-        extern fn GC_free<A>(ptr: A) -> unit;
-        extern fn GC_realloc<A>(ptr: A, size: u64) -> A;
-    }
-
-    extern fn panic_ext(message: string) -> unit;
-
-    pub fn malloc<A>() -> *A {
-        GC_malloc<*A>(sizeof(A))
-    }
-
-    pub fn allocate<A>(value: A) -> *A {
-        let ptr = GC.malloc<A>();
-        *ptr = value;
-        ptr
-    }
-
-    pub fn calloc<A>(count: u64) -> *A {
-        GC_malloc(count * sizeof(A))
-    }
-
-    pub fn realloc<A>(ptr: *A, count: u64) -> *A {
-        GC_realloc(ptr, count)
-    }
-
-    pub fn free<A>(ptr: *A) -> unit {
-        GC_free(ptr)
-    }
-
-    fn red(message: String) -> String {
-        "\x1b[31m" + message + "\x1b[0m"
-    }
-
-    pub fn panic<A>(message: A) -> unit {
-        let msg_prefix = GC.red("[Panic]: ");
-        let full_message = msg_prefix + show_prec(message, 0);
-        panic_ext(full_message.data)
-    }
-}
-
-property get_index<Item, Container, Index>(container: Container, index: Index) -> Item;
-
-extern fn ptr_add<A>(ptr: A, offset: u64) -> A;
-extern fn fetch_ptr<A>(ptr: A, index: u64) -> A;
-
-impl fn (c: *A) get_index<A>(index: u64) -> A {
+impl fn (c: *A) get_index<A>(index: int) -> A {
     let ptr = ptr_add(c, index * sizeof(A));
     *ptr
 }
 
-impl fn (c: List<A>) get_index<A>(index: u64) -> A {
+impl fn (c: List<A>) get_index<A>(index: int) -> A {
     if index >= c.length {
-        GC.panic("Index out of bounds in List.get_index, " 
+        GC.panic<unit>("Index out of bounds in List.get_index, " 
             + show_prec(index, 0) 
             + " (<index>) must be less than "
             + show_prec(c.length, 0) 
@@ -78,110 +29,128 @@ impl fn (c: List<A>) get_index<A>(index: u64) -> A {
     get_index(c.data, index)
 }
 
-impl fn (x: String) get_index(index: u64) -> char {
+impl fn (x: String) get_index(index: int) -> char {
     let ptr = ptr_add(x.data, index * sizeof(char));
     *ptr as char
 }
 
-property get_index_mut<B, A>(container: A, index: u64) -> *B;
-
-impl fn (c: *A) get_index_mut<A>(index: u64) -> *A {
+impl fn (c: *A) get_index_mut<A>(index: int) -> *A {
     let ptr = ptr_add(c, index * sizeof(A));
     ptr as *A
 }
 
-impl fn (c: List<A>) get_index_mut<A>(index: u64) -> *A {
+impl fn (c: List<A>) get_index_mut<A>(index: int) -> *A {
     get_index_mut(c.data, index)
 }
 
 mod List {
-    fn init<A>() -> *List<A> {
-        let list = GC.malloc<List<A>>();
-
-        list->capacity = 10.into();
-
-        list->data = GC.calloc<A>(list->capacity);
-        list->length = 0.into();
-
-        list
+    fn init<A>() -> List<A> {
+        struct List<A> {
+            data: GC.calloc<A>(10),
+            length: 0,
+            capacity: 10
+        }
     }
 
     impl fn (list: *List<A>) push<A>(value: A) -> *List<A> {
         if list->length == list->capacity {
-            list->capacity = list->capacity + 10.into();
-            list->data = GC.realloc(list->data, list->capacity + 10.into());
+            list->capacity = list->capacity + 10;
+            list->data = GC.realloc(list->data, list->capacity * sizeof(A));
         };
 
         *get_index_mut(list->data, list->length) = value;
-        list->length = list->length + 1.into();
+        list->length = list->length + 1;
 
         list
     }
 
-    impl fn (list: List<A>) map<A, B>(f: fn(A) -> B) -> List<B> {
-        let init_list = List.init<B>();
+    impl fn (list: List<A>) pop_at<A>(index: int) -> A {
+        if index < 0 || index >= list.length {
+            GC.panic<unit>("Index out of bounds in List.pop_at, " 
+                + index.show()
+                + " (<index>) must be between 0 and "
+                + (list.length - 1).show()
+                + " (inclusive)"
+            );
+        };
 
-        let i = 0.into();
+        let value = list[index];
+        let i = index;
+        
+        while i < list.length - 1 {
+            let current_value = list[i + 1];
+            *(list.data).get_index_mut(i) = current_value;
+            i = i + 1;
+        }
+
+        list.length = list.length - 1;
+        value
+    }
+
+    impl fn (list: List<A>) map<A, B>(f: fn(A) -> B) -> List<B> {
+        let init_list = &List.init<B>();
+
+        let i = 0;
 
         while i < list.length {
             let value = list[i];
             init_list.push(f(value));
-            i = i + 1.into();
+            i = i + 1;
         };
 
         *init_list
     }
 
     impl fn (list: List<A>) extend<A>(other: List<A>) -> List<A> {
-        let init_list = List.init<A>();
+        let init_list = new List.init<A>();
 
-        let i = 0.into();
+        let i = 0;
 
         while i < list.length {
             let value = list[i];
             init_list.push(value);
-            i = i + 1.into();
+            i = i + 1;
         };
 
-        let j = 0.into();
+        let j = 0;
 
         while j < other.length {
             let value = other[j];
             init_list.push(value);
-            j = j + 1.into();
+            j = j + 1;
         };
 
         *init_list
     }
 
-    fn from_pointer<A>(ptr: *A, count: u64) -> *List<A> {
-        let list = List.init<A>();
+    fn from_pointer<A>(ptr: *A, count: int) -> *List<A> {
+        let list = new List.init<A>();
 
-        let i = 0.into();
+        let i = 0;
 
         while i < count {
             let value = ptr[i];
             list.push(value);
-            i = i + 1.into();
+            i = i + 1;
         };
 
         list
     }
 
-    impl fn (list: List<A>) show_prec<A>(prec: i32) -> String {
+    impl fn (list: List<A>) show_prec<A>(prec: int) -> String {
         let result = "[";
 
-        let i = 0.into();
+        let i = 0;
 
         while i < list.length {
             let value = list[i];
             result = result + show_prec(value, prec + 1);
 
-            if i < list.length - 1.into() {
+            if i < list.length - 1 {
                 result = result + ", ";
             };
 
-            i = i + 1.into();
+            i = i + 1;
         };
 
         result = result + "]";
@@ -189,8 +158,8 @@ mod List {
         result
     }
 
-    impl fn (list: List<A>) slice<A>(start: u64, end: u64) -> List<A> {
-        let init_list = List.init<A>();
+    impl fn (list: List<A>) slice<A>(start: int, end: int) -> List<A> {
+        let init_list = new List.init<A>();
 
         let i = start;
 
@@ -208,7 +177,7 @@ mod List {
             return false;
         };
 
-        let i = 0u64;
+        let i = 0;
 
         while i < list.length {
             if list[i] != other[i] {
@@ -221,18 +190,38 @@ mod List {
     }
 
     impl fn (list: *List<A>) pop<A>() -> Option<A> {
-        if list->length == 0.into() {
+        if list->length == 0 {
             return None;
         };
 
-        list->length = list->length - 1.into();
+        list->length = list->length - 1;
         let value = (list->data)[list->length];
+
+        Some(value)
+    }
+
+    /// Removes and returns the first element of the list, if it exists.
+    impl fn (list: *List<A>) pop_front<A>() -> Option<A> {
+        if list->length == 0 {
+            return None;
+        };
+
+        let value = (list->data)[0];
+
+        let i = 1;
+        while i < list->length {
+            let current_value = (list->data)[i];
+            *(list->data).get_index_mut(i - 1) = current_value;
+            i = i + 1;
+        };
+
+        list->length = list->length - 1;
 
         Some(value)
     }
 }
 
-impl fn (x: String) slice(start: u64, end: u64) -> String {
+impl fn (x: String) slice(start: int, end: int) -> String {
     // for instance "hello".slice(1,4) = "ell"
     let length = if end > x.length { x.length } else { end };
     let result = "";
@@ -246,20 +235,20 @@ impl fn (x: String) slice(start: u64, end: u64) -> String {
     result
 }
 
-impl fn (x: char) show_prec(_: i32) -> String {
+impl fn (x: char) show_prec(_: int) -> String {
     let data = GC.allocate(x);
 
     "'" + String.init(data) + "'"
 }
 
-pub fn getArgs(argc: i32, argv: *string) -> List<String> {
-    List.from_pointer(argv, argc.into())->map(String.init)
+pub fn getArgs(argc: int, argv: *string) -> List<String> {
+    List.from_pointer(argv, argc)->map(String.init)
 }
 
 mod String {
     fn from_chars(chars: List<char>) -> String {
         let result = "";
-        let i = 0u64;
+        let i = 0;
         while i < chars.length {
             let c = chars[i];
             result = result + String.init(GC.allocate(c));

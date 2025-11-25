@@ -3,7 +3,7 @@ pub enum LinkedList[A] {
     Cons(A, *LinkedList[A])
 }
 
-impl fn (c: LinkedList[A]) show_prec[A](i: i32) -> String {
+impl fn (c: LinkedList[A]) show_prec[A](i: int) -> String {
     if c is Cons(let head, let tail) {
         "Cons("
             + show_prec(head, i + 1)
@@ -24,11 +24,11 @@ mod LinkedList {
         }
     }
 
-    fn from_pointer[A](ptr: *A, count: u64) -> *LinkedList[A] {
+    fn from_pointer[A](ptr: *A, count: int) -> *LinkedList[A] {
         if count == 0 {
             allocate.[LinkedList[A]](Nil)
         } else {
-            let head = ptr[0u64];
+            let head = ptr[0];
             let tail = from_pointer(ptr_add(ptr, 1), count - 1);
 
             allocate.[LinkedList[A]](Cons(head, tail))

@@ -16,7 +16,7 @@ enum ParserResult<A> {
 
 type Parser<A> = fn(String) -> ParserResult<A>;
 
-impl fn (r: ParserResult<A>) show_prec<A>(prec: i32) -> String {
+impl fn (r: ParserResult<A>) show_prec<A>(prec: int) -> String {
     if r is Success(let value, let rest) {
         let result = "Success(" + show_prec(value, prec + 1) + ", ";
         result = result + show_prec(rest, prec + 1) + ")";
@@ -40,13 +40,13 @@ impl fn (r: ParserResult<A>) or_else<A>(default: A) -> A {
 
 fn satisfy(predicate: fn(char) -> bool) -> Parser<char> {
     return |input| {
-        if input.length == 0u64 {
+        if input.length == 0 {
             return Failure("Unexpected end of input", input);
         };
 
-        let firstChar = input[0u64];
+        let firstChar = input[0];
         if predicate(firstChar) {
-            let rest = input.slice(1u64, input.length);
+            let rest = input.slice(1, input.length);
             return Success(firstChar, rest);
         } else {
             return Failure("Character did not satisfy predicate", input);
@@ -95,7 +95,7 @@ impl fn (p: Parser<A>) bind<A, B>(f: fn(A) -> Parser<B>) -> Parser<B> {
 
 impl fn (p: Parser<A>) many<A>() -> Parser<List<A>> {
     return |input| {
-        let results = List.init<A>();
+        let results = new List.init<A>();
         let currentInput = input;
 
         while p(currentInput) is Success(let value, let rest) {
@@ -112,7 +112,7 @@ fn whitespace() -> Parser<String> {
     return satisfy(is_whitespace).many().map(
         |chars| {
             let result = "";
-            let i = 0u64;
+            let i = 0;
             while i < chars.length {
                 let c = chars[i];
                 result = result + String.init(GC.allocate(c));
@@ -162,7 +162,7 @@ impl fn (p: fn() -> Parser<A>) lazy<A>() -> Parser<A> {
 
 fn choice<A>(parsers: List<Parser<A>>) -> Parser<A> {
     return |input| {
-        let i = 0u64;
+        let i = 0;
 
         while i < parsers.length {
             let parser = parsers[i];
@@ -190,7 +190,7 @@ impl fn (p: Parser<A>) optional<A>() -> Parser<Option<A>> {
 impl fn (p: Parser<A>) some<A>() -> Parser<List<A>> {
     return |input| {
         if (p(input)) is Success(let firstValue, let rest) {
-            let results = List.init<A>();
+            let results = new List.init<A>();
             results.push(firstValue);
 
             let currentInput = rest;
@@ -209,7 +209,7 @@ impl fn (p: Parser<A>) some<A>() -> Parser<List<A>> {
 
 impl fn (p: Parser<A>) run<A>(input: String) -> ParserResult<A> {
     if (p(input)) is Success(let value, let rest) {
-        if rest.length == 0u64 {
+        if rest.length == 0 {
             return Success(value, rest);
         } else {
             return Failure("Parser did not consume entire input", rest);
@@ -221,7 +221,7 @@ impl fn (p: Parser<A>) run<A>(input: String) -> ParserResult<A> {
 
 pub impl fn (p: Parser<A>) sep_by<A, B>(sep: Parser<B>) -> Parser<List<A>> {
     return |input| {
-        let results = List.init<A>();
+        let results = new List.init<A>();
 
         if (p(input)) is Success(let firstValue, let rest1) {
             results.push(firstValue);
@@ -245,7 +245,7 @@ pub impl fn (p: Parser<A>) sep_by<A, B>(sep: Parser<B>) -> Parser<List<A>> {
 
 fn string(s: String) -> Parser<String> {
     return |input| {
-        let i = 0u64;
+        let i = 0;
 
         while i < s.length {
             if input.length <= i {
