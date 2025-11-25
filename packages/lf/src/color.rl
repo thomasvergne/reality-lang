@@ -29,36 +29,36 @@ enum Style {
 fn color_code(c: Color, b: Brightness, bg: Background) -> String {
     let base = 
         if c is Black {
-            30u64
+            30
         } else if c is Red {
-            31u64
+            31
         } else if c is Green {
-            32u64
+            32
         } else if c is Yellow {
-            33u64
+            33
         } else if c is Blue {
-            34u64
+            34
         } else if c is Magenta {
-            35u64
+            35
         } else if c is Cyan {
-            36u64
+            36
         } else if c is White {
-            37u64
+            37
         } else {
-            39u64
+            39
         };
 
     let brightness_offset = 
         if b is Normal {
-            0u64
+            0
         } else {
-            60u64
+            60
         };
 
     let background_offset = if bg is Foreground {
-        0u64
+        0
     } else {
-        10u64
+        10
     };
 
     return (base + brightness_offset + background_offset).show_prec(0);

@@ -8,7 +8,7 @@ enum CLI {
     Option(String, String)
 }
 
-impl fn (cli: CLI) show_prec(i: i32) -> String {
+impl fn (cli: CLI) show_prec(i: int) -> String {
     if cli is PositionalArg(let arg) {
         show_prec(arg, 0)
     } else if cli is Flag(let flag) {
@@ -87,7 +87,7 @@ impl fn (args: List<String>) parse_as_cli() -> List<CLI> {
 }
 
 impl fn (l: List<CLI>) get_first_positional() -> Option<String> {
-    let i = 0u64;
+    let i = 0;
     while i < l.length {
         let cli_arg = l[i];
         if cli_arg is PositionalArg(let arg) {
@@ -100,7 +100,7 @@ impl fn (l: List<CLI>) get_first_positional() -> Option<String> {
 }
 
 impl fn (l: List<CLI>) has_flag(flagName: String) -> bool {
-    let i = 0u64;
+    let i = 0;
     while i < l.length {
         let cli_arg = l[i];
         if cli_arg is Flag(let name) {
@@ -115,7 +115,7 @@ impl fn (l: List<CLI>) has_flag(flagName: String) -> bool {
 }
 
 impl fn (l: List<CLI>) get_option(optionName: String) -> Option<String> {
-    let i = 0u64;
+    let i = 0;
     while i < l.length {
         let cli_arg = l[i];
         if cli_arg is Option(let name, let value) {
@@ -132,7 +132,7 @@ impl fn (l: List<CLI>) get_option(optionName: String) -> Option<String> {
 type Map<K, V> = List<Tuple<K, V>>;
 
 impl fn (m: Map<K, V>) get<K, V>(key: K) -> Option<V> {
-    let i = 0u64;
+    let i = 0;
     while i < m.length {
         if m[i] is Pair(let k, let v) && k == key {
             return Some(v);
@@ -145,7 +145,7 @@ impl fn (m: Map<K, V>) get<K, V>(key: K) -> Option<V> {
 }
 
 impl fn (m: Map<K, V>) has_key<K, V>(key: K) -> bool {
-    let i = 0u64;
+    let i = 0;
     while i < m.length {
         if m[i] is Pair(let k, let v) && k == key {
             return true;
@@ -159,14 +159,14 @@ impl fn (m: Map<K, V>) has_key<K, V>(key: K) -> bool {
 impl fn (it: Map<K, V>) iter<K, V>() -> Iterator<Map<K, V>> {
     struct Iterator<Map<K, V>> {
         container: it,
-        index: GC.allocate(0u64)
+        index: GC.allocate(0)
     }
 }
 
 impl fn (it: Iterator<Map<K, V>>) next<K, V>() -> Option<Tuple<K, V>> {
     if *it.index < it.container.length {
         let value = it.container.at(*it.index);
-        *it.index = *it.index + 1u64;
+        *it.index = *it.index + 1;
         Some(value)
     } else {
         None

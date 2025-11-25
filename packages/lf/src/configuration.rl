@@ -10,9 +10,34 @@ enum Configuration {
     KeyValue(String, Value)
 }
 
+impl fn (v: Value) show_prec(prec: int) -> String {
+    if v is Str(let s) {
+        return "\"" + s + "\"";
+    } else if v is Arr(let arr) {
+        let result = "[";
+
+        let i = 0;
+        while i < arr.length {
+            let value = arr[i];
+            result = result + "\"" + value + "\"";
+
+            if i + 1 < arr.length {
+                result = result + ", ";
+            };
+
+            i = i + 1;
+        };
+
+        result = result + "]";
+        return result;
+    } else {
+        return "<invalid value>";
+    }
+}
+
 impl fn (c: List<String>) join(sep: String) -> String {
     let result = "";
-    let i = 0u64;
+    let i = 0;
     while i < c.length {
         result = result + c[i];
         if i + 1 < c.length {
@@ -23,11 +48,11 @@ impl fn (c: List<String>) join(sep: String) -> String {
     return result;
 }
 
-impl fn (c: Configuration) show_prec(prec: i32) -> String {
+impl fn (c: Configuration) show_prec(prec: int) -> String {
     if c is Section(let name, let configs) {
         let result = "[" + name.join(".") + "]\n";
 
-        let i = 0u64;
+        let i = 0;
         while i < configs.length {
             let config = configs[i];
             result = result + config->show_prec(prec + 1);
@@ -49,7 +74,7 @@ impl fn (c: Configuration) show_prec(prec: i32) -> String {
 }
 
 impl fn (c: List<*Configuration>) get_section(name: List<String>) -> Option<Configuration> {
-    let i = 0u64;
+    let i = 0;
     while i < c.length {
         let config = *c[i];
         if config is Section(let sectionName, let sectionConfigs) {
@@ -64,7 +89,7 @@ impl fn (c: List<*Configuration>) get_section(name: List<String>) -> Option<Conf
 }
 
 impl fn (c: List<*Configuration>) get_key_value(key: String) -> Option<Value> {
-    let i = 0u64;
+    let i = 0;
     while i < c.length {
         let config = *c[i];
         if config is KeyValue(let k, let v) && k == key {
@@ -81,7 +106,7 @@ impl fn (c: String) starts_with(prefix: String) -> bool {
         return false;
     };
 
-    let i = 0u64;
+    let i = 0;
     while i < prefix.length {
         if c[i] != prefix[i] {
             return false;
@@ -93,9 +118,9 @@ impl fn (c: String) starts_with(prefix: String) -> bool {
 }
 
 impl fn (c: List<A>) take_while<A>(predicate: fn(A) -> bool) -> List<A> {
-    let result = List.init<A>();
+    let result = new List.init<A>();
 
-    let i = 0u64;
+    let i = 0;
     while i < c.length {
         let value = c[i];
         if predicate(value) {
@@ -110,9 +135,9 @@ impl fn (c: List<A>) take_while<A>(predicate: fn(A) -> bool) -> List<A> {
 }
 
 impl fn (c: List<A>) drop_while<A>(predicate: fn(A) -> bool) -> List<A> {
-    let result = List.init<A>();
+    let result = new List.init<A>();
 
-    let i = 0u64;
+    let i = 0;
     while i < c.length {
         let value = c[i];
         if not(predicate(value)) {
@@ -131,10 +156,10 @@ impl fn (c: List<A>) drop_while<A>(predicate: fn(A) -> bool) -> List<A> {
 }
 
 impl fn (c: String) split(sep: char) -> List<String> {
-    let result = List.init<String>();
+    let result = new List.init<String>();
 
     let currentPart = "";
-    let i = 0u64;
+    let i = 0;
     while i < c.length {
         let c_char = c[i];
         if c_char == sep {
@@ -152,10 +177,10 @@ impl fn (c: String) split(sep: char) -> List<String> {
 }
 
 impl fn (c: List<A>) partition<A>(predicate: fn(A) -> bool) -> Tuple<List<A>, List<A>> {
-    let trueList = List.init<A>();
-    let falseList = List.init<A>();
+    let trueList = &List.init<A>();
+    let falseList = &List.init<A>();
 
-    let i = 0u64;
+    let i = 0;
     while i < c.length {
         let value = c[i];
         if predicate(value) {
@@ -173,18 +198,18 @@ impl fn
     (c: List<*Configuration>)
     build_tree() -> List<*Configuration>
 {
-    if c.length == 0u64 {
+    if c.length == 0 {
         return [];
     };
 
-    let first = c[0u64];
-    let rest = c.slice(1u64, c.length);
+    let first = c[0];
+    let rest = c.slice(1, c.length);
 
     if (*first) is Section(let name, let _) {
-        let sectionConfigs = List.init<*Configuration>();
-        let others = List.init<*Configuration>();
+        let sectionConfigs = &List.init<*Configuration>();
+        let others = &List.init<*Configuration>();
 
-        let i = 0u64;
+        let i = 0;
         let is_correct = true;
 
         while i < rest.length {

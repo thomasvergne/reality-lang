@@ -8,12 +8,12 @@ fn identifier() -> Parser<String> {
         |firstChar| {
             return satisfy(is_alphanumeric).many().map(
                 |restChars| {
-                    let idStr = String.init(GC.allocate(firstChar));
+                    let idStr = String.init(new firstChar);
                     let result = idStr;
-                    let i = 0u64;
+                    let i = 0;
                     while i < restChars.length {
                         let c = restChars[i];
-                        result = result + String.init(GC.allocate(c));
+                        result = result + String.init(new c);
                         i = i + 1;
                     };
                     return result;
@@ -29,10 +29,10 @@ fn parse_string() -> Parser<String> {
             satisfy(|c| c != '"').many().map(
                 |chars| {
                     let result = "";
-                    let i = 0u64;
+                    let i = 0;
                     while i < chars.length {
                         let c = chars[i];
-                        result = result + String.init(GC.allocate(c));
+                        result = result + String.init(new c);
                         i = i + 1;
                     };
                     return result;
@@ -54,13 +54,12 @@ fn parse_value(key: String) -> Parser<*Configuration> {
     return choice([
         parse_string().map(
             |strValue| {
-                return GC.allocate(KeyValue(key, Str(strValue)));
+                return new KeyValue(key, Str(strValue));
             }
-        )
-        ,
+        ),
         parse_array().map(
             |arrValue| {
-                return GC.allocate(KeyValue(key, Arr(arrValue)));
+                return new KeyValue(key, Arr(arrValue));
             }
         )
     ]);
