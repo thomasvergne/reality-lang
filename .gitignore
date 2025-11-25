@@ -13,3 +13,7 @@ bin
 stan.html
 
 .DS_Store
+
+# VSCode extension
+.vscode/
+*.vsix
