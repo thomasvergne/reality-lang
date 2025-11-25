@@ -687,7 +687,7 @@ synthesizeE (HLIR.MkExprSizeOf t) = do
     -- remove aliases from the type being measured.
     aliasedType <- M.performAliasRemoval t
 
-    pure (HLIR.MkTyId "u64", HLIR.MkExprSizeOf aliasedType, mempty, mempty)
+    pure (HLIR.MkTyId "int", HLIR.MkExprSizeOf aliasedType, mempty, mempty)
 synthesizeE (HLIR.MkExprSingleIf cond thenBranch _) = do
     -- Condition must be of type bool
     (condExpr, cs, b1) <- checkE HLIR.MkTyBool cond
@@ -819,6 +819,7 @@ synthesizeE (HLIR.MkExprIs e p _) = do
         , cs <> csPat
         , bindings1 <> bindings2
         )
+synthesizeE (HLIR.MkExprLetPatternIn {}) = M.throw (M.CompilerError "Let-pattern expressions are not supported in the typechecker.")
 
 -- | CHECK PATTERN
 -- | Check a pattern against an expected type.

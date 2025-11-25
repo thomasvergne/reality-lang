@@ -115,7 +115,7 @@ applySubtypeRelation ::
 applySubtypeRelation shouldMutate (argsF1 HLIR.:->: retF1) (argsF2 HLIR.:->: retF2)
     | length argsF1 == length argsF2 = do
         subsArgs <-
-            mconcat <$> zipWithM (flip (applySubtypeRelation shouldMutate)) argsF2 argsF1
+            mconcat <$> zipWithM (flip (applySubtypeRelation shouldMutate)) argsF1 argsF2
         subRet <- applySubtypeRelation shouldMutate retF1 retF2
 
         pure (subsArgs <> subRet)
@@ -149,28 +149,10 @@ applySubtypeRelation shouldMutate (HLIR.MkTyApp base1 args1) (HLIR.MkTyApp base2
         subs <- mconcat <$> zipWithM (applySubtypeRelation shouldMutate) args1 args2
         pure (sub <> subs)
     | otherwise = M.throw (M.InvalidArgumentQuantity (length args1) (length args2))
+applySubtypeRelation _ _ (HLIR.MkTyId "never") = pure Map.empty
+applySubtypeRelation _ (HLIR.MkTyId "never") _ = pure Map.empty
 applySubtypeRelation _ (HLIR.MkTyId name1) (HLIR.MkTyId name2)
     | name1 == name2 = pure Map.empty
-    | Just subsize <- getIntegerPart (HLIR.MkTyId name1)
-    , Just supSize <- getIntegerPart (HLIR.MkTyId name2)
-    , subsize <= supSize =
-        pure Map.empty
-    | Just subsize <- getUnsignedIntegerPart (HLIR.MkTyId name1)
-    , Just supSize <- getUnsignedIntegerPart (HLIR.MkTyId name2)
-    , subsize <= supSize =
-        pure Map.empty
-    | Just subsize <- getFloatPart (HLIR.MkTyId name1)
-    , Just supSize <- getFloatPart (HLIR.MkTyId name2)
-    , subsize <= supSize =
-        pure Map.empty
-    | Just subsize <- getIntegerPart (HLIR.MkTyId name1)
-    , Just supSize <- getUnsignedIntegerPart (HLIR.MkTyId name2)
-    , subsize < supSize =
-        pure Map.empty
-    | Just subsize <- getUnsignedIntegerPart (HLIR.MkTyId name1)
-    , Just supSize <- getIntegerPart (HLIR.MkTyId name2)
-    , subsize < supSize =
-        pure Map.empty
 applySubtypeRelation _ t1 t2 | t1 /= t2 = M.throw (M.UnificationFail t1 t2)
 applySubtypeRelation _ _ _ = pure Map.empty
 
@@ -192,46 +174,3 @@ occursCheck name (HLIR.MkTyApp base args) = do
     occursCheck name base
     mapM_ (occursCheck name) args
 occursCheck _ _ = pure ()
-
--- | GET INTEGER PART
--- | Get the size of an integer type.
--- | This is used to check if an integer type can be a subtype of another integer type.
--- | This function takes a type, and returns the size of the integer type if it is
--- | an integer type, or Nothing otherwise.
--- | It supports the following integer types: i8, i16, i32, i64, i128.
-getIntegerPart :: HLIR.Type -> Maybe Int
-getIntegerPart (HLIR.MkTyId "i8") = Just 8
-getIntegerPart (HLIR.MkTyId "i16") = Just 16
-getIntegerPart (HLIR.MkTyId "i32") = Just 32
-getIntegerPart (HLIR.MkTyId "i64") = Just 64
-getIntegerPart (HLIR.MkTyId "i128") = Just 128
-getIntegerPart _ = Nothing
-
--- | GET UNSIGNED INTEGER PART
--- | Get the size of an unsigned integer type.
--- | This is used to check if an unsigned integer type can be a subtype of another
--- | unsigned integer type.
--- | This function takes a type, and returns the size of the unsigned integer type
--- | if it is an unsigned integer type, or Nothing otherwise.
--- | It supports the following unsigned integer types: u8, u16, u32, u64, u128.
-getUnsignedIntegerPart :: HLIR.Type -> Maybe Int
-getUnsignedIntegerPart (HLIR.MkTyId "u8") = Just 8
-getUnsignedIntegerPart (HLIR.MkTyId "u16") = Just 16
-getUnsignedIntegerPart (HLIR.MkTyId "u32") = Just 32
-getUnsignedIntegerPart (HLIR.MkTyId "u64") = Just 64
-getUnsignedIntegerPart (HLIR.MkTyId "u128") = Just 128
-getUnsignedIntegerPart _ = Nothing
-
--- | GET FLOAT PART
--- | Get the size of a floating-point type.
--- | This is used to check if a floating-point type can be a subtype of another
--- | floating-point type.
--- | This function takes a type, and returns the size of the floating-point type
--- | if it is a floating-point type, or Nothing otherwise.
--- | It supports the following floating-point types: f16, f32, f64, f128.
-getFloatPart :: HLIR.Type -> Maybe Int
-getFloatPart (HLIR.MkTyId "f16") = Just 16
-getFloatPart (HLIR.MkTyId "f32") = Just 32
-getFloatPart (HLIR.MkTyId "f64") = Just 64
-getFloatPart (HLIR.MkTyId "f128") = Just 128
-getFloatPart _ = Nothing
