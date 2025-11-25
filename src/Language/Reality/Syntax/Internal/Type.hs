@@ -109,8 +109,8 @@ pattern args :->: retTy = MkTyFun args retTy
 -- | basic types such as integers, floats, characters, strings, booleans, and
 -- | unit.
 pattern MkTyInt, MkTyFloat, MkTyChar, MkTyString, MkTyBool, MkTyUnit :: Type
-pattern MkTyInt = MkTyId "i32"
-pattern MkTyFloat = MkTyId "f32"
+pattern MkTyInt = MkTyId "int"
+pattern MkTyFloat = MkTyId "float"
 pattern MkTyChar = MkTyId "char"
 pattern MkTyString = MkTyPointer (MkTyId "char")
 pattern MkTyBool = MkTyId "bool"

@@ -21,6 +21,7 @@ import Language.Reality.Syntax.HLIR qualified as HLIR
 -- | extensible and to support multiple levels of abstraction.
 data Expression
     = MkExprVariable Text
+    | MkExprSpecialVariable Text
     | MkExprLiteral Lit.Literal
     | MkExprApplication Expression [Expression]
     | MkExprCondition Expression Expression Expression
@@ -44,6 +45,7 @@ data Toplevel
     = MkTopFunction Text [Ann.Annotation Ty.Type] Ty.Type [Expression]
     | MkTopExternalFunction Text [Text] [Ty.Type] Ty.Type
     | MkTopExternalVariable Text Ty.Type
+    | MkTopTypeAlias Text Ty.Type
     | MkTopGlobal Text Ty.Type (Maybe Expression)
     | MkTopStructure Text [HLIR.StructureMember Ty.Type]
     | MkTopPublic Toplevel
@@ -110,6 +112,7 @@ instance ToText Expression where
         T.concat ["return ", toText expr]
     toText MkExprBreak = "break"
     toText MkExprContinue = "continue"
+    toText (MkExprSpecialVariable n) = n
 
 instance ToText Toplevel where
     toText (MkTopFunction name params ret body) =
@@ -163,3 +166,5 @@ instance ToText Toplevel where
     toText (MkTopPublic node) = T.concat ["public ", toText node]
     toText (MkTopExternalVariable name ty) =
         T.concat ["extern var ", name, ": ", toText ty]
+    toText (MkTopTypeAlias name ty) =
+        T.concat ["typealias ", name, " = ", toText ty]

@@ -13,6 +13,7 @@ module Language.Reality.Syntax.HLIR (
     pattern MkExprTuple,
     pattern MkExprVarCall,
     pattern MkExprWhileIs,
+    pattern MkExprConditionIs,
     -- Re-exports
     module Lit,
     module Ann,
@@ -98,6 +99,12 @@ data Expression f t
     | MkExprBreak
     | MkExprContinue
     | MkExprIs (Expression f t) (Pattern f t) (f t)
+    | MkExprLetPatternIn 
+        { patternBinding :: Pattern f t
+        , value :: Expression f t
+        , inExpr :: Expression f t
+        , returnType :: f t
+        }
     deriving (Eq, Ord, Generic)
 
 data Toplevel f t
@@ -220,6 +227,20 @@ pattern MkExprTuple a b =
         [a, b]
         Nothing
 
+pattern MkExprConditionIs ::
+    Expression Maybe t ->
+    Pattern Maybe t ->
+    Expression Maybe t ->
+    Expression Maybe t ->
+    Expression Maybe t
+pattern MkExprConditionIs cond pat thenB elseB =
+    MkExprCondition
+        { condition = MkExprIs cond pat Nothing
+        , thenBranch = thenB
+        , elseBranch = elseB
+        , returnType = Nothing
+        }
+
 type family HLIR (s :: Symbol) where
     HLIR "expression" = Expression Maybe Type
     HLIR "toplevel" = Toplevel Maybe Type
@@ -314,6 +335,15 @@ instance (ToText (f t), ToText t) => ToText (Expression f t) where
     toText MkExprContinue = "continue"
     toText (MkExprIs expr pat _) =
         T.concat ["is(", toText expr, ", ", toText pat, ")"]
+    toText (MkExprLetPatternIn pat value inExpr _) =
+        T.concat
+            [ "let "
+            , toText pat
+            , " = "
+            , toText value
+            , " in "
+            , toText inExpr
+            ]
 
 instance (ToText (f t), ToText t) => ToText (Pattern f t) where
     toText (MkPatternVariable ann) = toText ann
