@@ -1,3 +1,0 @@
-[submodule "dependencies/gc"]
-	path = dependencies/gc
-	url = https://github.com/mkirchner/gc
