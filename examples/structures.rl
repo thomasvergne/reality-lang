@@ -8,5 +8,7 @@ import std.error;
 fn main(args: List<String>) -> int {
     print(args.slice(1, args.length));
 
+    print(f"{args}, {args.slice(1, args.length)}");
+
     return 0;
 }
