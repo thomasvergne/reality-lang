@@ -559,7 +559,7 @@ parseExprFull = Lex.locateWith <$> P.makeExprParser parseExprTerm operators
                 void $ Lex.symbol "["
                 index <- snd <$> parseExprFull
                 ((_, end), _) <- Lex.symbol "]"
-                pure $ \(start, arr) -> ((fst start, end), HLIR.MkExprVarCall "get_index" [arr, index])
+                pure $ \(start, arr) -> ((fst start, end), HLIR.MkExprFunctionAccess "get_index" arr [] [index])
             ]
         ,
             [ P.Postfix . Lex.makeUnaryOp $ do
