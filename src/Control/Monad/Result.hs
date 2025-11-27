@@ -71,7 +71,7 @@ handle (Left (err, pos@(p1, _))) _ = liftIO $ do
                     <> toString (toText expected)
                     <> ", but got "
                     <> toString (toText got)
-                , Nothing
+                , Just "ensure the types are compatible, or check for missing type annotations"
                 , pos
                 )
                 ("Expected type " <> toString (toText expected))
