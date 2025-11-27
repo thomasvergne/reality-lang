@@ -8,7 +8,7 @@ fn identifier() -> Parser<String> {
     return satisfy(is_alpha).bind(
         |firstChar| {
             return satisfy(is_alphanumeric).many().map(
-                |restChars| {
+                |restChars: List<char>| {
                     let idStr = String.init(new firstChar);
                     let result = idStr;
                     let i = 0;
@@ -28,7 +28,7 @@ fn parse_string() -> Parser<String> {
     return character('"')
         .after(
             satisfy(|c| c != '"').many().map(
-                |chars| {
+                |chars: List<char>| {
                     let result = "";
                     let i = 0;
                     while i < chars.length {

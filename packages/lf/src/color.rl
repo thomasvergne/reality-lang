@@ -114,4 +114,23 @@ pub fn reset_code() -> String {
     return "\x1b[0m";
 }
 
+fn print_lf<A>(value: A) -> unit {
+    let str = value.show_prec(0);
+    print(bold_color(Yellow) + "[LF]" + reset_code() + ": " + str)
 
+    unit
+}
+
+fn print_error_lf<A>(value: A) -> unit {
+    let str = value.show_prec(0);
+    print(bold_color(Red) + "[LF]" + reset_code() + ": " + str)
+
+    unit
+}
+
+fn print_success_lf<A>(value: A) -> unit {
+    let str = value.show_prec(0);
+    print(bold_color(Green) + "[LF]" + reset_code() + ": " + str)
+
+    unit
+}
