@@ -114,8 +114,8 @@ fn whitespace() -> Parser<String> {
             let result = "";
             let i = 0;
             while i < chars.length {
-                let c = chars[i];
-                result = result + String.init(GC.allocate(c));
+                let c = chars.get_index(i);
+                result = result + String.from_char(c);
                 i = i + 1;
             };
             return result;

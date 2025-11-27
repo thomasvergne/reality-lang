@@ -26,7 +26,7 @@ impl fn (c: List<A>) get_index<A>(index: int) -> A {
         );
     };
 
-    get_index(c.data, index)
+    c.data.get_index(index)
 }
 
 impl fn (x: String) get_index(index: int) -> char {
@@ -40,7 +40,7 @@ impl fn (c: *A) get_index_mut<A>(index: int) -> *A {
 }
 
 impl fn (c: List<A>) get_index_mut<A>(index: int) -> *A {
-    get_index_mut(c.data, index)
+    c.data.get_index_mut(index)
 }
 
 mod List {
@@ -58,7 +58,7 @@ mod List {
             list->data = GC.realloc(list->data, list->capacity * sizeof(A));
         };
 
-        *get_index_mut(list->data, list->length) = value;
+        *list->data.get_index_mut(list->length) = value;
         list->length = list->length + 1;
 
         list

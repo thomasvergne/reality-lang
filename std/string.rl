@@ -3,9 +3,6 @@ type string = *char;
 extern fn ptr_add<A>(ptr: A, offset: int) -> A;
 extern fn fetch_ptr<A>(ptr: A, index: int) -> A;
 
-property get_index<Item, Container, Index>(container: Container, index: Index) -> Item;
-property get_index_mut<B, A>(container: A, index: int) -> *B;
-
 enum unit {
     unit
 }
@@ -149,7 +146,7 @@ mod String {
 
     fn from_char(c: char) -> String {
         let s = "0";
-        *get_index_mut(s.data, 0) = c;
+        *s.data.get_index_mut(0) = c;
 
         s
     }
