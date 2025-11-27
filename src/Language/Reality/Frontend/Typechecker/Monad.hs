@@ -24,7 +24,7 @@ data CheckerState = CheckerState
     , environment :: Map Text (HLIR.Scheme HLIR.Type)
     , typeAliases :: Map Text (HLIR.Scheme HLIR.Type)
     , structures :: Map Text (HLIR.Scheme (Map Text HLIR.Type))
-    , implementations :: Map (Text, HLIR.Type) (HLIR.Scheme HLIR.Type)
+    , implementations :: Map (Text, HLIR.Scheme HLIR.Type) (HLIR.Scheme HLIR.Type)
     , properties :: Map Text (HLIR.Scheme HLIR.Type)
     , returnType :: Maybe HLIR.Type
     , isInLoop :: Bool

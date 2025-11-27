@@ -265,7 +265,7 @@ checkToplevelSingular (HLIR.MkTopImplementation forType header params returnType
     modifyIORef' M.defaultCheckerState $ \s ->
         s
             { M.implementations =
-                Map.insert (header.name, aliasedForType) implScheme s.implementations
+                Map.insert (header.name, HLIR.Forall header.typeValue aliasedForType) implScheme s.implementations
             }
 
     -- Collecting old environment to restore it later
@@ -732,7 +732,6 @@ synthesizeE (HLIR.MkExprWhile cond body _ inExpr) = do
 synthesizeE (HLIR.MkExprFunctionAccess field thisExpr typeValues args) = do
     -- Synthesizing the type of the `this` expression
     (thisTy, thisExprTyped, cs1, bindings1) <- synthesizeE thisExpr
-    (argTys, typedArgs, cs2, bindings2) <- List.unzip4 <$> mapM synthesizeE args
 
     retType <- M.newType
 
@@ -742,18 +741,24 @@ synthesizeE (HLIR.MkExprFunctionAccess field thisExpr typeValues args) = do
 
     pos <- HLIR.peekPosition'
 
-    funcType <-
-        findImplementationMatching env typeValues field ((thisTy : argTys) HLIR.:->: retType) pos
+    (funcType, _) <-
+        findImplementationMatching env typeValues field thisTy pos
 
     -- Collecting all constraints
-    let cs = cs1 <> mconcat cs2
+    let cs = cs1
 
     case funcType of
         Just func@(HLIR.MkTyFun (_ : fParamTypes) fRetType) -> do
             if length fParamTypes /= length args
                 then M.throw (M.InvalidArgumentQuantity (length fParamTypes) (length args))
                 else do
-                    void $ func `M.isSubtypeOf` ((thisTy : argTys) HLIR.:->: retType)
+                    -- Checking each argument against the corresponding parameter type
+                    -- and collecting constraints from each argument.
+                    (typedArgs, cs2, bindings2) <- unzip3 <$> zipWithM checkE fParamTypes args
+
+                    let funcType' = HLIR.MkTyFun (thisTy : fParamTypes) fRetType
+
+                    void $ func `M.isSubtypeOf` funcType'
 
                     pure
                         ( fRetType
@@ -761,12 +766,14 @@ synthesizeE (HLIR.MkExprFunctionAccess field thisExpr typeValues args) = do
                             (HLIR.MkExprVariable (HLIR.MkAnnotation field (Identity func)) [])
                             (thisExprTyped : typedArgs)
                             (Identity fRetType)
-                        , cs <> [M.MkImplConstraint field func pos typeValues]
+                        , cs <> mconcat cs2 <> [M.MkImplConstraint field func pos typeValues]
                         , bindings1 <> mconcat bindings2
                         )
         Just ty -> M.throw (M.ExpectedFunction ty)
         Nothing -> do
-            let func = (thisTy : argTys) HLIR.:->: retType
+            (tys, typedArgs, cs2, bindings2) <- List.unzip4 <$> mapM synthesizeE args
+
+            let func = HLIR.MkTyFun (thisTy : tys) retType
 
             pure
                 ( retType
@@ -774,7 +781,7 @@ synthesizeE (HLIR.MkExprFunctionAccess field thisExpr typeValues args) = do
                     (HLIR.MkExprVariable (HLIR.MkAnnotation field (Identity func)) [])
                     (thisExprTyped : typedArgs)
                     (Identity retType)
-                , cs <> [M.MkImplConstraint field func pos typeValues]
+                , cs <> mconcat cs2 <> [M.MkImplConstraint field func pos typeValues]
                 , bindings1 <> mconcat bindings2
                 )
 synthesizeE (HLIR.MkExprReturn e) = do
@@ -967,6 +974,119 @@ checkE ::
     HLIR.Type ->
     HLIR.HLIR "expression" ->
     m (HLIR.TLIR "expression", M.Constraints, Map Text (HLIR.Scheme HLIR.Type))
+checkE (argTypes HLIR.:->: retType) (HLIR.MkExprLambda args retType' body) = do
+    -- Checking that the number of parameters matches
+    when (length argTypes /= length args) $
+        M.throw (M.InvalidArgumentQuantity (length argTypes) (length args))
+
+    -- Collecting old environment to restore it later
+    oldEnv <- readIORef M.defaultCheckerState
+
+    argsWithTypes <- zipWithM
+        ( \p ty -> case p.typeValue of
+            Just annotatedTy -> do
+                aliasedTy <- M.performAliasRemoval annotatedTy
+
+                void $ aliasedTy `M.isSubtypeOf` ty
+
+                pure p{HLIR.typeValue = Identity aliasedTy}
+            Nothing -> pure p{HLIR.typeValue = Identity ty}
+        )
+        args
+        argTypes
+
+    -- Adding parameters to the environment
+    modifyIORef' M.defaultCheckerState $ \s ->
+        s
+            { M.environment =
+                foldr
+                    ( \p (env :: Map Text (HLIR.Scheme HLIR.Type)) ->
+                        Map.insert p.name (HLIR.Forall [] p.typeValue.runIdentity) env
+                    )
+                    s.environment
+                    argsWithTypes
+            , M.returnType = Just retType
+            }
+
+    forM_ retType' $ \t ->
+        void $ t `M.isSubtypeOf` retType
+
+    -- Checking the body against the return type
+    (bodyExpr, cs, _) <- checkE retType body
+
+    -- Restoring the old environment
+    modifyIORef' M.defaultCheckerState $ \s ->
+        s
+            { M.environment = oldEnv.environment
+            , M.returnType = oldEnv.returnType
+            }
+
+    -- Building parameter annotations with resolved types
+    let paramAnnotations = zipWith (\p ty -> p{HLIR.typeValue = Identity ty}) args argTypes
+
+    pure
+        ( HLIR.MkExprLambda paramAnnotations (Identity retType) bodyExpr
+        , cs
+        , mempty
+        )
+checkE expected (HLIR.MkExprLocated p e) = do
+    HLIR.pushPosition p
+
+    (typedExpr, cs, bindings) <- checkE expected e
+
+    void HLIR.popPosition
+
+    pure (HLIR.MkExprLocated p typedExpr, cs, bindings)
+checkE expected (HLIR.MkExprFunctionAccess f var types args) = do
+    varType <- M.newType
+    argsTypes <- mapM (const M.newType) args
+    let funcType = (varType : argsTypes) HLIR.:->: expected
+
+    (typedExpr, cs, bindings) <- checkE varType var
+
+    pos <- HLIR.peekPosition'
+    impls <- Map.toList <$> (readIORef M.defaultCheckerState <&> M.implementations)
+    (funcType', _) <- findImplementationMatching impls types f varType pos
+
+    typ <- forM funcType' $ \ft -> do
+        void $ ft `M.isSubtypeOf` funcType
+
+        M.performAliasRemoval ft
+
+    case typ of
+        Just ((_ : argsTypes') HLIR.:->: _) -> do
+            when (length argsTypes' /= length args) $
+                M.throw (M.InvalidArgumentQuantity (length argsTypes') (length args))
+            
+            args' <- zipWithM checkE argsTypes' args
+            let (typedArgs, csArgs, bindingsArgs) = unzip3 args'
+
+            pure
+                ( HLIR.MkExprApplication 
+                    (HLIR.MkExprVariable (HLIR.MkAnnotation f (Identity funcType)) [])
+                    (typedExpr : typedArgs)
+                    (Identity expected)
+                , cs <> mconcat csArgs <> [M.MkImplConstraint f funcType pos types]
+                , bindings <> mconcat bindingsArgs
+                )
+        _ -> do
+            args' <- zipWithM checkE argsTypes args
+            let (typedArgs, csArgs, bindingsArgs) = unzip3 args'
+
+            let funcType'' = (varType : argsTypes) HLIR.:->: expected
+
+            pure
+                ( HLIR.MkExprApplication 
+                    (HLIR.MkExprVariable (HLIR.MkAnnotation f (Identity funcType'')) [])
+                    (typedExpr : typedArgs)
+                    (Identity expected)
+                , cs <> mconcat csArgs <> [M.MkImplConstraint f funcType pos types]
+                , bindings <> mconcat bindingsArgs
+                )
+checkE expected (HLIR.MkExprReturn expr) = do
+    (typedExpr, cs, bindings) <- checkE expected expr
+
+    pure (HLIR.MkExprReturn typedExpr, cs, bindings)
 checkE expected expr = do
     (inferredTy, typedExpr, cs, bindings) <- synthesizeE expr
 
@@ -1011,7 +1131,7 @@ solveConstraints constraints = do
     forM_ constraints $ \case
         M.MkImplConstraint name ty pos tys -> do
             mImplTy <- findImplementationMatching implementations tys name ty pos
-            case mImplTy of
+            case fst mImplTy of
                 Just implTy -> void $ implTy `M.isSubtypeOf` ty
                 Nothing -> pure () -- Ignoring unsolved constraints
         M.MkFieldConstraint structTy fieldName fieldTy pos -> do
@@ -1044,25 +1164,27 @@ solveConstraints constraints = do
 
 findImplementationMatching ::
     (MonadIO m, M.MonadError M.Error m) =>
-    [((Text, HLIR.Type), HLIR.Scheme HLIR.Type)] ->
+    [((Text, HLIR.Scheme HLIR.Type), HLIR.Scheme HLIR.Type)] ->
     [HLIR.Type] ->
     Text ->
     HLIR.Type ->
     HLIR.Position ->
-    m (Maybe HLIR.Type)
-findImplementationMatching [] _ _ _ _ = pure Nothing
-findImplementationMatching (((implName, _), scheme) : xs) tys name ty pos
+    m (Maybe HLIR.Type, M.Substitution)
+findImplementationMatching [] _ _ _ _ = pure (Nothing, mempty)
+findImplementationMatching (((implName, implTy), scheme) : xs) tys name ty pos
     | implName == name = do
-        -- We instantiate the implementation scheme to get a concrete type
-        -- and remove aliases from it.
-        implTy <- M.instantiateWithSub scheme tys >>= M.performAliasRemoval
+        implTy' <- M.instantiateWithSub implTy tys >>= M.performAliasRemoval
 
         -- We check if the implementation type is a subtype of the required type
         -- If it is, we return it as a matching implementation.
-        result <- runExceptT $ M.applySubtypeRelation False ty implTy
-
+        result <- runExceptT $ M.applySubtypeRelation False ty implTy'
+        
         case result of
-            Right _ -> pure (Just implTy)
+            Right s -> do
+                instantiatedTy <- M.instantiateWithSub scheme tys >>= M.performAliasRemoval
+                finalType <- M.applySubstitution s instantiatedTy
+
+                pure (Just finalType, s)
             Left _ -> findImplementationMatching xs tys name ty pos
     | otherwise = findImplementationMatching xs tys name ty pos
 
