@@ -35,7 +35,7 @@ print(f"Reality compiler installed to bin/{executable_out}")
 
 # Installing LF project manager
 
-cmd = f"bin/rlc{ext} packages/lf/main.rl -p std=$REALITY_DIR/std"
+cmd = f"bin/rlc{ext} packages/lf/main.rl -p std=$REALITY_DIR/std -p core=$REALITY_DIR/packages/lf"
 
 system(cmd)
 
