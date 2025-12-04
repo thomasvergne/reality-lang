@@ -1,5 +1,6 @@
 /dist-newstyle
 
+build
 *.out
 *.exe
 *.dSYM
