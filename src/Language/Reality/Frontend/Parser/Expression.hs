@@ -499,13 +499,13 @@ parseExprTerm =
             [ parseExprTuple
             , parseExprBlock
             , parseExprLambda
-            , parseExprNew
             , parseExprSizeOf
             , parseExprTernary
             , P.try parseExprStructCreation
             , parseExprLetIn
             , parseExprLiteral
-            , parseExprVariable
+            , P.try parseExprVariable
+            , parseExprNew
             , parseExprList
             ]
 
