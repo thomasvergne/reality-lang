@@ -1,6 +1,7 @@
 import string;
 import option;
 import std.internal.gc;
+import tuple;
 
 struct List<A> {
     data: *A,
@@ -123,6 +124,32 @@ mod List {
         *init_list
     }
 
+    impl fn (list: *List<A>) extend_mut<A>(other: List<A>) -> unit {
+        let j = 0;
+
+        while j < other.length {
+            let value = other[j];
+            list.push(value);
+            j = j + 1;
+        };
+
+        unit
+    }
+
+    impl fn (l: List<A>) clone<A>() -> List<A> {
+        let init_list = &List.init<A>();
+
+        let i = 0;
+
+        while i < l.length {
+            let value = l[i];
+            init_list.push(value.clone());
+            i = i + 1;
+        };
+
+        *init_list
+    }
+
     fn from_pointer<A>(ptr: *A, count: int) -> *List<A> {
         let list = new List.init<A>();
 
@@ -219,6 +246,132 @@ mod List {
 
         Some(value)
     }
+
+    impl fn (list: List<A>) filter_map<A, B>(f: fn(A) -> Option<B>) -> List<B> {
+        let init_list = new List.init<B>();
+
+        let i = 0;
+
+        while i < list.length {
+            let value = list[i];
+            let mapped = f(value);
+            if mapped is Some(let v) {
+                init_list.push(v);
+            };
+            i = i + 1;
+        };
+
+        *init_list
+    }
+
+    impl fn (list: List<A>) filter<A>(f: fn(A) -> bool) -> List<A> {
+        let init_list = new List.init<A>();
+
+        let i = 0;
+
+        while i < list.length {
+            let value = list[i];
+            if f(value) {
+                init_list.push(value);
+            };
+            i = i + 1;
+        };
+
+        *init_list
+    }
+
+    impl fn (c: String) starts_with(prefix: String) -> bool {
+        if prefix.length > c.length {
+            return false;
+        };
+
+        let i = 0;
+        while i < prefix.length {
+            if c[i] != prefix[i] {
+                return false;
+            };
+            i = i + 1;
+        };
+
+        return true;
+    }
+
+    impl fn (c: List<A>) take_while<A>(predicate: fn(A) -> bool) -> List<A> {
+        let result = new List.init<A>();
+
+        let i = 0;
+        while i < c.length {
+            let value = c[i];
+            if predicate(value) {
+                result.push(value);
+            } else {
+                break;
+            };
+            i = i + 1;
+        };
+
+        return *result;
+    }
+
+    impl fn (c: List<A>) drop_while<A>(predicate: fn(A) -> bool) -> List<A> {
+        let result = new List.init<A>();
+
+        let i = 0;
+        while i < c.length {
+            let value = c[i];
+            if not(predicate(value)) {
+                break;
+            };
+            i = i + 1;
+        };
+
+        while i < c.length {
+            let value = c[i];
+            result.push(value);
+            i = i + 1;
+        };
+
+        return *result;
+    }
+
+    impl fn (c: String) split(sep: char) -> List<String> {
+        let result = new List.init<String>();
+
+        let currentPart = "";
+        let i = 0;
+        while i < c.length {
+            let c_char = c[i];
+            if c_char == sep {
+                result.push(currentPart);
+                currentPart = "";
+            } else {
+                currentPart = currentPart + String.init(GC.allocate(c_char));
+            };
+            i = i + 1;
+        };
+
+        result.push(currentPart);
+
+        return *result;
+    }
+
+    impl fn (c: List<A>) partition<A>(predicate: fn(A) -> bool) -> Tuple<List<A>, List<A>> {
+        let trueList = &List.init<A>();
+        let falseList = &List.init<A>();
+
+        let i = 0;
+        while i < c.length {
+            let value = c[i];
+            if predicate(value) {
+                trueList.push(value);
+            } else {
+                falseList.push(value);
+            };
+            i = i + 1;
+        };
+
+        return Pair(*trueList, *falseList);
+    }
 }
 
 impl fn (x: String) slice(start: int, end: int) -> String {
@@ -233,6 +386,21 @@ impl fn (x: String) slice(start: int, end: int) -> String {
     };
 
     result
+}
+
+impl fn (x: List<String>) join(separator: String) -> String {
+    if x.length == 0 {
+        return "";
+    };
+
+    let result = x[0];
+    let i = 1;
+    while i < x.length {
+        result = result + separator + x[i];
+        i = i + 1;
+    };
+
+    return result;
 }
 
 impl fn (x: char) show_prec(_: int) -> String {

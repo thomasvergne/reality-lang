@@ -30,7 +30,7 @@ mod Option {
         }
     }
 
-    fn get_or_else<A>(c: Option<A>, default: A) -> A {
+    impl fn (c: Option<A>) get_or_else<A>(default: A) -> A {
         if c is Some(let v) {
             v
         } else {
@@ -38,7 +38,7 @@ mod Option {
         }
     }
 
-    fn is_some<A>(c: Option<A>) -> bool {
+    impl fn (c: Option<A>) is_some<A>() -> bool {
         if c is Some(let x) {
             true
         } else {
@@ -46,7 +46,7 @@ mod Option {
         }
     }
 
-    fn is_none<A>(c: Option<A>) -> bool {
+    impl fn (c: Option<A>) is_none<A>() -> bool {
         if c is None {
             true
         } else {

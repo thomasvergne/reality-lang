@@ -1,105 +1,14 @@
-type string = *char;
+import std.internal.gc;
 
 extern fn ptr_add<A>(ptr: A, offset: int) -> A;
 extern fn fetch_ptr<A>(ptr: A, index: int) -> A;
 
-enum unit {
-    unit
+impl fn (x: string) length() -> int {
+    strlen(x)
 }
 
-fn and(a: bool, b: bool) -> bool {
-    if a {
-        b
-    } else {
-        false
-    }
-}
-
-
-fn or(a: bool, b: bool) -> bool {
-    if a {
-        true
-    } else {
-        b
-    }
-}
-
-fn not(a: bool) -> bool {
-    if a {
-        false
-    } else {
-        true
-    }
-}
-
-property add<A>(x: A, y: A) -> A;
-property sub<A>(x: A, y: A) -> A;
-property mul<A>(x: A, y: A) -> A;
-property div<A>(x: A, y: A) -> A;
-property modulo<A>(x: A, y: A) -> A;
-property greater<A>(x: A, y: A) -> bool;
-property lesser<A>(x: A, y: A) -> bool;
-
-property equals<A>(x: A, y: A) -> bool;
-
-extern fn number_to_string(n: int) -> string;
-extern fn pointer_to_string<A>(p: A) -> string;
-extern fn add_number(a: int, b: int) -> int;
-extern fn sub_number(a: int, b: int) -> int;
-extern fn mul_number(a: int, b: int) -> int;
-extern fn div_number(a: int, b: int) -> int;
-extern fn equals_number(a: int, b: int) -> bool;
-extern fn greater_number(a: int, b: int) -> bool;
-extern fn less_number(a: int, b: int) -> bool;
-extern fn mod_number(a: int, b: int) -> int;
-extern fn string_eq(a: string, b: string) -> bool;
-
-fn int_to_string(n: int) -> string {
-    number_to_string(n)
-}
-
-impl fn (x: int) add(y: int) -> int {
-    add_number(x, y)
-}
-
-impl fn (x: int) sub(y: int) -> int {
-    sub_number(x, y)
-}
-
-impl fn (x: int) mul(y: int) -> int {
-    mul_number(x, y)
-}
-
-impl fn (x: int) div(y: int) -> int {
-    div_number(x, y)
-}
-
-impl fn (x: int) equals(y: int) -> bool {
-    equals_number(x, y)
-}
-
-impl fn (x: int) greater(y: int) -> bool {
-    greater_number(x, y)
-}
-
-impl fn (x: int) lesser(y: int) -> bool {
-    less_number(x, y)
-}
-
-impl fn (x: int) modulo(y: int) -> int {
-    mod_number(x, y)
-}
-
-fn great_equals<A>(x: A, y: A) -> bool {
-    or(greater(x, y), equals(x, y))
-}
-
-fn less_equals<A>(x: A, y: A) -> bool {
-    or(lesser(x, y), equals(x, y))
-}
-
-fn not_equals<A>(x: A, y: A) -> bool {
-    not(equals(x, y))
+impl fn (x: string) equals(y: string) -> bool {
+    string_eq(x, y)
 }
 
 struct String {
@@ -107,12 +16,6 @@ struct String {
     length: int
 };
 
-extern fn malloc_string(s: string) -> string;
-extern fn strlen(s: string) -> int;
-extern fn strcat(x: string, y: string) -> string;
-extern fn concat_strings(a: string, b: string) -> string;
-extern fn char_eq(a: char, b: char) -> bool;
-extern fn string_to_int(s: string) -> int;
 
 impl fn (x: string) get_index(index: int) -> char {
     let ptr = ptr_add(x, index * sizeof(char));
@@ -160,8 +63,6 @@ impl fn (x: String) add(y: String) -> String {
         length: strlen(result)
     }
 }
-
-extern fn printf(s: string) -> int;
 
 property show_prec<A>(x: A, i: int) -> String;
 
@@ -234,12 +135,24 @@ impl fn (x: float) into_float() -> float {
 extern fn int_to_float(x: int) -> float;
 extern fn float_to_int(x: float) -> int;
 
+extern fn string_to_float(str: string) -> float;
+extern fn string_to_int(str: string) -> int;
+
+
 impl fn (x: int) into_float() -> float {
     int_to_float(x)
 }
 
 impl fn (x: float) into_int() -> int {
     float_to_int(x)
+}
+
+impl fn (x: String) into_float() -> float {
+    string_to_float(x.data)
+}
+
+impl fn (x: String) into_int() -> int {
+    string_to_int(x.data)
 }
 
 fn float<A>(x: A) -> float {
@@ -293,4 +206,129 @@ impl fn (x: float) show_prec(i: int) -> String {
 
 impl fn (x: float) negate() -> float {
     0.0.sub(x)
+}
+
+mod GC {
+    fn red(message: String) -> String {
+        "\x1b[31m" + message + "\x1b[0m"
+    }
+
+    pub fn panic<A>(message: A) -> never {
+        let msg_prefix = GC.red("[Panic]: ");
+        let full_message = msg_prefix + message.show();
+        panic_ext(full_message.data)
+
+        undefined()
+    }
+}
+
+impl fn (x: String) repeat(n: int) -> String {
+    let result = "";
+    let i = 0;
+
+    while i < n {
+        result = result + x;
+        i = i + 1;
+    };
+
+    result
+}
+
+impl fn (x: String) trim_left() -> String {
+    let start = 0;
+    while start < x.length && x.get_index(start) == ' ' {
+        start = start + 1;
+    };
+
+    let result = "";
+    let i = start;
+    while i < x.length {
+        result = result + String.from_char(x.get_index(i));
+        i = i + 1;
+    };
+
+    return result;
+}
+
+impl fn (x: String) trim_right() -> String {
+    let end = x.length - 1;
+    while end >= 0 && x.get_index(end) == ' ' {
+        end = end - 1;
+    };
+
+    let result = "";
+    let i = 0;
+    while i <= end {
+        result = result + String.from_char(x.get_index(i));
+        i = i + 1;
+    };
+
+    return result;
+}
+
+impl fn (x: String) trim() -> String {
+    return x.trim_left().trim_right();
+}
+
+impl fn (x: String) clone() -> String {
+    let result = "";
+    let i = 0;
+    while i < x.length {
+        result = result + String.from_char(x.get_index(i));
+        i = i + 1;
+    };
+
+    return result;
+}
+
+impl fn (x: String) ends_with(suffix: String) -> bool {
+    if suffix.length > x.length {
+        return false;
+    };
+
+    let start = x.length - suffix.length;
+    let i = 0;
+    while i < suffix.length {
+        if x.get_index(start + i) != suffix.get_index(i) {
+            return false;
+        };
+
+        i = i + 1;
+    };
+
+    return true;
+}
+
+impl fn (x: String) starts_with(prefix: String) -> bool {
+    if prefix.length > x.length {
+        return false;
+    };
+
+    let i = 0;
+    while i < prefix.length {
+        if x.get_index(i) != prefix.get_index(i) {
+            return false;
+        };
+
+        i = i + 1;
+    };
+
+    return true;
+}
+
+impl fn (x: String) replace(old: String, new_str: String) -> String {
+    let result = "";
+    let i = 0;
+
+    while i < x.length {
+        if x.slice(i, i + old.length).equals(old) {
+            result = result + new_str;
+            i = i + old.length;
+        } else {
+            result = result + String.from_char(x.get_index(i));
+            i = i + 1;
+        };
+    };
+
+    return result;
 }

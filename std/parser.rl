@@ -263,3 +263,53 @@ fn string(s: String) -> Parser<String> {
         return Success(s, rest);
     };
 }
+
+impl fn (p: Parser<A>) skip<A>() -> Parser<unit> {
+    return p.map(|_| unit);
+}
+
+mod Parser {
+    pub fn take_while(predicate: fn(char) -> bool) -> Parser<String> {
+        return |input| {
+            let result = "";
+            let i = 0;
+
+            while i < input.length {
+                let c = input[i];
+                if predicate(c) {
+                    result = result + String.from_char(c);
+                    i = i + 1;
+                } else {
+                    break;
+                };
+            };
+
+            let rest = input.slice(i, input.length);
+            return Success(result, rest);
+        };
+    }
+
+    pub fn take_while1(predicate: fn(char) -> bool) -> Parser<String> {
+        return |input| {
+            let result = "";
+            let i = 0;
+
+            while i < input.length {
+                let c = input[i];
+                if predicate(c) {
+                    result = result + String.from_char(c);
+                    i = i + 1;
+                } else {
+                    break;
+                };
+            };
+
+            if result.length == 0 {
+                return Failure("Expected at least one character", input);
+            };
+
+            let rest = input.slice(i, input.length);
+            return Success(result, rest);
+        };
+    }
+}

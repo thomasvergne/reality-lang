@@ -56,3 +56,11 @@ impl fn (t: Tuple<A, B>) map<A, B, C, D>(f: fn(A) -> C, g: fn(B) -> D) -> Tuple<
         GC.panic("Invalid tuple in map");
     }
 }
+
+impl fn (t: Tuple<A, B>) clone<A, B>() -> Tuple<A, B> {
+    if t is Pair(let a, let b) {
+        return Pair(a.clone(), b.clone());
+    } else {
+        GC.panic("Invalid tuple in clone");
+    }
+}

@@ -1,3 +1,5 @@
+import std.string;
+
 pub enum Error<Success, Failure> {
     Ok(Success),
     Err(Failure)
