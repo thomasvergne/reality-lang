@@ -1,4 +1,4 @@
-import core.src.color;
+import core.source.color;
 
 fn help_command(cwd: String, args: List<CLI>) -> unit {
     print(color(Green) + "LiFe Project Manager" + reset_code());

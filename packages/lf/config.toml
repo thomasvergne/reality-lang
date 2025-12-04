@@ -10,3 +10,4 @@ core = "."
 
 [features.libc]
 libraries = ["libc/System.c"]
+headers = ["<string.h>", "<stdio.h>"]

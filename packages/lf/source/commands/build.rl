@@ -1,8 +1,8 @@
-import core.src.configuration;
-import core.src.cli;
-import core.src.color;
-import core.src.parser;
-import core.src.commands;
+import core.source.configuration;
+import core.source.cli;
+import core.source.color;
+import core.source.parser;
+import core.source.commands;
 
 enum Mode {
     Dev,

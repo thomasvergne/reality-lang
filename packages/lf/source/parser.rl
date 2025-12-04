@@ -97,7 +97,7 @@ mod Configuration {
             return Err("Configuration file not found: " + filename);
         };
 
-        let file_content = read_file(filename);
+        let file_content = File.open(filename);
 
         let parse_result = parse_configuration().some().run(file_content);
 

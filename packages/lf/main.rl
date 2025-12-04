@@ -2,14 +2,14 @@ import std.string;
 import std.parser;
 import std.io;
 import std.iterator;
-import src.parser;
-import src.configuration;
-import src.cli;
-import src.color;
+import source.parser;
+import source.configuration;
+import source.cli;
+import source.color;
 
 // Commands
-import src.commands.build;
-import src.commands.help;
+import source.commands.build;
+import source.commands.help;
 
 fn get_cwd() -> String {
     let cwd_str = get_current_working_directory();
