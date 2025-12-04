@@ -11,6 +11,7 @@ import Language.Reality.Syntax.HLIR qualified as HLIR
 import qualified Data.List as List
 import qualified Data.Foldable as List
 import qualified Data.Set as Set
+import qualified GHC.IO as IO
 
 withTypeVars ::
     (MonadIO m) =>
@@ -43,11 +44,92 @@ runTypechecker ::
 runTypechecker toplevels = do
     M.resetState
 
-    mapM checkToplevelSingular toplevels
+    allFunctionSignatures <- getAllFunctionSignatures toplevels
 
+    modifyIORef' M.defaultCheckerState $ \s ->
+        s{M.environment = allFunctionSignatures `Map.union` s.environment}
+
+    xs <- mapM checkToplevelSingular toplevels
+
+    isThereMain <- liftIO $ readIORef noMain
+    case isThereMain of
+        Just (fnName, fnType@(_ HLIR.:->: ret)) -> do
+            let entryCall = HLIR.MkExprApplication
+                            ( HLIR.MkExprVariable
+                                (HLIR.MkAnnotation fnName (Identity fnType))
+                                []
+                            )
+                            []
+                            (Identity ret)
+
+            let body = HLIR.MkExprLetIn 
+                        (HLIR.MkAnnotation "exit_code" (Identity HLIR.MkTyInt))
+                        entryCall
+                        (HLIR.MkExprLiteral (HLIR.MkLitInt 0))
+                        (Identity HLIR.MkTyInt)
+
+            let mainFun = HLIR.MkTopFunctionDeclaration 
+                    (HLIR.MkAnnotation "main" []) 
+                    [ HLIR.MkAnnotation "args" (HLIR.MkTyList (HLIR.MkTyId "String")) ]
+                    HLIR.MkTyInt
+                    body
+                    
+            pure (xs ++ [mainFun])
+
+        _ -> pure xs
 isArgsAnnotation :: [HLIR.Annotation HLIR.Type] -> Bool
 isArgsAnnotation [x] | x.name == "args" && x.typeValue == HLIR.MkTyList (HLIR.MkTyId "String") = True
 isArgsAnnotation _ = False
+
+getAllFunctionSignatures
+    :: (MonadIO m, M.MonadError M.Error m) =>
+    [HLIR.HLIR "toplevel"] ->
+    m (Map Text (HLIR.Scheme HLIR.Type))
+getAllFunctionSignatures toplevels = do
+    let extractFunctionSignature :: HLIR.HLIR "toplevel" -> Maybe (Text, HLIR.Scheme HLIR.Type)
+        extractFunctionSignature (HLIR.MkTopFunctionDeclaration ann params ret _) = Just
+            ( ann.name
+            , HLIR.Forall ann.typeValue (map (.typeValue) params HLIR.:->: ret)
+            )
+        extractFunctionSignature (HLIR.MkTopLocated _ n) = extractFunctionSignature n
+        extractFunctionSignature (HLIR.MkTopPublic n) = extractFunctionSignature n
+        extractFunctionSignature (HLIR.MkTopConstantDeclaration ann _) = Just
+            ( ann.name
+            , HLIR.Forall [] ann.typeValue
+            )
+        extractFunctionSignature _ = Nothing
+
+    let functionSignatures = mapMaybe extractFunctionSignature toplevels
+
+    pure $ Map.fromList functionSignatures
+
+getAnnotationName :: HLIR.HLIR "expression" -> Maybe Text
+getAnnotationName (HLIR.MkExprVariable ann _) = Just ann.name
+getAnnotationName (HLIR.MkExprLocated _ e) = getAnnotationName e
+getAnnotationName _ = Nothing
+
+getAnnotations :: HLIR.HLIR "toplevel" -> ([Text], HLIR.HLIR "toplevel", [HLIR.HLIR "expression"])
+getAnnotations (HLIR.MkTopAnnotation args node) = 
+    let (anns, n, exprs) = getAnnotations node
+        annNames = mapMaybe getAnnotationName args
+    in (annNames ++ anns, n, exprs ++ args)
+getAnnotations (HLIR.MkTopLocated p n) = 
+    let (anns, n', exprs) = getAnnotations n
+    in (anns, HLIR.MkTopLocated p n', exprs)
+getAnnotations (HLIR.MkTopPublic n) = 
+    let (anns, n', exprs) = getAnnotations n
+    in (anns, HLIR.MkTopPublic n', exprs)
+getAnnotations n = ([], n, [])
+
+noMain :: IORef (Maybe (Text, HLIR.Type))
+noMain = IO.unsafePerformIO $ newIORef Nothing
+{-# NOINLINE noMain #-}
+
+getFunctionNode :: HLIR.HLIR "toplevel" -> Maybe (HLIR.HLIR "toplevel")
+getFunctionNode n@(HLIR.MkTopFunctionDeclaration {}) = Just n
+getFunctionNode (HLIR.MkTopLocated _ n) = getFunctionNode n
+getFunctionNode (HLIR.MkTopPublic n) = getFunctionNode n
+getFunctionNode _ = Nothing
 
 -- | Typecheck a singular HLIR toplevel node.
 -- | This function takes a toplevel node, and returns a toplevel node with types
@@ -58,6 +140,22 @@ checkToplevelSingular ::
     (MonadIO m, M.MonadError M.Error m) =>
     HLIR.HLIR "toplevel" ->
     m (HLIR.TLIR "toplevel")
+checkToplevelSingular e 
+    | (anns, node, eAnns) <- getAnnotations e, not (null anns),
+      Just (HLIR.MkTopFunctionDeclaration ann args ret _) <- getFunctionNode node 
+    = do
+        typedNode <- checkToplevelSingular node
+
+        eAnns' <- mapM (\expr -> do
+            (_, typedExpr, _, _) <- synthesizeE expr
+            pure typedExpr) eAnns
+        
+        if "main_entry" `elem` anns then do
+            let funcType = map (.typeValue) args HLIR.:->: ret
+            liftIO $ writeIORef noMain (Just (ann.name, funcType))
+            pure (HLIR.MkTopAnnotation eAnns' typedNode)
+        else
+            pure (HLIR.MkTopAnnotation eAnns' typedNode)
 checkToplevelSingular (HLIR.MkTopConstantDeclaration ann expr) = do
     -- Removing aliases from the expected type
     expectedType <- M.performAliasRemoval ann.typeValue
