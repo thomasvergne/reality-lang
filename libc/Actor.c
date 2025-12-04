@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <stdbool.h>
+#include <string.h>
 
 void undefined() {
     return;
@@ -57,10 +59,35 @@ char* read_file_ext(const char* path) {
     return buffer;
 }
 
-int string_to_int(char* str) {
-    return atoi(str);
-}
-
 void exit_program(int code) {
     exit(code);
+}
+
+char* get_current_working_directory() {
+  size_t size = 1024;
+  char* buffer = (char*)GC_MALLOC(size * sizeof(char));
+  if (getcwd(buffer, size) != NULL) {
+    return buffer;
+  } else {
+    GC_FREE(buffer);
+    return NULL;
+  }
+}
+
+bool file_exists(const char* path) { return access(path, F_OK) != -1; }
+
+int execute_command(const char* command) { return system(command); }
+
+bool folder_exists(const char* path) { return access(path, F_OK) != -1; }
+
+char* get_env(const char* var) {
+  char* value = getenv(var);
+  if (value != NULL) {
+    size_t len = strlen(value);
+    char* result = (char*)GC_MALLOC((len + 1) * sizeof(char));
+    strcpy(result, value);
+    return result;
+  } else {
+    return "";
+  }
 }

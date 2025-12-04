@@ -214,3 +214,15 @@ char* float_to_string(float f) {
     }
     return result;
 }
+
+float string_to_float(char* str) {
+    return strtof(str, NULL);
+}
+
+int string_to_int(char* str) {
+    return atoi(str);
+}
+
+int string_to_hex(char* str) {
+    return (int)strtol(str, NULL, 16);
+}
