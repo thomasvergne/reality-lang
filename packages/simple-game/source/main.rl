@@ -51,7 +51,7 @@ fn display_score(score: int) -> Ray.Text.Text {
         .content(score_str)
         .position(0, 0)
         .font_size(40)
-        .color(0xFFFFFFFF);
+        .color(Ray.from_hex(0xFFFFFFFF));
 
     return text;
 }
