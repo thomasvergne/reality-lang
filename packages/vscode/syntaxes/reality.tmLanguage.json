@@ -233,7 +233,7 @@
             "match": "\\b(true|false)\\b"
         },
         "characters": {
-            "name": "constant.character.reality",
+            "name": "string.quoted.single.reality",
             "match": "'.'"
         },
         "comments": {
