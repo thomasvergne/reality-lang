@@ -33,11 +33,35 @@ runSpecializationResolver toplevels = do
     -- This ensures that each run starts with a clean state.
     writeIORef defaultSpecializer emptySpecializer
 
+    allFunctionSignatures <- getAllFunctionSignatures toplevels
+
+    modifyIORef' defaultSpecializer $ \s ->
+        s{variables = allFunctionSignatures `Map.union` s.variables}
+
     resolved <- forM toplevels $ \n -> do
         (resolvedNode, newDefs) <- resolveSpecializationSingular n
         pure (newDefs ++ maybeToList resolvedNode)
     
     pure (concat resolved)
+
+-- | Get all function signatures
+getAllFunctionSignatures ::
+    (MonadIO m) =>
+    [HLIR.TLIR "toplevel"] ->
+    m (Map Text (HLIR.Scheme HLIR.Type, Maybe (HLIR.TLIR "toplevel")))
+getAllFunctionSignatures (HLIR.MkTopFunctionDeclaration ann params ret body : xs) = do
+    rest <- getAllFunctionSignatures xs
+    let paramTypes = map (.typeValue) params
+        funcType = paramTypes HLIR.:->: ret
+        scheme = HLIR.Forall ann.typeValue funcType
+    pure $ Map.insert ann.name (scheme, Just (HLIR.MkTopFunctionDeclaration ann params ret body)) rest
+getAllFunctionSignatures (HLIR.MkTopConstantDeclaration ann expr : xs) = do
+    rest <- getAllFunctionSignatures xs
+    let scheme = HLIR.Forall [] ann.typeValue
+    pure $ Map.insert ann.name (scheme, Just (HLIR.MkTopConstantDeclaration ann expr)) rest
+getAllFunctionSignatures (HLIR.MkTopLocated _ n : xs) = getAllFunctionSignatures (n : xs)
+getAllFunctionSignatures (_ : xs) = getAllFunctionSignatures xs
+getAllFunctionSignatures [] = pure Map.empty
 
 -- | Resolve specialization in singular toplevel nodes.
 -- | This function takes a toplevel node, and returns a toplevel node with
@@ -71,7 +95,17 @@ resolveSpecializationSingular (HLIR.MkTopExternLet ann) = do
     pure (Just $ HLIR.MkTopExternLet ann{HLIR.typeValue = specTy}, newDefs)
 resolveSpecializationSingular (HLIR.MkTopConstantDeclaration ann expr) = do
     (typedExpr, newDefs, _) <- resolveSpecializationInExpr expr
-    pure (Just $ HLIR.MkTopConstantDeclaration ann typedExpr, newDefs)
+
+    (specTy, newDefs2) <- resolveSpecializationInType 0 ann.typeValue
+
+    let allNewDefs = newDefs ++ newDefs2
+
+    let ann' = ann{HLIR.typeValue = specTy}
+
+    modifyIORef' defaultSpecializer $ \s ->
+        s{rememberedLocals = Set.insert ann.name s.rememberedLocals}
+
+    pure (Just $ HLIR.MkTopConstantDeclaration ann' typedExpr, allNewDefs)
 resolveSpecializationSingular node@(HLIR.MkTopFunctionDeclaration ann params ret body)
     -- If no generics are found, we can directly resolve the function body
     -- and return the typed function declaration.
@@ -100,7 +134,7 @@ resolveSpecializationSingular node@(HLIR.MkTopFunctionDeclaration ann params ret
                         , variables =
                             Map.insert
                                 ann.name
-                                (HLIR.Forall [] (map (.typeValue) params HLIR.:->: ret), node)
+                                (HLIR.Forall [] (map (.typeValue) params HLIR.:->: ret), Just node)
                                 s.variables
                         }
 
@@ -122,7 +156,7 @@ resolveSpecializationSingular node@(HLIR.MkTopFunctionDeclaration ann params ret
         let scheme = HLIR.Forall ann.typeValue funcType
 
         modifyIORef' defaultSpecializer $ \s ->
-            s{variables = Map.insert ann.name (scheme, node) s.variables}
+            s{variables = Map.insert ann.name (scheme, Just node) s.variables}
 
         pure (Nothing, [])
 resolveSpecializationSingular (HLIR.MkTopPublic n) = do
@@ -141,7 +175,7 @@ resolveSpecializationSingular (HLIR.MkTopImplementation forType header parameter
             { implementations =
                 Map.insert
                     (header.name, scheme)
-                    (HLIR.MkTopFunctionDeclaration header newParams returnType body)
+                    (Just $ HLIR.MkTopFunctionDeclaration header newParams returnType body)
                     s.implementations
             }
 
@@ -260,7 +294,7 @@ resolveSpecializationSingular n@(HLIR.MkTopEnumeration ann constructors)
                     )
                     constructors
 
-        let typedSchemes = Map.map (\t -> (HLIR.Forall ann.typeValue t, n)) typedConstructors
+        let typedSchemes = Map.map (\t -> (HLIR.Forall ann.typeValue t, Just n)) typedConstructors
 
         modifyIORef' defaultSpecializer $ \s ->
             s
@@ -685,7 +719,7 @@ resolveSpecializationForIdentifier (HLIR.MkAnnotation name (Identity ty)) = do
     -- Fetching the variable scheme if it exists, and also the toplevel
     -- declaration associated with it.
     case Map.lookup name (variables specState) of
-        Just (scheme@(HLIR.Forall qvars _), toplevel) -> do
+        Just (scheme@(HLIR.Forall qvars _), Just toplevel) -> do
             -- Instantiating the scheme to get a concrete type and a substitution
             -- that maps the quantified variables to concrete types.
             (schemeType, subst) <- M.instantiateAndSub scheme
@@ -819,7 +853,7 @@ resolveSpecializationForIdentifier (HLIR.MkAnnotation name (Identity ty)) = do
 
                             pure (HLIR.MkAnnotation newVarName (Identity schemeType), ns, True)
                 _ -> M.throw (M.VariableNotFound name)
-        Nothing -> resolveSpecializationForImplementation name ty
+        _ -> resolveSpecializationForImplementation name ty
 
 resolveSpecializationForImplementation ::
     (MonadIO m, M.MonadError M.Error m) =>
@@ -866,7 +900,7 @@ resolveSpecializationForImplementation name ty = do
             -- Checking if the node is a function declaration, otherwise there must
             -- be an error somewhere else. We just handle it gracefully here.
             case node of
-                HLIR.MkTopFunctionDeclaration
+                Just HLIR.MkTopFunctionDeclaration
                     { parameters
                     , returnType
                     , body
@@ -931,6 +965,9 @@ resolveSpecializationForImplementation name ty = do
                                 let funcType = map (.typeValue) specParameters HLIR.:->: specReturnType
 
                                 pure (HLIR.MkAnnotation newName (Identity funcType), allNewDefs, False)
+                Nothing -> do
+                    (newTy, ns) <- resolveSpecializationInType 0 =<< M.applySubstitution implSubst ty
+                    pure (HLIR.MkAnnotation newName (Identity newTy), ns, False)
                 _ -> M.throw (M.ImplementationNotFound name ty)
         Nothing -> do
             -- If no implementation or property was found, default to
@@ -957,10 +994,10 @@ resolveSpecializationForImplementation name ty = do
     -- is selected based on the provided type.
     findImplementationMatching ::
         (MonadIO m, M.MonadError M.Error m) =>
-        [((Text, HLIR.Scheme HLIR.Type), HLIR.TLIR "toplevel")] ->
+        [((Text, HLIR.Scheme HLIR.Type), Maybe (HLIR.TLIR "toplevel"))] ->
         Text ->
         HLIR.Type ->
-        m (Maybe (HLIR.TLIR "toplevel", M.Substitution, HLIR.Scheme HLIR.Type))
+        m (Maybe (Maybe (HLIR.TLIR "toplevel"), M.Substitution, HLIR.Scheme HLIR.Type))
     findImplementationMatching [] _ _ = pure Nothing
     findImplementationMatching (((implName, implScheme), toplevel) : xs) varName ty'
         | implName == varName = do
@@ -1240,9 +1277,9 @@ maybeResolveEnumeration depth name args = do
 
 -- | Utility types
 data Specializer = Specializer
-    { variables :: Map Text (HLIR.Scheme HLIR.Type, HLIR.TLIR "toplevel")
+    { variables :: Map Text (HLIR.Scheme HLIR.Type, Maybe (HLIR.TLIR "toplevel"))
     , structures :: Map Text (HLIR.Scheme (Map Text HLIR.Type))
-    , implementations :: Map (Text, HLIR.Scheme HLIR.Type) (HLIR.TLIR "toplevel")
+    , implementations :: Map (Text, HLIR.Scheme HLIR.Type) (Maybe (HLIR.TLIR "toplevel"))
     , properties :: Map Text (HLIR.Scheme HLIR.Type)
     , enumerations :: Map Text (HLIR.Scheme (Map Text HLIR.Type))
     , rememberedVariables :: Set Text

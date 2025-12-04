@@ -27,6 +27,8 @@ convertTypeField (HLIR.MkStructUnion name fields) = do
     (newFields, nss) <- mapAndUnzipM convertTypeField fields
     pure (HLIR.MkStructUnion name newFields, concat nss)
 
+
+
 getGC :: HLIR.TLIR "expression"
 getGC =
     HLIR.MkExprApplication
@@ -206,7 +208,14 @@ convertType t = pure (t, [])
 -- | nodes with closures converted.
 convertProgram ::
     (MonadIO m) => [HLIR.TLIR "toplevel"] -> m [HLIR.TLIR "toplevel"]
-convertProgram nodes = HT.hoistLambdas . concat =<< mapM convertSingularNode nodes
+convertProgram nodes = do
+    signatures <- SR.getAllFunctionSignatures nodes
+
+    let signatures' = Map.map fst signatures
+
+    writeIORef globals (Map.map (\(HLIR.Forall _ ty) -> ty) signatures')
+
+    HT.hoistLambdas . concat =<< mapM convertSingularNode nodes
 
 -- | Convert a singular HLIR toplevel node.
 -- | This function takes a toplevel node, and returns a toplevel node with closures
