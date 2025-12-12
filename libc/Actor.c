@@ -59,6 +59,29 @@ char* read_file_ext(const char* path) {
     return buffer;
 }
 
+typedef enum { 
+    WRITE_FILE_SUCCESS = 0,
+    WRITE_FILE_ERROR_OPEN = 1,
+    WRITE_FILE_ERROR_WRITE = 2
+} WriteFileResult;
+
+WriteFileResult write_file_ext(const char* path, const char* content) {
+    FILE* file = fopen(path, "wb");
+    if (!file) {
+        return WRITE_FILE_ERROR_OPEN;
+    }
+
+    size_t length = strlen(content);
+    size_t written = fwrite(content, 1, length, file);
+    fclose(file);
+
+    if (written != length) {
+        return WRITE_FILE_ERROR_WRITE;
+    }
+
+    return WRITE_FILE_SUCCESS; // Indicate success
+}
+
 void exit_program(int code) {
     exit(code);
 }
