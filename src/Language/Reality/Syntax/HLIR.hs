@@ -379,7 +379,7 @@ instance (ToText (f t), ToText t) => ToText (Toplevel f t) where
             , " }"
             ]
     toText (MkTopImport mods) =
-        T.concat ["import ", T.intercalate "::" mods]
+        T.concat ["import ", T.intercalate "." mods]
     toText (MkTopTypeAlias name typeValue) =
         T.concat
             [ "type "
