@@ -3,6 +3,7 @@ import std.tuple;
 import std.option;
 
 extern fn read_file_ext(path: string) -> string;
+extern fn write_file_ext(path: string, content: string) -> int;
 extern fn get_current_working_directory() -> string;
 extern fn file_exists(path: string) -> bool;
 
@@ -15,6 +16,16 @@ mod File {
 
     fn exists(path: String) -> bool {
         return file_exists(path.data);
+    }
+
+    fn write(path: String, content: String) -> unit {
+        let result = write_file_ext(path.data, content.data);
+
+        if result != 0 {
+            GC.panic(f"Could not write to file: {path}");
+        }
+        
+        return unit;
     }
 }
 
