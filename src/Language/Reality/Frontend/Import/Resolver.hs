@@ -46,10 +46,10 @@ findLongestAlias ::
     Maybe (Text, AbsolutePath, Int)
 findLongestAlias aliases paths =
     let matches = Map.toList $ Map.filterWithKey (\k _ -> k `elem` prefixes) aliases
-        prefixes = [Text.intercalate "::" (take i paths) | i <- [1 .. length paths]]
+        prefixes = [Text.intercalate "." (take i paths) | i <- [1 .. length paths]]
      in if null matches
             then Nothing
-            else Just $ List.maximumBy (\(k1, _, _) (k2, _, _) -> compare (Text.length k1) (Text.length k2)) [(k, v, Text.count "::" k + 1) | (k, v) <- matches]
+            else Just $ List.maximumBy (\(k1, _, _) (k2, _, _) -> compare (Text.length k1) (Text.length k2)) [(k, v, Text.count "." k + 1) | (k, v) <- matches]
 
 -- | Resolve a singular HLIR toplevel node.
 -- | This function takes a toplevel node, and returns a list of toplevel nodes.
@@ -75,8 +75,10 @@ resolveSingularNode (HLIR.MkTopImport paths) = do
                 (aliasPath, drop aliasLength importPaths)
             Nothing -> (basePath, importPaths)
 
-    let absolutePath = resolvedBasePath IO.</> toString (Text.intercalate "/" remainingPaths) IO.<.> "rl"
-    let pkgName = Text.intercalate "::" remainingPaths
+    let absolutePath 
+            | null remainingPaths = resolvedBasePath
+            | otherwise = resolvedBasePath IO.</> toString (Text.intercalate "/" remainingPaths) IO.-<.> "rl"
+    let pkgName = Text.intercalate "." remainingPaths
 
     visitModule absolutePath pkgName shouldFlatten
 resolveSingularNode (HLIR.MkTopLocated p n) = do
