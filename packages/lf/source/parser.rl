@@ -107,4 +107,21 @@ mod Configuration {
             return Err("Failed to parse configuration file: " + filename);
         }
     }
+
+    pub fn serialize(configs: List<*Configuration>) -> String {
+        let result = "";
+        let i = 0;
+        while i < configs.length {
+            let config = *configs[i];
+            result = result + config.show_prec(0);
+
+            if i + 1 < configs.length {
+                result = result + "\n\n";
+            };
+
+            i = i + 1;
+        };
+
+        return result;
+    }
 }

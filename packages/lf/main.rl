@@ -10,6 +10,7 @@ import source.color;
 // Commands
 import source.commands.build;
 import source.commands.help;
+import source.commands.init;
 
 fn get_cwd() -> String {
     let cwd_str = get_current_working_directory();
@@ -50,7 +51,8 @@ fn get_commands(cwd: String, config: List<*Configuration>) -> Commands {
             return unit
         }),
         ("help", help_command),
-        ("run", |cwd, args| run_command(cwd, args, config))
+        ("run", |cwd, args| run_command(cwd, args, config)),
+        ("init", init_command)
     ];
 }
 
