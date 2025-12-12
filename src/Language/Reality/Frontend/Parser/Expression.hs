@@ -12,6 +12,7 @@ import qualified Data.List as List
 import qualified GHC.IO as IO
 import qualified Data.Text as Text
 import qualified Text.Megaparsec.Char as P
+import qualified Text.Printf as Text
 
 {-# NOINLINE lambdaArgumentCounter #-}
 lambdaArgumentCounter :: IORef Int
@@ -78,6 +79,15 @@ parseInterpolatedString = do
 
         pure (pos, stringInit str)
 
+    escapedChar :: (MonadIO m) => P.Parser m (HLIR.Position, HLIR.HLIR "expression")
+    escapedChar = do
+        start <- P.getSourcePos
+        void $ P.char '\\'
+        char <- P.anySingle
+        end <- P.getSourcePos
+
+        pure ((start, end), stringInit (fromString (Text.printf "\\%s" [char])))
+    
     stringSegment = P.choice
         [ interpolation
         , escapeBracket
@@ -93,6 +103,7 @@ parseInterpolatedString = do
                  , stringInit "\""
                  )
           )
+        , P.try escapedChar
         ]
 
     interpolation = do
