@@ -7,6 +7,5 @@ main = "source/main.rl"
 [features.aliases]
 std = "$REALITY_DIR/std"
 
-[features.libc] 
-libraries = ["$(pkg-config --libs --cflags raylib)", "libc/game.c"]
-headers = ["<raylib.h>"]
+[features.dependencies]
+raylib = "../raylib"

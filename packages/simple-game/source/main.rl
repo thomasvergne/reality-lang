@@ -1,7 +1,7 @@
 import std.io;
 import std.list;
 import std.tuple;
-import library.raylib;
+import raylib;
 
 struct Score {
     player1: int,
