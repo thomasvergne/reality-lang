@@ -251,6 +251,14 @@ isVoidType (HLIR.MkTyVar ref) = do
         HLIR.Unbound{} -> pure False
 isVoidType _ = pure False
 
+local' :: MonadIO m => m a -> m a
+local' action = do
+    oldMap <- liftIO $ readIORef variableRenamingMap
+    result <- action
+    liftIO $ writeIORef variableRenamingMap oldMap
+    pure result
+
+
 -- | Convert a HLIR expression to a MLIR expression in ANF.
 -- | This function takes a HLIR expression, and returns a MLIR expression.
 convertExpression ::
@@ -258,10 +266,13 @@ convertExpression ::
 convertExpression (HLIR.MkExprVariable ann _) = do
     isVoid <- isVoidType ann.typeValue.runIdentity
 
+    variableRenamingMap' <- liftIO $ readIORef variableRenamingMap
+    let renamedName = Map.findWithDefault ann.name ann.name variableRenamingMap'
+
     if isVoid then
         pure (MLIR.MkExprSpecialVariable ann.name, [], [])
-    else
-        pure (MLIR.MkExprVariable ann.name, [], [])
+    else 
+        pure (MLIR.MkExprVariable renamedName, [], [])
 convertExpression (HLIR.MkExprLiteral l) = pure (MLIR.MkExprLiteral l, [], [])
 convertExpression (HLIR.MkExprApplication f args _) = do
     (f', l1, bs1) <- convertExpression f
@@ -280,11 +291,14 @@ convertExpression (HLIR.MkExprLetIn (HLIR.MkAnnotation "_" _) value inExpr _) = 
     pure (inExpr', l1 ++ [value'] ++ l2, bs1 ++ bs2)
 convertExpression (HLIR.MkExprLetIn binding value inExpr _) = do
     (value', l1, bs1) <- convertExpression value
-    (inExpr', l2, bs2) <- convertExpression inExpr
+    newVar <- freshPrefixed binding.name
+    (inExpr', l2, bs2) <- local' $ do  
+        modifyIORef' variableRenamingMap (Map.insert binding.name newVar)
+        convertExpression inExpr
 
     -- If the inExpr is a control flow statement (return, break, continue),
     -- we don't need to create a new variable for it, as it will not be used.
-    let letBinding = MLIR.MkExprLet binding.name binding.typeValue.runIdentity (Just value')
+    let letBinding = MLIR.MkExprLet newVar binding.typeValue.runIdentity (Just value')
     pure (inExpr', l1 ++ [letBinding] ++ l2, bs1 ++ bs2)
 convertExpression (HLIR.MkExprCondition cond thenB elseB thenTy elseTy) = do
     let conditions = getConditions cond
@@ -525,6 +539,10 @@ generateCondition x (HLIR.MkPatternStructure _ fields) = do
             (Map.toList fields)
     pure (concat fieldsLets, concat fieldsConds)
 
+{-# NOINLINE variableRenamingMap #-}
+variableRenamingMap :: IORef (Map Text Text)
+variableRenamingMap = IO.unsafePerformIO (newIORef Map.empty)
+
 {-# NOINLINE symbolCounter #-}
 symbolCounter :: IORef Int
 symbolCounter = IO.unsafePerformIO (newIORef 0)
@@ -534,3 +552,9 @@ freshSymbol = do
     modifyIORef' symbolCounter (+ 1)
     i <- readIORef symbolCounter
     pure $ "anf_tmp_" <> Text.pack (show i)
+
+freshPrefixed :: (MonadIO m) => Text -> m Text
+freshPrefixed prefix = do
+    modifyIORef' symbolCounter (+ 1)
+    i <- readIORef symbolCounter
+    pure $ prefix <> "_" <> Text.pack (show i)
