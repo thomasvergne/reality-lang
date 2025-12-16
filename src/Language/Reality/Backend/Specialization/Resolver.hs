@@ -741,10 +741,12 @@ resolveSpecializationForIdentifier (HLIR.MkAnnotation name (Identity ty)) = do
                         -- (e.g., f_a_b and f_b_a should not refer to the same specialization)
                         -- This is important to avoid duplicating work and creating
                         -- wrong specializations.
+
+                        tyAsText <- HLIR.prettify ty
                         let orderedVars = flip map qvars $ \var -> Map.findWithDefault (HLIR.MkTyQuantified var) var subst
                             newName
                                 | null orderedVars = name
-                                | otherwise = name <> "_" <> toText ty
+                                | otherwise = name <> "_" <> tyAsText
 
                         -- Checking if we already created this specialization
                         -- to avoid duplicating work.
@@ -893,10 +895,11 @@ resolveSpecializationForImplementation name ty = do
             (propTy, _) <- M.instantiateAndSub propScheme
             void $ ty `M.isSubtypeOf` propTy
 
+            tyAsText <- HLIR.prettify ty
+
             -- Re-ordering the resolved types according to the property scheme quantified
             -- variables to create a consistent name
-            let newName = name <> "_" <> toText ty
-
+            let newName = name <> "_" <> tyAsText
             -- Checking if the node is a function declaration, otherwise there must
             -- be an error somewhere else. We just handle it gracefully here.
             case node of
