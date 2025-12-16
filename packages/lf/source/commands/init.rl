@@ -13,7 +13,7 @@ fn init_command(cwd: String, args: List<CLI>) -> unit {
                 .get_or_else("my_project")
         );
 
-    print_lf(f"Initialized new LiFe project in " + color(Black) + f"{cwd}/{project_name}" + reset_code() + ".");
+    LF.log(f"Initialized new LiFe project in " + color(Black) + f"{cwd}/{project_name}" + reset_code() + ".");
 
     let config = [
         new Section(
@@ -46,7 +46,7 @@ fn init_command(cwd: String, args: List<CLI>) -> unit {
         f"import std.prelude;\n\nfn main() -> unit \{\n    print(\"Hello, {project_name}!\");\n    return unit;\n}\n"
     );
     
-    print_success_lf("Created default configuration and main source file.");
+    LF.success("Created default configuration and main source file.");
 
     unit
 }

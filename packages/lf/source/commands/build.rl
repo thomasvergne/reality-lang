@@ -147,7 +147,7 @@ fn parse_packages(config: Map<String, String>, cwd: String) -> Map<String, Depen
 
                 result.extend_mut(packages);
             } else {
-                print_error_lf("Could not parse package configuration for " + key);
+                LF.error("Could not parse package configuration for " + key);
                 GC.exit(1);
             }
         }
@@ -164,26 +164,11 @@ fn merge_dependencies(d: Map<String, Dependency>) -> Dependency {
     let i = 0;
     while i < d.length {
         if d[i].snd() is Dependency(let aliases, let libraries, let headers) {
-            let alias_keys = aliases.keys();
-            let j = 0;
-            while j < alias_keys.length {
-                let key = alias_keys[j];
-                let value = aliases.get(key).get_or_else("");
-                merged_aliases.set(key, value);
-                j = j + 1;
-            };
+            merged_aliases.extend_mut(aliases);
 
-            let k = 0;
-            while k < libraries.length {
-                merged_libraries.push(libraries[k]);
-                k = k + 1;
-            };
+            merged_libraries.extend_mut(libraries);
 
-            let l = 0;
-            while l < headers.length {
-                merged_headers.push(headers[l]);
-                l = l + 1;
-            };
+            merged_headers.extend_mut(headers);
         };
 
         i = i + 1;
@@ -206,6 +191,40 @@ fn build_path_aliases(m: Map<String, String>) -> String {
     return result;
 }
 
+fn parse_main_package(dep: Dependency, config: List<*Configuration>) -> Dependency {
+    let Dependency(let aliases, let libraries, let headers) = dep;
+
+    let Section(_, let package_aliases) = config
+        .get_section(["features", "aliases"])
+        .get_or_else(Section([], []));
+    let main_aliases = get_section_as_map(package_aliases);
+
+    let Section(_, let package_libc) = config
+        .get_section(["features", "libc"])
+        .get_or_else(Section([], []));
+    let Arr(let main_libraries) = package_libc
+        .get_key_value("libraries")
+        .get_or_else(Arr([]));
+    
+    let Arr(let main_headers) = package_libc
+        .get_key_value("headers")
+        .get_or_else(Arr([]));  
+
+    let merged_aliases = &Map.empty<String, String>();
+    merged_aliases.extend_mut(aliases);
+    merged_aliases.extend_mut(main_aliases);
+
+    let merged_libraries = &List.init<String>();
+    merged_libraries.extend_mut(libraries);
+    merged_libraries.extend_mut(main_libraries);
+
+    let merged_headers = &List.init<String>();
+    merged_headers.extend_mut(headers);
+    merged_headers.extend_mut(main_headers);    
+
+    return Dependency(*merged_aliases, *merged_libraries, *merged_headers);
+}
+
 fn build_command(cwd: String, args: List<CLI>, config: List<*Configuration>) -> Option<String> {
     let mode = if args.has_flag("dev") { Dev } else { Release };
 
@@ -220,9 +239,11 @@ fn build_command(cwd: String, args: List<CLI>, config: List<*Configuration>) -> 
     let packages_map = get_packages(config);
     let all_packages = parse_packages(packages_map, cwd);
 
-    let Dependency(let aliases, let libraries, let headers) = all_packages.merge_dependencies();
+    let Dependency(let aliases, let libraries, let headers) = all_packages
+        .merge_dependencies()
+        .parse_main_package(config);
 
-    print_lf("Building project in " + mode.show_prec(0) + "...");
+    LF.log("Building project in " + mode.show_prec(0) + "...");
 
     // Creating RLC command
     let headers_str = if headers.length > 0 {
@@ -236,12 +257,12 @@ fn build_command(cwd: String, args: List<CLI>, config: List<*Configuration>) -> 
     }
     let rlc_command = f"rlc {main_file} {build_path_aliases(aliases)} -I \"<stdio.h>\" -I \"<string.h>\" {headers_str}";
 
-    print_lf("Executing command: " + color(Black) + rlc_command + reset_code());
+    LF.log("Executing command: " + color(Black) + rlc_command + reset_code());
 
     let rlc_exit_code = System.execute(rlc_command);
 
     if rlc_exit_code != 0 {
-        print_error_lf("Build failed with exit code " + (rlc_exit_code as int).show_prec(0) + ".");
+        LF.error("Build failed with exit code " + (rlc_exit_code as int).show_prec(0) + ".");
         GC.exit(1);
     }
 
@@ -257,7 +278,7 @@ fn build_command(cwd: String, args: List<CLI>, config: List<*Configuration>) -> 
         base_gcc_command + " -O3 -DRELEASE_MODE"
     };
 
-    print_lf("Compiling with command: " + color(Black) + gcc_command + reset_code());
+    LF.log("Compiling with command: " + color(Black) + gcc_command + reset_code());
 
     if not(File.exists(cwd + "/output")) {
         System.execute("mkdir " + cwd + "/output");
@@ -266,12 +287,12 @@ fn build_command(cwd: String, args: List<CLI>, config: List<*Configuration>) -> 
     let gcc_exit_code = System.execute(gcc_command);
 
     if gcc_exit_code != 0 {
-        print_error_lf("GCC compilation failed with exit code " + (gcc_exit_code as int).show_prec(0) + ".");
+        LF.error("GCC compilation failed with exit code " + (gcc_exit_code as int).show_prec(0) + ".");
 
         GC.exit(1);
     }
 
-    print_success_lf("Build succeeded! Binary located at " + color(Black) + cwd + "/output/program" + reset_code());
+    LF.success("Build succeeded! Binary located at " + color(Black) + cwd + "/output/program" + reset_code());
 
     return None;
 }

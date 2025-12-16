@@ -28,17 +28,17 @@ fn run_command(cwd: String, args: List<CLI>, config: List<*Configuration>) -> un
     let build_output = build_command(cwd, args, config);
 
     if build_output is Some(let binary_path) {
-        print_lf("Running program...");
+        LF.log("Running program...");
 
         let run_exit_code = execute_command(binary_path.data);
 
         if run_exit_code != 0 {
-            print_error_lf("Program exited with code " + (run_exit_code as int).show_prec(0) + ".");
+            LF.error("Program exited with code " + (run_exit_code as int).show_prec(0) + ".");
         } else {
-            print_success_lf("Program executed successfully.");
+            LF.success("Program executed successfully.");
         }
     } else {
-        print_error_lf("Build failed; cannot run program.");
+        LF.error("Build failed; cannot run program.");
     }
 
     unit
@@ -64,10 +64,10 @@ pub fn main(args: List<String>) -> int {
     let final_config = if config is Ok(let conf) {
         conf 
     } else if config is Err(let errMsg) {
-        print_error_lf(errMsg);
+        LF.error(errMsg);
         GC.exit(1);
     } else {
-        print_error_lf("Unknown error while parsing configuration.");
+        LF.error("Unknown error while parsing configuration.");
         GC.exit(1);
     }
 
