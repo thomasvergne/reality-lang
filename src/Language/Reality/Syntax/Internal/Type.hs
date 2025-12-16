@@ -148,6 +148,36 @@ instance ToText Type where
             fieldTexts = map (\(name, ty) -> name <> ": " <> toText ty) fields
          in T.concat [toText h, " { ", T.intercalate ", " fieldTexts, " }"]
 
+prettify :: MonadIO m => Type -> m Text
+prettify ty = do
+    ty' <- simplify ty
+
+    case ty' of
+        MkTyId a -> pure a
+        args :->: ret -> do
+            argsText <- mapM prettify args
+            retText <- prettify ret
+
+            pure $ T.concat ["fn_", T.intercalate "_" argsText, "_to_", retText]
+        
+        MkTyApp a b -> do
+            aText <- prettify a
+            bText <- mapM prettify b
+            pure $ T.concat [aText, "_of_", T.intercalate "_and_" bText]
+
+        MkTyVar a -> do
+            let a' = IO.unsafePerformIO $ readIORef a
+            case a' of
+                Link b -> prettify b
+                Unbound name _ -> pure name 
+
+        MkTyQuantified a -> pure a
+
+        MkTyAnonymousStructure isUnion _ fields -> do
+            let kind = if isUnion then "union" else "struct"
+            let fieldNames = Map.keys fields
+            pure $ T.concat [kind, "_with_fields_", T.intercalate "_" fieldNames]
+
 -- | TYPE SIMPLIFICATION
 -- | Given a type, simplify it by following the links of type variables until
 -- | we reach a concrete type.
