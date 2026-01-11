@@ -57,7 +57,15 @@ fn get_commands(cwd: String, config: List<*Configuration>) -> Commands {
 }
 
 pub fn main(args: List<String>) -> int {
+    let cli_args = args.slice(1, args.length).parse_as_cli();
+
+    let command = cli_args.get_first_positional();
+
     let cwd = get_cwd();
+    if command is Some(let cmd1) && cmd1 == "init" {
+        init_command(cwd, cli_args.slice(1, cli_args.length));
+        return 0;
+    };
 
     let config = Configuration.parse_file(cwd + "/config.toml");
 
@@ -70,10 +78,6 @@ pub fn main(args: List<String>) -> int {
         LF.error("Unknown error while parsing configuration.");
         GC.exit(1);
     }
-
-    let cli_args = args.slice(1, args.length).parse_as_cli();
-
-    let command = cli_args.get_first_positional();
 
     if command is Some(let cmd) {
         let commands = get_commands(cwd, final_config);
