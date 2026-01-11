@@ -159,7 +159,7 @@ prettify ty = do
             retText <- prettify ret
 
             pure $ T.concat ["fn_", T.intercalate "_" argsText, "_to_", retText]
-        
+
         MkTyApp a b -> do
             aText <- prettify a
             bText <- mapM prettify b
@@ -169,7 +169,7 @@ prettify ty = do
             let a' = IO.unsafePerformIO $ readIORef a
             case a' of
                 Link b -> prettify b
-                Unbound name _ -> pure name 
+                Unbound name _ -> pure name
 
         MkTyQuantified a -> pure a
 
@@ -189,10 +189,18 @@ simplify (MkTyVar a) = do
     case a' of
         Link b -> simplify b
         _ -> pure $ MkTyVar a
+simplify (args :->: ret) = do
+    args' <- mapM simplify args
+    ret' <- simplify ret
+    pure $ args' :->: ret'
 simplify (MkTyApp a b) = do
     a' <- simplify a
     b' <- mapM simplify b
     pure $ MkTyApp a' b'
+simplify (MkTyAnonymousStructure isUnion h fields) = do
+    h' <- simplify h
+    fields' <- mapM simplify fields
+    pure $ MkTyAnonymousStructure isUnion h' fields'
 simplify a = pure a
 
 instance ToText TyVar where
