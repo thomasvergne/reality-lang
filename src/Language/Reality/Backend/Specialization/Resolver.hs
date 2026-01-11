@@ -41,7 +41,7 @@ runSpecializationResolver toplevels = do
     resolved <- forM toplevels $ \n -> do
         (resolvedNode, newDefs) <- resolveSpecializationSingular n
         pure (newDefs ++ maybeToList resolvedNode)
-    
+
     pure (concat resolved)
 
 -- | Get all function signatures
@@ -281,7 +281,7 @@ resolveSpecializationSingular n@(HLIR.MkTopEnumeration ann constructors)
                         pure (concat nss, Just specTys)
                     Nothing -> pure ([], Nothing)
 
-                    
+
                 pure (Just $ HLIR.MkTopEnumeration ann constructors', ns)
     | otherwise = do
         let header = HLIR.MkTyApp (HLIR.MkTyId ann.name) (map HLIR.MkTyQuantified ann.typeValue)
@@ -392,7 +392,7 @@ resolveSpecializationInExpr (HLIR.MkExprCondition cond thenB elseB thenType else
         )
 resolveSpecializationInExpr (HLIR.MkExprApplication callee args retTy) = do
     (typedCallee, newDefs1, b1) <- resolveSpecializationInExpr callee
-    (typedArgs, newDefs2, b2) <- foldlM 
+    (typedArgs, newDefs2, b2) <- foldlM
         ( \(accArgs, accDefs, accB) arg -> do
             (typedArg, newDefs, b) <- withLocals accB $ resolveSpecializationInExpr arg
             pure (accArgs ++ [typedArg], accDefs ++ newDefs, accB <> b)
@@ -811,8 +811,10 @@ resolveSpecializationForIdentifier (HLIR.MkAnnotation name (Identity ty)) = do
                     -- This is important to avoid duplicating work and creating
                     -- wrong specializations.
                     let orderedVars = flip map qvars $ \var -> Map.findWithDefault (HLIR.MkTyQuantified var) var subst
-                        newEnumName = header.name <> "_" <> Text.intercalate "_" (map toText orderedVars)
-                        newVarName = name <> "@" <> Text.intercalate "_" (map toText orderedVars)
+
+                    newEnumName <- HLIR.prettify (HLIR.MkTyApp (HLIR.MkTyId header.name) orderedVars)
+
+                    let newVarName = name <> "@" <> Text.intercalate "_" (map toText orderedVars)
 
                     -- Checking if we already created this specialization
                     -- to avoid duplicating work.
@@ -1036,7 +1038,7 @@ resolveSpecializationInType ::
     m (HLIR.Type, [HLIR.TLIR "toplevel"])
 resolveSpecializationInType depth ty
     | depth > 20 = M.throw (M.RecursionLimitExceeded 20)
-    | otherwise = resolveSpecializationInType' depth ty
+    | otherwise = resolveSpecializationInType' depth =<< HLIR.simplify ty
 
 resolveSpecializationInType' ::
     (MonadIO m, M.MonadError M.Error m) =>
@@ -1051,7 +1053,7 @@ resolveSpecializationInType' n (args HLIR.:->: ret) = do
     (typedRet, newDefs2) <- resolveSpecializationInType (n + 1) ret
 
     pure (typedArgs HLIR.:->: typedRet, concat newDefs1 ++ newDefs2)
-resolveSpecializationInType' n (HLIR.MkTyApp (HLIR.MkTyId base) args) =
+resolveSpecializationInType' n (HLIR.MkTyApp (HLIR.MkTyId base) args) = do
     maybeResolveStructure n base args
 resolveSpecializationInType' n (HLIR.MkTyId name) =
     maybeResolveStructure n name []
@@ -1117,7 +1119,7 @@ maybeResolveStructure depth name args = do
             -- This is done by appending the type arguments to the original name
             -- (e.g., MyStruct_Int_Bool for MyStruct<Int, Bool>)
             let orderedVars = flip map qvars $ \var -> Map.findWithDefault (HLIR.MkTyQuantified var) var s
-            let specName = name <> "_" <> Text.intercalate "_" (map toText orderedVars)
+            specName <- HLIR.prettify (HLIR.MkTyApp (HLIR.MkTyId name) orderedVars)
 
             -- Checking if we have already created this specialization
             -- to avoid duplicating work
@@ -1143,6 +1145,9 @@ maybeResolveStructure depth name args = do
                             <$> Map.traverseWithKey
                                 (\_ ty -> swap <$> (resolveSpecializationInType (depth + 1) =<< M.applySubstitution s ty))
                                 instMap
+
+                    when (name == "Annotation") $ do
+                        liftIO $ putStrLn $ "Specialized Annotation to " ++ show specName ++ " with fields: " ++ show specializedFields
 
                     let structMembers = Map.toList specializedFields
                         structMembers' = flip map structMembers $ uncurry buildStructureFromMap
@@ -1209,7 +1214,7 @@ maybeResolveEnumeration depth name args = do
             -- substitution `s` so the naming is consistent with other places
             -- that generate specialization names (avoids mismatched naming)
             let orderedVars = flip map orderedVars' $ \var -> Map.findWithDefault (HLIR.MkTyQuantified var) var s
-                specName = name <> "_" <> Text.intercalate "_" (map toText orderedVars)
+            specName <- HLIR.prettify (HLIR.MkTyApp (HLIR.MkTyId name) orderedVars)
 
             -- Checking if we have already created this specialization
             -- to avoid duplicating work
