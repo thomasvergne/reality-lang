@@ -18,7 +18,7 @@ withTypeVars ::
     [Text] ->
     m a ->
     m a
-withTypeVars typeVars action = do   
+withTypeVars typeVars action = do
     oldState <- readIORef M.defaultCheckerState
 
     -- Adding type variables to the state
@@ -62,18 +62,18 @@ runTypechecker toplevels = do
                             []
                             (Identity ret)
 
-            let body = HLIR.MkExprLetIn 
+            let body = HLIR.MkExprLetIn
                         (HLIR.MkAnnotation "exit_code" (Identity HLIR.MkTyInt))
                         entryCall
                         (HLIR.MkExprLiteral (HLIR.MkLitInt 0))
                         (Identity HLIR.MkTyInt)
 
-            let mainFun = HLIR.MkTopFunctionDeclaration 
-                    (HLIR.MkAnnotation "main" []) 
+            let mainFun = HLIR.MkTopFunctionDeclaration
+                    (HLIR.MkAnnotation "main" [])
                     [ HLIR.MkAnnotation "args" (HLIR.MkTyList (HLIR.MkTyId "String")) ]
                     HLIR.MkTyInt
                     body
-                    
+
             pure (xs ++ [mainFun])
 
         _ -> pure xs
@@ -109,14 +109,14 @@ getAnnotationName (HLIR.MkExprLocated _ e) = getAnnotationName e
 getAnnotationName _ = Nothing
 
 getAnnotations :: HLIR.HLIR "toplevel" -> ([Text], HLIR.HLIR "toplevel", [HLIR.HLIR "expression"])
-getAnnotations (HLIR.MkTopAnnotation args node) = 
+getAnnotations (HLIR.MkTopAnnotation args node) =
     let (anns, n, exprs) = getAnnotations node
         annNames = mapMaybe getAnnotationName args
     in (annNames ++ anns, n, exprs ++ args)
-getAnnotations (HLIR.MkTopLocated p n) = 
+getAnnotations (HLIR.MkTopLocated p n) =
     let (anns, n', exprs) = getAnnotations n
     in (anns, HLIR.MkTopLocated p n', exprs)
-getAnnotations (HLIR.MkTopPublic n) = 
+getAnnotations (HLIR.MkTopPublic n) =
     let (anns, n', exprs) = getAnnotations n
     in (anns, HLIR.MkTopPublic n', exprs)
 getAnnotations n = ([], n, [])
@@ -140,16 +140,16 @@ checkToplevelSingular ::
     (MonadIO m, M.MonadError M.Error m) =>
     HLIR.HLIR "toplevel" ->
     m (HLIR.TLIR "toplevel")
-checkToplevelSingular e 
+checkToplevelSingular e
     | (anns, node, eAnns) <- getAnnotations e, not (null anns),
-      Just (HLIR.MkTopFunctionDeclaration ann args ret _) <- getFunctionNode node 
+      Just (HLIR.MkTopFunctionDeclaration ann args ret _) <- getFunctionNode node
     = do
         typedNode <- checkToplevelSingular node
 
         eAnns' <- mapM (\expr -> do
             (_, typedExpr, _, _) <- synthesizeE expr
             pure typedExpr) eAnns
-        
+
         if "main_entry" `elem` anns then do
             let funcType = map (.typeValue) args HLIR.:->: ret
             liftIO $ writeIORef noMain (Just (ann.name, funcType))
@@ -628,16 +628,16 @@ synthesizeE (HLIR.MkExprApplication callee args _) = do
                 else do
                     -- Checking each argument against the corresponding parameter type
                     -- and collecting constraints from each argument.
-                    (checkedArgs, cs2, bs) <- List.foldlM 
+                    (checkedArgs, cs2, bs) <- List.foldlM
                         ( \(accArgs, accCs, accBs) (paramTy, argExpr) -> do
-                            (checkedArg, csArg, bArg) <- 
-                                M.withEnvironment accBs $ 
+                            (checkedArg, csArg, bArg) <-
+                                M.withEnvironment accBs $
                                     checkE paramTy argExpr
                             pure (accArgs ++ [checkedArg], accCs <> csArg, accBs <> bArg)
                         )
                         ([], [], mempty)
                         (zip paramTypes args)
-    
+
                     -- Collecting all constraints
                     let cs = cs1 <> cs2
 
@@ -709,9 +709,27 @@ synthesizeE (HLIR.MkExprStructureCreation ty fields) = do
             -- Collecting all constraints
             let (unzippedFields, cs, bs) = unzip3 checkedFields
 
+            annHeaderType <- case annHeader of
+                Just n -> pure (HLIR.MkTyId n)
+                Nothing -> M.newType
+
+            newTypeArgs <- forM qvars $ \qv -> do
+                maybe M.newType pure (Map.lookup qv substMap)
+
+            let newHeader
+                    | length annTypes < length qvars =
+                        HLIR.MkTyApp
+                            annHeaderType
+                            ( annTypes
+                                ++ drop (length annTypes) newTypeArgs
+                            )
+                    | not (null qvars) =
+                        HLIR.MkTyApp annHeaderType newTypeArgs
+                    | otherwise = annHeaderType
+
             pure
-                ( aliasedTy
-                , HLIR.MkExprStructureCreation aliasedTy (Map.fromList unzippedFields)
+                ( newHeader
+                , HLIR.MkExprStructureCreation newHeader (Map.fromList unzippedFields)
                 , concat cs
                 , mconcat bs
                 )
@@ -1155,12 +1173,12 @@ checkE expected (HLIR.MkExprFunctionAccess f var types args) = do
         Just ((_ : argsTypes') HLIR.:->: _) -> do
             when (length argsTypes' /= length args) $
                 M.throw (M.InvalidArgumentQuantity (length argsTypes') (length args))
-            
+
             args' <- zipWithM checkE argsTypes' args
             let (typedArgs, csArgs, bindingsArgs) = unzip3 args'
 
             pure
-                ( HLIR.MkExprApplication 
+                ( HLIR.MkExprApplication
                     (HLIR.MkExprVariable (HLIR.MkAnnotation f (Identity funcType)) [])
                     (typedExpr : typedArgs)
                     (Identity expected)
@@ -1174,7 +1192,7 @@ checkE expected (HLIR.MkExprFunctionAccess f var types args) = do
             let funcType'' = (varType : argsTypes) HLIR.:->: expected
 
             pure
-                ( HLIR.MkExprApplication 
+                ( HLIR.MkExprApplication
                     (HLIR.MkExprVariable (HLIR.MkAnnotation f (Identity funcType'')) [])
                     (typedExpr : typedArgs)
                     (Identity expected)
@@ -1276,7 +1294,7 @@ findImplementationMatching (((implName, implTy), scheme) : xs) tys name ty pos
         -- We check if the implementation type is a subtype of the required type
         -- If it is, we return it as a matching implementation.
         result <- runExceptT $ M.applySubtypeRelation False ty implTy'
-        
+
         case result of
             Right s -> do
                 instantiatedTy <- M.instantiateWithSub scheme tys >>= M.performAliasRemoval
