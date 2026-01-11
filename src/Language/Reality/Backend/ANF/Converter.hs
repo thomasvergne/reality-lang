@@ -18,6 +18,9 @@ mapAndUnzip3M f xs = do
     (bs, cs, ds) <- unzip3 <$> mapM f xs
     pure (bs, cs, ds)
 
+unitExpr :: HLIR.TLIR "expression"
+unitExpr = HLIR.MkExprVariable (HLIR.MkAnnotation "unit" (Identity (HLIR.MkTyId "unit"))) []
+
 -- | ANF CONVERTER
 -- | Convert a HLIR expression to ANF (MLIR).
 -- | This function takes a HLIR expression, and returns a MLIR expression.
@@ -208,9 +211,9 @@ getConditions (HLIR.MkExprApplication callee args t)
     | isVariable callee "and" = do
         let conds = concatMap getConditions args
         conds
-    | otherwise = 
-        [HLIR.MkExprApplication 
-            callee 
+    | otherwise =
+        [HLIR.MkExprApplication
+            callee
             (concatMap getConditions args)
             t]
 getConditions e = [e]
@@ -218,27 +221,34 @@ getConditions e = [e]
 createCondition ::
     MonadIO m =>
     [HLIR.TLIR "expression"] ->
-    (MLIR.Expression, [MLIR.Expression], [MLIR.Expression]) ->
-    (MLIR.Expression, [MLIR.Expression], [MLIR.Expression]) ->
+    HLIR.TLIR "expression" ->
+    HLIR.TLIR "expression" ->
     (Bool, Bool) ->
     Text ->
     m [MLIR.Expression]
-createCondition [] (thenB, l1, bs2) _ (su1, _)  n
-    | not su1 && n /= "" = do
-        let update = MLIR.MkExprUpdate (MLIR.MkExprVariable n) thenB
-            in pure $ l1 ++ bs2 ++ [update]
-    | otherwise = pure $ l1 ++ bs2 ++ [thenB]
-createCondition (cond' : rest) t e@(elseB, l3, bs3) (su1, su2) n = do
+createCondition [] thenB _ (su1, _)  n = do
+    (thenB', l3, bs3) <- convertExpression thenB
+
+    let finalExpr
+            | not su1 && n /= "" =
+                let update = MLIR.MkExprUpdate (MLIR.MkExprVariable n) thenB'
+                in MLIR.MkExprBlock $ l3 ++ bs3 ++ [update]
+            | otherwise = MLIR.MkExprBlock $ l3 ++ bs3 ++ [thenB']
+    pure [finalExpr]
+createCondition (cond' : rest) t elseB (su1, su2) n = do
     (cond'', l1, bs1) <- convertExpression cond'
 
-    innerCondition <- createCondition rest t e (su1, su2) n
+    innerCondition <- createCondition rest t elseB (su1, su2) n
+
+    (elseB', l3, bs3) <- convertExpression elseB
+
     let elseExpr
-            | not su2 && n /= "" = 
-                let update = MLIR.MkExprUpdate (MLIR.MkExprVariable n) elseB
+            | not su2 && n /= "" =
+                let update = MLIR.MkExprUpdate (MLIR.MkExprVariable n) elseB'
                 in MLIR.MkExprBlock $ l3 ++ bs3 ++ [update]
-            | otherwise = MLIR.MkExprBlock $ l3 ++ bs3 ++ [elseB]
+            | otherwise = MLIR.MkExprBlock $ l3 ++ bs3 ++ [elseB']
         ifExpr = l1 ++ bs1 ++ [MLIR.MkExprCondition cond'' (MLIR.MkExprBlock innerCondition) elseExpr]
-    
+
     pure ifExpr
 
 isVoidType :: MonadIO m => HLIR.Type -> m Bool
@@ -271,7 +281,7 @@ convertExpression (HLIR.MkExprVariable ann _) = do
 
     if isVoid then
         pure (MLIR.MkExprSpecialVariable ann.name, [], [])
-    else 
+    else
         pure (MLIR.MkExprVariable renamedName, [], [])
 convertExpression (HLIR.MkExprLiteral l) = pure (MLIR.MkExprLiteral l, [], [])
 convertExpression (HLIR.MkExprApplication f args _) = do
@@ -292,7 +302,7 @@ convertExpression (HLIR.MkExprLetIn (HLIR.MkAnnotation "_" _) value inExpr _) = 
 convertExpression (HLIR.MkExprLetIn binding value inExpr _) = do
     (value', l1, bs1) <- convertExpression value
     newVar <- freshPrefixed binding.name
-    (inExpr', l2, bs2) <- local' $ do  
+    (inExpr', l2, bs2) <- local' $ do
         modifyIORef' variableRenamingMap (Map.insert binding.name newVar)
         convertExpression inExpr
 
@@ -303,14 +313,10 @@ convertExpression (HLIR.MkExprLetIn binding value inExpr _) = do
 convertExpression (HLIR.MkExprCondition cond thenB elseB thenTy elseTy) = do
     let conditions = getConditions cond
 
-    -- Converting the condition, then branch and else branch.
-    then' <- convertExpression thenB
-    else' <- convertExpression elseB
-
     let isCF = isCFStatement thenB || isCFStatement elseB
 
     if isCF then do
-        expr <- createCondition conditions then' else' (isCF, isCF) ""
+        expr <- local' $ createCondition conditions thenB elseB (isCF, isCF) ""
         -- If one of the branches is a control flow statement,
         -- we don't need to create a new variable for it, as it will not be used.
 
@@ -324,7 +330,7 @@ convertExpression (HLIR.MkExprCondition cond thenB elseB thenTy elseTy) = do
         --
         -- This permits to have conditions as expressions as well as conditions
         -- as statements.
-        
+
         isVoid1 <- isVoidType thenTy.runIdentity
         isVoid2 <- isVoidType elseTy.runIdentity
 
@@ -334,15 +340,15 @@ convertExpression (HLIR.MkExprCondition cond thenB elseB thenTy elseTy) = do
                 | isVoid2 = [MLIR.MkExprLet newVariable thenTy.runIdentity Nothing]
                 | otherwise = [MLIR.MkExprLet newVariable thenTy.runIdentity Nothing]
 
-        let var 
+        let var
                 | isVoid1 && isVoid2 = MLIR.MkExprVariable ""
                 | otherwise = MLIR.MkExprVariable newVariable
 
-        ifExpr <- createCondition 
-            conditions 
-            then' 
-            else' 
-            (isVoid1 || isCF, isVoid2 || isCF) 
+        ifExpr <- local' $ createCondition
+            conditions
+            thenB
+            elseB
+            (isVoid1 || isCF, isVoid2 || isCF)
             newVariable
 
         pure (var, def <> ifExpr, [])
@@ -413,21 +419,20 @@ convertExpression (HLIR.MkExprUpdate (HLIR.MkExprDereference e target) value _) 
     pure (update, l1 ++ [letExpr] ++ l2, bs1 ++ bs2)
 convertExpression (HLIR.MkExprSingleIf cond thenB branchTy) = do
     let conds = getConditions cond
-    then' <- convertExpression thenB
 
     let isCF = isCFStatement thenB
     isVoid <- isVoidType branchTy.runIdentity
 
     if isCF || isVoid then do
-        ifExpr <- createCondition conds then' (MLIR.MkExprBlock [], [], []) (isCF, False) ""
+        ifExpr <- local' $ createCondition conds thenB unitExpr (isCF, False) ""
 
         pure (MLIR.MkExprVariable "", ifExpr, [])
     else do
         newVariable <- freshSymbol
-        let var = MLIR.MkExprVariable newVariable
-            def = MLIR.MkExprLet newVariable branchTy.runIdentity Nothing
+        let def = MLIR.MkExprLet newVariable branchTy.runIdentity Nothing
+            varExpr = HLIR.MkExprVariable (HLIR.MkAnnotation newVariable branchTy) []
 
-        ifExpr <- createCondition conds then' (var, [], []) (isCF, False) newVariable
+        ifExpr <- local' $ createCondition conds thenB varExpr (isCF, False) newVariable
         pure (MLIR.MkExprVariable newVariable, def : ifExpr, [])
 convertExpression (HLIR.MkExprUpdate update value _) = do
     (update', l1, bs1) <- convertExpression update
@@ -458,7 +463,15 @@ convertExpression (HLIR.MkExprIs e p ty) = do
 
     (lets, conds) <- generateCondition nameExpr p
 
-    let lets' = [MLIR.MkExprLet name ty' (Just expr) | (name, ty', expr) <- lets, ty' /= MLIR.MkTyId "void"]
+    let filteredLets = filter (\(_, ty', _) -> ty' /= MLIR.MkTyId "void") lets
+
+    lets' <- mapM (\(name, ty', expr) -> do
+            newVarName <- freshSymbol
+
+            modifyIORef' variableRenamingMap (Map.insert name newVarName)
+
+            pure $ MLIR.MkExprLet newVarName ty' (Just expr)
+        ) filteredLets
 
     let cond =
             List.foldr
@@ -475,7 +488,7 @@ convertExpression (HLIR.MkExprReturn e) = do
     pure (MLIR.MkExprReturn e', l1, bs1)
 convertExpression HLIR.MkExprBreak = pure (MLIR.MkExprBreak, [], [])
 convertExpression HLIR.MkExprContinue = pure (MLIR.MkExprContinue, [], [])
-convertExpression (HLIR.MkExprLetPatternIn {}) = 
+convertExpression (HLIR.MkExprLetPatternIn {}) =
     Err.compilerError
         "Let-pattern expressions should have been desugared before ANF conversion."
 
