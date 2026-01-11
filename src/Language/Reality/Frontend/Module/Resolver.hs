@@ -4,6 +4,7 @@ import Control.Monad.Except qualified as M
 import Control.Monad.Result qualified as M
 import Data.Text qualified as Text
 import Language.Reality.Syntax.HLIR qualified as HLIR
+import qualified Data.Map as Map
 
 -- | MODULE RESOLVER
 -- | Resolve modules in a program.
@@ -92,6 +93,21 @@ resolveModuleSingular
                 , HLIR.fields = fields
                 }
             ]
+resolveModuleSingular
+    (HLIR.MkTopEnumeration
+        { HLIR.name = HLIR.MkAnnotation name generics
+        , HLIR.constructors = constructors
+        }
+    )
+    paths = do
+        let newName = createName paths name
+        pure
+            [ HLIR.MkTopEnumeration
+                { HLIR.name = HLIR.MkAnnotation newName generics
+                , HLIR.constructors = Map.mapKeys (createName paths) constructors
+                }
+            ]
+
 resolveModuleSingular (HLIR.MkTopPublic node) paths = do
     resolved <- resolveModuleSingular node paths
     pure (map HLIR.MkTopPublic resolved)
